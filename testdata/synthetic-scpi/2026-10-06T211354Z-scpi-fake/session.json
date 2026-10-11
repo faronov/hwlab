@@ -1,0 +1,77 @@
+{
+  "format_version": 1,
+  "id": "2026-10-06T211354Z-scpi-fake",
+  "name": "scpi-fake",
+  "status": "complete",
+  "created_at": "2026-10-06T21:13:54.113769968Z",
+  "wall_epoch_unix_ns": 1791321234113769968,
+  "duration_ns": 204627413,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# Oscilloscope waveform capture through the SCPI plugin.\n#\n# The default run uses the plugin's in-process SYNTHETIC oscilloscope, so it\n# needs no instrument. Its 1 kHz sine is generated, not measured:\n#\n#   HWLAB_SCPI_FAKE=rigol hwlab run --yes examples/scpi-fake.yaml     # or siglent\n#\n# For a real instrument (UNVALIDATED: the Rigol and Siglent command sets were\n# written from public documentation and never run against hardware):\n#\n#   export HWLAB_SCPI_HOSTS=\"scope=tcp://192.168.1.50\"     # or serial:/dev/ttyUSB0@115200\n#   hwlab devices                                           # scpi/scope\n#   hwlab invoke scpi/scope SCPI.identify\n#\n# and replace `device:` with scope. A capture is acquire-and-export, like\n# Saleae: it never streams. `trigger: single` arms the instrument and waits for\n# a real trigger; `none` reads whatever the instrument currently holds.\nname: scpi-fake\nduration: 4s\n\ndevices:\n  scope:\n    plugin: scpi\n    device: fake-rigol\n    channels: [1, 2]\n    trigger: single\n    trigger_timeout_s: 5\n    screenshot: true\n\nsteps:\n  - {name: identify, at: 100ms, device: scope, call: SCPI.identify}\n  - {name: vpp,      at: 200ms, device: scope, call: Oscilloscope.measure, args: {item: vpp, channel: 1}}\n\nplots:\n  - name: scope\n    title: Synthetic oscilloscope capture\n    format: svg\n",
+  "devices": [
+    {
+      "alias": "scope",
+      "device_id": "fake-rigol",
+      "plugin_id": "scpi",
+      "name": "fake-rigol",
+      "capabilities": [
+        "AnalogCapture",
+        "ArtifactExport",
+        "OfflineCapture",
+        "Oscilloscope",
+        "SCPI",
+        "TimedCapture"
+      ],
+      "config": {
+        "channels": [
+          1,
+          2
+        ],
+        "screenshot": true,
+        "trigger": "single",
+        "trigger_timeout_s": 5
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": [
+    {
+      "id": "scope",
+      "alias": "scope",
+      "started_ns": 1166608,
+      "stopped_ns": 204627413,
+      "request_ns": 1113345,
+      "clock": {
+        "source": "host clock (synthetic instrument: no real acquisition)",
+        "resolution_ns": 1,
+        "error_min_ns": 0,
+        "error_min_bounded": true,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "SYNTHETIC oscilloscope; times only order the events"
+      },
+      "streams": [
+        {
+          "id": "analog",
+          "kind": "analog",
+          "file": "captures/scope/analog.hwcap",
+          "alias": "scope",
+          "capture": "scope",
+          "channels": [
+            "CH1"
+          ],
+          "unit": "V",
+          "attributes": {
+            "profile": "rigol",
+            "profile_validated": "false",
+            "synthetic": "true",
+            "unit": "V"
+          }
+        }
+      ],
+      "events": 2,
+      "samples": 2400,
+      "dropped_batches": 0
+    }
+  ]
+}

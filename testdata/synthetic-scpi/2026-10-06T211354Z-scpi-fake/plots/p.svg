@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="274" viewBox="0 0 1200 274" font-family="monospace" font-size="11">
+<rect x="0.00" y="0.00" width="1200.00" height="274.00" fill="#ffffff"/>
+<text x="90.00" y="18.00" fill="#1e1e1e" text-anchor="start">scpi-fake   [51.821996 ms .. 202.213662 ms]</text>
+<line x1="149.27" y1="34.00" x2="149.27" y2="228.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="149.27" y="250.00" fill="#1e1e1e" text-anchor="middle">60</text>
+<line x1="294.23" y1="34.00" x2="294.23" y2="228.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="294.23" y="250.00" fill="#1e1e1e" text-anchor="middle">80</text>
+<line x1="439.18" y1="34.00" x2="439.18" y2="228.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="439.18" y="250.00" fill="#1e1e1e" text-anchor="middle">100</text>
+<line x1="584.14" y1="34.00" x2="584.14" y2="228.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="584.14" y="250.00" fill="#1e1e1e" text-anchor="middle">120</text>
+<line x1="729.09" y1="34.00" x2="729.09" y2="228.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="729.09" y="250.00" fill="#1e1e1e" text-anchor="middle">140</text>
+<line x1="874.05" y1="34.00" x2="874.05" y2="228.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="874.05" y="250.00" fill="#1e1e1e" text-anchor="middle">160</text>
+<line x1="1019.00" y1="34.00" x2="1019.00" y2="228.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="1019.00" y="250.00" fill="#1e1e1e" text-anchor="middle">180</text>
+<line x1="1163.96" y1="34.00" x2="1163.96" y2="228.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="1163.96" y="250.00" fill="#1e1e1e" text-anchor="middle">200</text>
+<text x="1180.00" y="264.00" fill="#1e1e1e" text-anchor="end">time (ms)</text>
+<line x1="90.00" y1="228.00" x2="1180.00" y2="228.00" stroke="#505050" stroke-width="1.00"/>
+<rect x="90.00" y="34.00" width="1090.00" height="150.00" fill="#fafafc"/>
+<line x1="90.00" y1="34.00" x2="90.00" y2="184.00" stroke="#505050" stroke-width="1.00"/>
+<line x1="90.00" y1="178.00" x2="1180.00" y2="178.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="86.00" y="182.00" fill="#1e1e1e" text-anchor="end">-1 V</text>
+<line x1="90.00" y1="134.67" x2="1180.00" y2="134.67" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="86.00" y="138.67" fill="#1e1e1e" text-anchor="end">-0.3333 V</text>
+<line x1="90.00" y1="91.33" x2="1180.00" y2="91.33" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="86.00" y="95.33" fill="#1e1e1e" text-anchor="end">0.3333 V</text>
+<line x1="90.00" y1="48.00" x2="1180.00" y2="48.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="86.00" y="52.00" fill="#1e1e1e" text-anchor="end">1 V</text>
+<text x="94.00" y="45.00" fill="#1f77b4" text-anchor="start">scope/analog</text>
+<rect x="90.00" y="63.60" width="1.00" height="49.40" fill="#d62728"/>
+<rect x="91.00" y="48.00" width="1.00" height="39.00" fill="#d62728"/>
+<rect x="92.00" y="48.00" width="1.00" height="49.40" fill="#d62728"/>
+<rect x="93.00" y="79.20" width="1.00" height="54.60" fill="#d62728"/>
+<rect x="94.00" y="123.40" width="1.00" height="49.40" fill="#d62728"/>
+<rect x="95.00" y="141.60" width="1.00" height="36.40" fill="#d62728"/>
+<rect x="96.00" y="120.80" width="1.00" height="49.40" fill="#d62728"/>
+<rect x="97.00" y="74.00" width="1.00" height="52.00" fill="#d62728"/>
+<rect x="98.00" y="50.60" width="1.00" height="41.60" fill="#d62728"/>
+<rect x="90.00" y="194.00" width="1090.00" height="34.00" fill="#fafafc"/>
+<line x1="90.00" y1="194.00" x2="90.00" y2="228.00" stroke="#505050" stroke-width="1.00"/>
+<text x="94.00" y="205.00" fill="#d62728" text-anchor="start">scope events (2)</text>
+<line x1="444.12" y1="210.00" x2="444.12" y2="225.00" stroke="#d62728" stroke-width="1.50"/>
+<text x="446.12" y="223.00" fill="#1e1e1e" text-anchor="start">SCPI.identify </text>
+<line x1="1171.98" y1="210.00" x2="1171.98" y2="225.00" stroke="#d62728" stroke-width="1.50"/>
+<text x="1173.98" y="223.00" fill="#1e1e1e" text-anchor="start">Oscilloscope.m</text>
+</svg>

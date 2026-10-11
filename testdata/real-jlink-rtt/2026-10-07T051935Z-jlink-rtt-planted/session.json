@@ -1,0 +1,52 @@
+{
+  "format_version": 1,
+  "id": "2026-10-07T051935Z-jlink-rtt-planted",
+  "name": "jlink-rtt-planted",
+  "status": "complete",
+  "created_at": "2026-10-07T05:19:35.34342686Z",
+  "wall_epoch_unix_ns": 1791350375343426860,
+  "duration_ns": 24181020441,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# J-Link RTT path check on an nRF52840 DK WITHOUT RTT firmware and without\n# flashing anything.\n#\n# The DK firmware has no SEGGER RTT block, so this experiment plants one in\n# RAM with J-Link memory writes and then appends text to its up buffer 0 and\n# advances WrOff, exactly like RTT firmware would. The J-Link software finds\n# the block by scanning target RAM and serves it on the RTT telnet port, and\n# hwlab turns the lines into timeline log events.\n#\n# What this validates: real J-Link RTT engine -\u003e telnet -\u003e hwlab -\u003e session -\u003e\n# replay. What it does NOT validate: that any firmware produced the text; the\n# \"firmware\" is the host writing target RAM. Label results accordingly.\n# A target reset removes the planted block.\n#\n# The J-Link software did not find the block by itself on the DK, so the\n# device sets rtt_address (-\u003e exec SetRTTAddr). The block must exist before the\n# capture starts; plant it first (this also resets WrOff/RdOff):\n#\n#   hwlab invoke jlink/\u003cserial\u003e MemoryAccess.write --yes -a target=NRF52840_XXAA \\\n#     -a address=0x20038000 -a data=$(cat examples/jlink-rtt-planted.block.hex)\n#\n#   HWLAB_JLINK_EXE=~/sdk/jlink/JLink_Linux_V982_x86_64/JLinkExe \\\n#     hwlab run --yes examples/jlink-rtt-planted.yaml\nname: jlink-rtt-planted\nduration: 24s\n\ndevices:\n  dbg:\n    plugin: jlink\n    target: NRF52840_XXAA\n    rtt_address: \"0x20038000\"\n\nsteps:\n  - {name: msg1-data, at: 5s, device: dbg, call: MemoryAccess.write, args: {address: \"0x20038100\", data: \"626f6f74206f6b3a2068776c61622072747420746573740a\"}}\n  - {name: msg1-wroff, at: 8s, device: dbg, call: MemoryAccess.write, args: {address: \"0x20038024\", data: \"18000000\"}}\n  - {name: msg2-data, at: 11s, device: dbg, call: MemoryAccess.write, args: {address: \"0x20038118\", data: \"3c696e663e206170703a2073616d706c6520310a\"}}\n  - {name: msg2-wroff, at: 14s, device: dbg, call: MemoryAccess.write, args: {address: \"0x20038024\", data: \"2c000000\"}}\n  - {name: msg3-data, at: 17s, device: dbg, call: MemoryAccess.write, args: {address: \"0x2003812c\", data: \"3c6572723e206170703a2073696d756c61746564206661756c740a\"}}\n  - {name: msg3-wroff, at: 20s, device: dbg, call: MemoryAccess.write, args: {address: \"0x20038024\", data: \"47000000\"}}\n",
+  "devices": [
+    {
+      "alias": "dbg",
+      "device_id": "900000002",
+      "plugin_id": "jlink",
+      "name": "J-Link",
+      "capabilities": [
+        "DebugProbe",
+        "FlashProgramming",
+        "LiveRawStream",
+        "MemoryAccess",
+        "RTT"
+      ],
+      "config": {
+        "rtt_address": "0x20038000",
+        "target": "NRF52840_XXAA"
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": [
+    {
+      "id": "dbg",
+      "alias": "dbg",
+      "started_ns": 152454841,
+      "stopped_ns": 24181020441,
+      "request_ns": 797025,
+      "clock": {
+        "source": "host clock at RTT telnet receive (target writes are polled by the probe)",
+        "resolution_ns": 1000000,
+        "error_min_ns": 0,
+        "error_min_bounded": true,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "the stamp is late by the unknown probe polling + USB + TCP latency and never early; lines are not stamped by the target; 6 lines, 183 bytes"
+      },
+      "events": 6,
+      "samples": 0,
+      "dropped_batches": 0
+    }
+  ]
+}

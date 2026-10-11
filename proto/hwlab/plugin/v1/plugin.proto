@@ -1,0 +1,333 @@
+// hwlab plugin protocol, version 1.
+//
+// Compatibility rules (see docs/adr/0001-out-of-process-grpc-plugins.md):
+//   * Only additive changes inside v1 (new fields, new enum values, new
+//     messages, new capability ids, new event types).
+//   * Capability ids, event types and device config keys are strings, so new
+//     hardware never requires a protocol change.
+//   * Breaking changes require hwlab.plugin.v2 and a new protocol_version.
+syntax = "proto3";
+
+package hwlab.plugin.v1;
+
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/faronov/hwlab/pkg/api/pluginv1;pluginv1";
+
+service Plugin {
+  // Handshake negotiates the protocol version and returns plugin metadata.
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+  rpc OpenDevice(OpenDeviceRequest) returns (OpenDeviceResponse);
+  rpc CloseDevice(CloseDeviceRequest) returns (CloseDeviceResponse);
+
+  // StartCapture arms and starts a capture on an opened device. Events are
+  // delivered via StreamEvents(capture_id).
+  rpc StartCapture(StartCaptureRequest) returns (StartCaptureResponse);
+  rpc StopCapture(StopCaptureRequest) returns (StopCaptureResponse);
+  // StreamEvents streams batches until the capture ends (stopped, duration
+  // elapsed or failed). The plugin buffers a bounded amount of events between
+  // StartCapture and the first StreamEvents call.
+  rpc StreamEvents(StreamEventsRequest) returns (stream EventBatch);
+
+  // Invoke is the generic, capability-scoped command channel (SCPI query,
+  // debug probe reset, power on/off, ...). Methods are declared in
+  // HandshakeResponse.methods so that the core can apply policy.
+  rpc Invoke(InvokeRequest) returns (InvokeResponse);
+
+  // Shutdown asks the plugin to release all resources and exit.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+// ---------------------------------------------------------------- handshake
+
+message HandshakeRequest {
+  uint32 core_protocol_version = 1;
+  string core_version = 2;
+}
+
+message HandshakeResponse {
+  PluginInfo info = 1;
+}
+
+message PluginInfo {
+  string id = 1;
+  string name = 2;
+  string vendor = 3;
+  string version = 4;
+  uint32 protocol_version = 5;
+  repeated Capability capabilities = 6;
+  repeated RuntimeRequirement runtime_requirements = 7;
+  repeated MethodSpec methods = 8;
+  // Config keys (for OpenDevice/StartCapture) that change the electrical
+  // state of the lab (supply voltage, DUT power, ...). The core requires
+  // explicit confirmation before passing them on.
+  repeated string dangerous_config_keys = 9;
+}
+
+message Capability {
+  // Stable capability id, e.g. "PowerMeasurement". Unknown ids must be
+  // tolerated by the core.
+  string id = 1;
+  uint32 version = 2;
+  map<string, string> attributes = 3;
+}
+
+message RuntimeRequirement {
+  string name = 1;      // e.g. "tshark"
+  string kind = 2;      // "binary", "service", "driver", "os"
+  bool optional = 3;
+  string description = 4;
+  bool satisfied = 5;   // evaluated by the plugin at handshake time
+}
+
+enum Danger {
+  DANGER_UNSPECIFIED = 0;
+  DANGER_SAFE = 1;
+  DANGER_CONFIRM = 2;  // changes electrical state / writes memory / raw commands
+}
+
+message MethodSpec {
+  string capability = 1;
+  string name = 2;
+  string description = 3;
+  Danger danger = 4;
+  string args_schema_json = 5;  // optional JSON schema
+}
+
+// ------------------------------------------------------------------ devices
+
+message Device {
+  // Plugin-local id, stable across enumerations when possible (serial based).
+  string id = 1;
+  string name = 2;
+  string serial = 3;
+  string transport = 4;  // "usb", "serial", "tcp", "virtual", ...
+  repeated Capability capabilities = 5;
+  map<string, string> properties = 6;
+}
+
+message ListDevicesRequest {}
+message ListDevicesResponse {
+  repeated Device devices = 1;
+}
+
+message OpenDeviceRequest {
+  string device_id = 1;
+  google.protobuf.Struct config = 2;
+}
+message OpenDeviceResponse {}
+
+message CloseDeviceRequest {
+  string device_id = 1;
+}
+message CloseDeviceResponse {}
+
+// ------------------------------------------------------------------ capture
+
+message StartCaptureRequest {
+  string device_id = 1;
+  string capture_id = 2;
+  google.protobuf.Struct config = 3;
+  // Session timeline "now" (ns since the session monotonic epoch) at the
+  // moment the core sent this request. Plugins map their own monotonic clock
+  // onto the session timeline relative to the receipt of this request.
+  int64 session_time_ns = 4;
+  // Stop automatically after this duration (0 = until StopCapture).
+  int64 duration_ns = 5;
+  // Directory the plugin may write artifacts into (shared filesystem).
+  string artifact_dir = 6;
+}
+
+message StartCaptureResponse {
+  // Plugin's best estimate of the first sample time on the session timeline.
+  int64 started_session_ns = 1;
+  repeated StreamInfo streams = 2;
+}
+
+message StreamInfo {
+  string stream_id = 1;
+  string kind = 2;  // "power", "analog", "digital", "packet", "log", ...
+  map<string, string> attributes = 3;
+}
+
+message StopCaptureRequest {
+  string capture_id = 1;
+}
+
+message StopCaptureResponse {
+  repeated ArtifactRef artifacts = 1;
+  CaptureStats stats = 2;
+  ClockInfo clock = 3;   // how the timestamps of this capture relate to true time
+}
+
+// ClockInfo describes the timing quality of one capture's timestamps. It is
+// reported by the plugin at the end of a capture and stored with the session;
+// consumers must treat it as the uncertainty of every timestamp from that source.
+//
+// stamped_time - true_time lies within [error_min_ns, error_max_ns]. A side that
+// the plugin cannot bound is reported with the matching *_bounded flag false
+// (the value is then only a lower bound on the magnitude, usually 0).
+message ClockInfo {
+  string source = 1;          // e.g. "device timer", "host clock at command write"
+  int64 resolution_ns = 2;    // granularity of the timestamps
+  int64 error_min_ns = 3;
+  bool error_min_bounded = 4;
+  int64 error_max_ns = 5;
+  bool error_max_bounded = 6;
+  int64 jitter_ns = 7;        // observed spread of host delivery latency, 0 if not applicable
+  double drift_ppm = 8;       // device clock vs host clock, 0 if not measured
+  string note = 9;
+}
+
+message ArtifactRef {
+  string name = 1;
+  string kind = 2;       // "pcap", "native-capture", "csv", "plot", ...
+  string mime_type = 3;
+  string path = 4;       // absolute path inside artifact_dir
+  map<string, string> metadata = 5;
+}
+
+message CaptureStats {
+  uint64 events = 1;
+  uint64 samples = 2;
+  uint64 dropped_batches = 3;
+}
+
+message StreamEventsRequest {
+  string capture_id = 1;
+}
+
+message EventBatch {
+  repeated Event events = 1;
+  // Number of batches the plugin had to drop since the previous message
+  // (bounded buffering, see ARCHITECTURE.md).
+  uint64 dropped_batches = 2;
+}
+
+// ------------------------------------------------------------------- events
+
+message Event {
+  // Nanoseconds since the session monotonic epoch (see StartCaptureRequest).
+  int64 timestamp_ns = 1;
+  string stream_id = 2;
+  // Optional free-form extensible type. Defaults from the payload case.
+  string type = 3;
+  oneof payload {
+    PowerBatch power = 10;
+    AnalogBatch analog = 11;
+    DigitalBatch digital = 12;
+    Packet packet = 13;
+    Log log = 14;
+    Marker marker = 15;
+    DecodedProtocolEvent decoded = 16;
+    Trigger trigger = 17;
+    DebugEvent debug = 18;
+    GenericPayload generic = 19;
+  }
+}
+
+message GenericPayload {
+  string content_type = 1;
+  bytes data = 2;
+}
+
+// PowerBatch carries many samples in one message. Arrays are packed.
+message PowerBatch {
+  int64 sample_period_ns = 1;
+  repeated sint32 current_na = 2;
+  repeated uint32 voltage_uv = 3;  // optional, empty when unavailable
+  repeated uint32 digital = 4;     // optional logic bits per sample
+  repeated string digital_names = 5;
+}
+
+message AnalogBatch {
+  int64 sample_period_ns = 1;
+  repeated string channels = 2;
+  string unit = 3;
+  // Interleaved: sample0.ch0, sample0.ch1, sample1.ch0, ...
+  repeated float samples = 4 [packed = true];
+}
+
+message DigitalBatch {
+  repeated string channels = 1;  // bit i of every word is channels[i]
+  oneof encoding {
+    DigitalSampled sampled = 2;
+    DigitalEdges edges = 3;
+  }
+}
+
+message DigitalSampled {
+  int64 sample_period_ns = 1;
+  repeated uint32 words = 2;
+}
+
+message DigitalEdges {
+  uint32 initial_state = 1;
+  // Strictly increasing offsets from Event.timestamp_ns.
+  repeated int64 offset_ns = 2;
+  // Full channel word after each edge.
+  repeated uint32 state = 3;
+}
+
+message Packet {
+  string protocol = 1;   // "ieee802154", "zigbee", "can", "usb", ...
+  uint32 link_type = 2;  // pcap DLT when applicable
+  bytes data = 3;
+  double rssi_dbm = 4;
+  uint32 lqi = 5;
+  uint32 channel = 6;
+  string summary = 7;
+  map<string, string> attributes = 8;
+}
+
+message Log {
+  string level = 1;
+  string source = 2;  // "rtt", "uart", ...
+  string message = 3;
+  // Source-specific context, e.g. {"channel": "0"} for RTT or {"port": ...}
+  // for a serial line. Copied into the timeline event data as "attr.<key>".
+  map<string, string> attributes = 4;
+}
+
+message Marker {
+  string name = 1;
+  string description = 2;
+}
+
+message DecodedProtocolEvent {
+  string protocol = 1;  // "spi", "i2c", "zigbee.aps", ...
+  string summary = 2;
+  google.protobuf.Struct fields = 3;
+  int64 duration_ns = 4;
+}
+
+message Trigger {
+  string name = 1;
+  bool rising = 2;
+  string description = 3;
+}
+
+message DebugEvent {
+  string kind = 1;  // "halt", "resume", "reset", "breakpoint", ...
+  uint64 pc = 2;
+  string description = 3;
+}
+
+// ------------------------------------------------------------------- invoke
+
+message InvokeRequest {
+  string device_id = 1;
+  string capability = 2;
+  string method = 3;
+  google.protobuf.Struct args = 4;
+  bytes binary = 5;
+}
+
+message InvokeResponse {
+  google.protobuf.Struct result = 1;
+  bytes binary = 2;
+}
+
+message ShutdownRequest {}
+message ShutdownResponse {}

@@ -1,0 +1,37 @@
+# Real hardware: Nordic PPK2 + nRF52840 802.15.4 sniffer in ONE session.
+#
+# Wiring: the DUT is powered from the PPK2 (source mode, VOUT/GND), or the PPK2
+# is in series with an external supply (ampere mode). The sniffer DK listens on
+# the channel the DUT's radio uses.
+#
+#   hwlab run examples/zigbee-power.yaml --yes     # --yes: confirms the supply voltage
+#
+# Timing: both devices are started back-to-back by the experiment engine. Each
+# has its own clock; see the clock.* metadata of the session and the pcapng
+# artifact. Cross-device accuracy is NOT nanosecond-level: it is bounded by the
+# sniffer USB latency (milliseconds) and by the PPK2 start latency.
+name: zigbee-power
+duration: 10s
+
+devices:
+  power:
+    plugin: ppk2
+    requires: [PowerMeasurement]
+    mode: ampere              # "source" drives the DUT supply: needs --yes
+    # mode: source
+    # supply_mv: 3300
+  radio:
+    plugin: nrf802154
+    requires: [PacketCapture]
+    channel: 15
+
+analysis:
+  nominal_voltage: 3.3
+
+plots:
+  - name: overview
+    title: PPK2 current + 802.15.4 packets
+    format: png
+  - name: overview
+    title: PPK2 current + 802.15.4 packets
+    format: svg

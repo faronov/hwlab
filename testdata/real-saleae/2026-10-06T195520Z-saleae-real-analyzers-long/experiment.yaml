@@ -1,0 +1,28 @@
+name: saleae-real-analyzers-long
+duration: 90s
+
+devices:
+  logic:
+    plugin: saleae
+    device: AABBCCDDEEFF0001
+    requires: [DigitalCapture]
+    digital_channels: [0, 1, 2, 3]
+    digital_sample_rate: 4000000
+    channel_names:
+      "0": CH1
+      "1": CH2
+      "2": CH3
+      "3": CH4
+    analyzers:
+      - type: uart
+        label: uart-ch1
+        channels: {rx: 0}
+        settings: {"Bit Rate (Bits/s)": 9600}
+      - type: i2c
+        label: i2c-ch1-ch2
+        channels: {sda: 0, scl: 1}
+
+plots:
+  - name: overview
+    title: Saleae real capture with analyzers
+    format: svg

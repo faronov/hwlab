@@ -1,0 +1,39 @@
+# J-Link RTT path check on an nRF52840 DK WITHOUT RTT firmware and without
+# flashing anything.
+#
+# The DK firmware has no SEGGER RTT block, so this experiment plants one in
+# RAM with J-Link memory writes and then appends text to its up buffer 0 and
+# advances WrOff, exactly like RTT firmware would. The J-Link software finds
+# the block by scanning target RAM and serves it on the RTT telnet port, and
+# hwlab turns the lines into timeline log events.
+#
+# What this validates: real J-Link RTT engine -> telnet -> hwlab -> session ->
+# replay. What it does NOT validate: that any firmware produced the text; the
+# "firmware" is the host writing target RAM. Label results accordingly.
+# A target reset removes the planted block.
+#
+# The J-Link software did not find the block by itself on the DK, so the
+# device sets rtt_address (-> exec SetRTTAddr). The block must exist before the
+# capture starts; plant it first (this also resets WrOff/RdOff):
+#
+#   hwlab invoke jlink/<serial> MemoryAccess.write --yes -a target=NRF52840_XXAA \
+#     -a address=0x20038000 -a data=$(cat examples/jlink-rtt-planted.block.hex)
+#
+#   HWLAB_JLINK_EXE=~/sdk/jlink/JLink_Linux_V982_x86_64/JLinkExe \
+#     hwlab run --yes examples/jlink-rtt-planted.yaml
+name: jlink-rtt-planted
+duration: 24s
+
+devices:
+  dbg:
+    plugin: jlink
+    target: NRF52840_XXAA
+    rtt_address: "0x20038000"
+
+steps:
+  - {name: msg1-data, at: 5s, device: dbg, call: MemoryAccess.write, args: {address: "0x20038100", data: "626f6f74206f6b3a2068776c61622072747420746573740a"}}
+  - {name: msg1-wroff, at: 8s, device: dbg, call: MemoryAccess.write, args: {address: "0x20038024", data: "18000000"}}
+  - {name: msg2-data, at: 11s, device: dbg, call: MemoryAccess.write, args: {address: "0x20038118", data: "3c696e663e206170703a2073616d706c6520310a"}}
+  - {name: msg2-wroff, at: 14s, device: dbg, call: MemoryAccess.write, args: {address: "0x20038024", data: "2c000000"}}
+  - {name: msg3-data, at: 17s, device: dbg, call: MemoryAccess.write, args: {address: "0x2003812c", data: "3c6572723e206170703a2073696d756c61746564206661756c740a"}}
+  - {name: msg3-wroff, at: 20s, device: dbg, call: MemoryAccess.write, args: {address: "0x20038024", data: "47000000"}}

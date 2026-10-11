@@ -1,0 +1,25 @@
+{
+  "format_version": 1,
+  "id": "2026-10-09T194319Z-xds110-probe",
+  "name": "xds110-probe",
+  "status": "complete",
+  "created_at": "2026-10-09T19:43:19.108250098Z",
+  "wall_epoch_unix_ns": 1791574999108250098,
+  "duration_ns": 6012408660,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# TI XDS110 probe, REAL hardware: a standalone LP-XDS110ET (USB 0451:bef3),\n# through the native Go stack: Linux usbfs -\u003e XDS110 vendor protocol (interface 2)\n# -\u003e generic ADIv5 / JTAG scan. No OpenOCD, CCS, DSLite, xdsdfu, Python,\n# libusb or CGO.\n#\n# NO TARGET IS WIRED to the probe when this is recorded: the LP-XDS110ET has no\n# onboard target. The recording proves the probe itself (USB identity, firmware,\n# clock acceptance, JTAG chain scan of an empty chain) and that every target\n# operation fails explicitly instead of succeeding. It never enables target\n# power and never writes memory.\n#\n#   hwlab devices                                  # xds110/0451:bef3:\u003cserial\u003e\n#   hwlab run --yes examples/xds110-probe.yaml\n#\n# A target attaches to P7 (10-pin ARM Cortex Debug); P9 selects the level\n# shifter voltage.\nname: xds110-probe\nduration: 10s\n\ndevices:\n  dbg:\n    plugin: xds110\n\nsteps:\n  - {name: info,        at: 100ms, device: dbg, call: DebugProbe.info}\n  - {name: clock-probe, at: 1s,    device: dbg, call: DebugProbe.clock_probe, args: {rates_hz: [100000, 400000, 1000000, 2500000, 10000000]}}\n  - {name: jtag-scan,   at: 2s,    device: dbg, call: DebugProbe.jtag_scan}\n  - {name: connect,     at: 3s,    device: dbg, call: DebugProbe.connect, args: {clock_hz: 400000}}\n  - {name: read,        at: 4s,    device: dbg, call: MemoryAccess.read, args: {address: \"0x20000000\", length: 16}}\n  - {name: status,      at: 5s,    device: dbg, call: DebugProbe.status}\n  - {name: info-final,  at: 6s,    device: dbg, call: DebugProbe.info}\n",
+  "devices": [
+    {
+      "alias": "dbg",
+      "device_id": "0451:bef3:LS0000ZZ",
+      "plugin_id": "xds110",
+      "name": "XDS110 (03.00.00.22) Embed with CMSIS-DAP",
+      "capabilities": [
+        "DebugProbe",
+        "MemoryAccess"
+      ],
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": []
+}

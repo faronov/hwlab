@@ -1,0 +1,54 @@
+{
+  "format_version": 1,
+  "id": "2026-10-06T201118Z-uart-nrf52840-dk",
+  "name": "uart-nrf52840-dk",
+  "status": "complete",
+  "created_at": "2026-10-06T20:11:18.265304986Z",
+  "wall_epoch_unix_ns": 1791317478265304986,
+  "duration_ns": 6013701308,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# Generic serial line (UART). On an nRF52840 DK the on-board J-Link exposes the\n# target's UART as a virtual COM port (/dev/ttyACM0 on Linux). Received bytes\n# and the step's write become timestamped \"uart\" packets; lines: true also\n# emits one log event per received text line.\n#\n#   hwlab devices                      # find the port, e.g. uart/ttyACM0\n#   hwlab run examples/uart-nrf52840-dk.yaml\n#\n# The write step is a state-changing call and needs --confirm-dangerous.\nname: uart-nrf52840-dk\nduration: 6s\n\ndevices:\n  console:\n    plugin: uart\n    device: ttyACM0\n    baud: 115200\n    data_bits: 8\n    parity: none\n    stop_bits: 1\n    flow_control: none\n    lines: true\n\nsteps:\n  - {name: say-hello, at: 2s, device: console, call: SerialTransport.write, args: {data: \"hello\\r\\n\"}}\n",
+  "devices": [
+    {
+      "alias": "console",
+      "device_id": "ttyACM0",
+      "plugin_id": "uart",
+      "name": "J-Link (ttyACM0)",
+      "capabilities": [
+        "LiveRawStream",
+        "SerialTransport",
+        "TimedCapture"
+      ],
+      "config": {
+        "baud": 115200,
+        "data_bits": 8,
+        "flow_control": "none",
+        "lines": true,
+        "parity": "none",
+        "stop_bits": 1
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": [
+    {
+      "id": "console",
+      "alias": "console",
+      "started_ns": 4443780,
+      "stopped_ns": 6013701308,
+      "request_ns": 4362779,
+      "clock": {
+        "source": "host clock at serial read return (rx) / before write call (tx)",
+        "resolution_ns": 1000000,
+        "error_min_ns": 0,
+        "error_min_bounded": false,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "115200 8N1 flow=none; rx 0 bytes, tx 7 bytes; the chunk stamp is the first read of the chunk, late by the unmeasured USB and driver latency"
+      },
+      "events": 1,
+      "samples": 0,
+      "dropped_batches": 0
+    }
+  ]
+}

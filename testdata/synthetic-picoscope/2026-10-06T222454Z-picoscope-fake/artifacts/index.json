@@ -1,0 +1,22 @@
+[
+  {
+    "id": "a001",
+    "name": "waveform.csv",
+    "kind": "csv",
+    "mime_type": "text/csv",
+    "path": "artifacts/scope/waveform.csv",
+    "size": 202055,
+    "source": "scope",
+    "capture": "scope",
+    "created_at": "2026-10-06T22:24:55.637396354Z",
+    "metadata": {
+      "channels": "[A B]",
+      "dt_s": "5e-07",
+      "samples": "8000",
+      "synthetic": "true",
+      "time_zero": "trigger point (first sample when untriggered)",
+      "triggered": "true",
+      "unit": "V"
+    }
+  }
+]

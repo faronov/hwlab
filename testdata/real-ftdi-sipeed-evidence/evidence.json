@@ -1,0 +1,211 @@
+{
+  "kind": "REAL",
+  "note": "Recorded from a physical adapter by plugins/ftdi/hardware_test.go. Bus/device numbers and sysfs paths removed. The serial is the factory string of this firmware, not unique.",
+  "usb_identity": {
+    "bcd_device": "0x0500",
+    "configuration": 1,
+    "interface_count": 2,
+    "manufacturer": "SIPEED",
+    "pid": "6010",
+    "product": "JTAG Debugger",
+    "serial": "FactoryAIOT Pro",
+    "speed_mbps": 12,
+    "vid": "0403"
+  },
+  "interfaces": [
+    {
+      "number": 0,
+      "driver_before": "ftdi_sio",
+      "tty_before": "ttyUSB0",
+      "endpoints": [
+        {
+          "address": 2,
+          "type": "Bulk",
+          "max_packet": 64
+        },
+        {
+          "address": 129,
+          "type": "Bulk",
+          "max_packet": 64
+        }
+      ]
+    },
+    {
+      "number": 1,
+      "driver_before": "ftdi_sio",
+      "tty_before": "ttyUSB1",
+      "endpoints": [
+        {
+          "address": 4,
+          "type": "Bulk",
+          "max_packet": 64
+        },
+        {
+          "address": 131,
+          "type": "Bulk",
+          "max_packet": 64
+        }
+      ]
+    }
+  ],
+  "kernel_driver_states": {
+    "after": [
+      {
+        "interface": 0,
+        "driver": "ftdi_sio",
+        "tty": "ttyUSB0"
+      },
+      {
+        "interface": 1,
+        "driver": "ftdi_sio",
+        "tty": "ttyUSB1"
+      }
+    ],
+    "before": [
+      {
+        "interface": 0,
+        "driver": "ftdi_sio",
+        "tty": "ttyUSB0"
+      },
+      {
+        "interface": 1,
+        "driver": "ftdi_sio",
+        "tty": "ttyUSB1"
+      }
+    ],
+    "during": [
+      {
+        "interface": 0,
+        "driver": "usbfs"
+      },
+      {
+        "interface": 1,
+        "driver": "ftdi_sio",
+        "tty": "ttyUSB1"
+      }
+    ]
+  },
+  "ftdi_mpsse_init_log": [
+    {
+      "op": "reset",
+      "detail": "req=0x00 value=0x0000 index=0x0001"
+    },
+    {
+      "op": "event_char_off",
+      "detail": "req=0x06 value=0x0000 index=0x0001"
+    },
+    {
+      "op": "error_char_off",
+      "detail": "req=0x07 value=0x0000 index=0x0001"
+    },
+    {
+      "op": "set_latency",
+      "detail": "req=0x09 value=0x0002 index=0x0001"
+    },
+    {
+      "op": "set_bitmode",
+      "detail": "req=0x0b value=0x0000 index=0x0001"
+    },
+    {
+      "op": "set_bitmode",
+      "detail": "req=0x0b value=0x0200 index=0x0001"
+    },
+    {
+      "op": "purge_rx",
+      "detail": "req=0x00 value=0x0001 index=0x0001"
+    },
+    {
+      "op": "purge_tx",
+      "detail": "req=0x00 value=0x0002 index=0x0001"
+    },
+    {
+      "op": "purge_rx",
+      "detail": "req=0x00 value=0x0001 index=0x0001"
+    },
+    {
+      "op": "purge_rx",
+      "detail": "req=0x00 value=0x0001 index=0x0001"
+    }
+  ],
+  "adapter": {
+    "chip": "FT2232C/D",
+    "bcd_device": "0x0500",
+    "max_packet": 64,
+    "endpoint_in": 129,
+    "endpoint_out": 2,
+    "latency_ms": 2,
+    "base_clock_hz": 6000000,
+    "requested_clock_hz": 6000000,
+    "clock_hz": 6000000,
+    "clock_fixed_by_firmware": true,
+    "detached_kernel_driver": "ftdi_sio",
+    "notes": [
+      "this device ignores the clock divisor: TCK is fixed by firmware (nominal 6000000 Hz); the 6000000 Hz request is not applied",
+      "GPIO opcodes are no-ops on this device: the pin layout is documented, not driven"
+    ]
+  },
+  "selftest": {
+    "clock_fixed_by_firmware": true,
+    "clock_hz": 6000000,
+    "loopback": {
+      "note": "reply did not match the pattern: loopback opcodes are ignored or unsupported by this device",
+      "received": "ffffffffffffffff",
+      "sent": "a55a3cc300ff817e",
+      "supported": false
+    },
+    "ok": true,
+    "sync": {
+      "note": "bad-command probe 0xAA answered 0xFA 0xAA",
+      "ok": true
+    }
+  },
+  "scans": [
+    {
+      "bits_read": 1088,
+      "bypass_count": -1,
+      "clock_hz": 6000000,
+      "count": 0,
+      "devices": [],
+      "notes": [
+        "TDO read all ones: no TAP answered (nothing connected, or TDO pulled high)"
+      ],
+      "profile": "sipeed-bl702",
+      "status": "no-device",
+      "target_verified": false
+    },
+    {
+      "bits_read": 1088,
+      "bypass_count": -1,
+      "clock_hz": 6000000,
+      "count": 0,
+      "devices": [],
+      "notes": [
+        "TDO read all ones: no TAP answered (nothing connected, or TDO pulled high)"
+      ],
+      "profile": "sipeed-bl702",
+      "status": "no-device",
+      "target_verified": false
+    },
+    {
+      "bits_read": 1088,
+      "bypass_count": -1,
+      "clock_hz": 6000000,
+      "count": 0,
+      "devices": [],
+      "notes": [
+        "TDO read all ones: no TAP answered (nothing connected, or TDO pulled high)"
+      ],
+      "profile": "sipeed-bl702",
+      "status": "no-device",
+      "target_verified": false
+    }
+  ],
+  "companion_uart_check": {
+    "opened_while_mpsse_active": true
+  },
+  "result": {
+    "ftdi_usb_transport": "REAL_HW_VERIFIED",
+    "jtag_target_scan": "IMPLEMENTED_UNTESTED (no JTAG target connected; the scan reported no-device)",
+    "mpsse_transport": "REAL_HW_VERIFIED (sync and clocked shifts); loopback not supported by this firmware"
+  }
+}

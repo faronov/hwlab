@@ -1,0 +1,29 @@
+# Real CC-Debugger + CC2530 through the NATIVE USB backend (no cc-tool).
+#
+# This RESETS the target into debug halt (access: reset-debug-session), reads
+# status, registers and 16 bytes of CODE and physical flash, then re-enables DMA
+# and resumes the firmware. It never writes memory, erases or programs flash.
+#
+#   make build && ./bin/hwlab run --yes examples/ccdebugger-native.yaml
+name: ccdebugger-native
+duration: 2s
+
+devices:
+  dbg:
+    plugin: ccdebugger
+    backend: native
+    access: reset-debug-session
+    allow_target_reset: true
+    allow_cpu_control: true
+    allow_memory_access: true
+    allow_dma_enable: true
+
+steps:
+  - {name: identify, at: 100ms, device: dbg, call: DebugProbe.info}
+  - {name: attach, at: 200ms, device: dbg, call: DebugProbe.attach}
+  - {name: status, at: 300ms, device: dbg, call: DebugProbe.status}
+  - {name: registers, at: 400ms, device: dbg, call: DebugProbe.read_registers}
+  - {name: code, at: 500ms, device: dbg, call: MemoryAccess.read, args: {space: code, address: 0, length: 16}}
+  - {name: flash, at: 600ms, device: dbg, call: MemoryAccess.read, args: {space: flash, address: 0x8000, length: 16}}
+  - {name: dma, at: 700ms, device: dbg, call: DebugProbe.enable_dma}
+  - {name: run, at: 800ms, device: dbg, call: DebugProbe.resume}

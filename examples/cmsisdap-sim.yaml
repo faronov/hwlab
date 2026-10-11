@@ -1,0 +1,35 @@
+# CMSIS-DAP debug probe through the native SWD stack.
+#
+# The default run uses the plugin's in-process SYNTHETIC probe and Cortex-M
+# target, so it needs no hardware. Everything it shows (the core, the vector
+# table, the registers) is simulated, not measured:
+#
+#   HWLAB_CMSISDAP_SIM=1 hwlab run --yes examples/cmsisdap-sim.yaml
+#
+# For a real probe (UNVALIDATED: the USB transports and the behaviour on real
+# probes and targets have never run; no CMSIS-DAP probe was available):
+#
+#   hwlab devices                                  # cmsisdap/<vid>:<pid>:<serial>
+#   hwlab invoke cmsisdap/<id> DebugProbe.info
+#   hwlab invoke cmsisdap/<id> DebugProbe.connect
+#
+# and replace `device:` below. Linux needs access to the probe's usbfs node
+# (v2) or hidraw node (v1), e.g. through a udev rule. The steps halt and
+# reset the target, so they need --yes; nothing here writes memory or flash.
+name: cmsisdap-sim
+duration: 2s
+
+devices:
+  dbg:
+    plugin: cmsisdap
+    device: sim-cmsisdap
+
+steps:
+  - {name: probe-info, at: 100ms, device: dbg, call: DebugProbe.info}
+  - {name: connect,    at: 200ms, device: dbg, call: DebugProbe.connect}
+  - {name: vectors,    at: 300ms, device: dbg, call: MemoryAccess.read, args: {address: "0x0", length: 16}}
+  - {name: halt,       at: 400ms, device: dbg, call: DebugProbe.halt}
+  - {name: registers,  at: 500ms, device: dbg, call: DebugProbe.read_registers}
+  - {name: step,       at: 600ms, device: dbg, call: DebugProbe.step}
+  - {name: reset-halt, at: 700ms, device: dbg, call: DebugProbe.reset, args: {halt: true}}
+  - {name: resume,     at: 800ms, device: dbg, call: DebugProbe.resume}

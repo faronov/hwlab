@@ -1,0 +1,74 @@
+{
+  "format_version": 1,
+  "id": "2026-10-06T215023Z-modbus-fake",
+  "name": "modbus-fake",
+  "status": "complete",
+  "created_at": "2026-10-06T21:50:23.453229291Z",
+  "wall_epoch_unix_ns": 1791323423453229291,
+  "duration_ns": 3004742920,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# Modbus master over the modbus plugin (RTU or TCP).\n#\n# The default run uses the plugin's in-process SYNTHETIC slave, so it needs no\n# device. Its register values are generated, not measured:\n#\n#   HWLAB_MODBUS_FAKE=1 hwlab run --yes examples/modbus-fake.yaml\n#\n# For a real device (UNVALIDATED: the Modbus stack was written from the public\n# specification and has only run against its own simulator; no Modbus device\n# was available):\n#\n#   export HWLAB_MODBUS_HOSTS=\"meter=tcp://192.168.1.60:502,rs485=rtu:/dev/ttyUSB0@19200:8E1\"\n#   hwlab devices                                  # modbus/meter, modbus/rs485\n#   hwlab invoke modbus/meter Modbus.read_holding_registers '{\"address\":0,\"quantity\":2}'\n#\n# and replace `device:` below. Writes are CONFIRM operations and need --yes;\n# polls in a capture are read-only by design.\nname: modbus-fake\nduration: 3s\n\ndevices:\n  plc:\n    plugin: modbus\n    device: fake-modbus\n    unit: 1\n    polls:\n      - {name: regs,  function: read_holding_registers, address: 0,  quantity: 3, interval_ms: 500}\n      - {name: temp,  function: read_holding_registers, address: 10, quantity: 2, interval_ms: 500, as: f32}\n      - {name: count, function: read_input_registers,   address: 0,  quantity: 1, interval_ms: 700}\n\nsteps:\n  - {name: read-coils, at: 200ms,  device: plc, call: Modbus.read_coils, args: {address: 0, quantity: 4}}\n  - {name: write-reg,  at: 1200ms, device: plc, call: Modbus.write_register, args: {address: 4, value: 777}}\n  - {name: bad-addr,   at: 1700ms, device: plc, call: Modbus.read_holding_registers, args: {address: 9000, quantity: 1}}   # exception: recorded as a failed step, not fatal\n",
+  "devices": [
+    {
+      "alias": "plc",
+      "device_id": "fake-modbus",
+      "plugin_id": "modbus",
+      "name": "fake-modbus",
+      "capabilities": [
+        "Modbus",
+        "PacketCapture",
+        "ProtocolDecode",
+        "TimedCapture"
+      ],
+      "config": {
+        "polls": [
+          {
+            "address": 0,
+            "function": "read_holding_registers",
+            "interval_ms": 500,
+            "name": "regs",
+            "quantity": 3
+          },
+          {
+            "address": 10,
+            "as": "f32",
+            "function": "read_holding_registers",
+            "interval_ms": 500,
+            "name": "temp",
+            "quantity": 2
+          },
+          {
+            "address": 0,
+            "function": "read_input_registers",
+            "interval_ms": 700,
+            "name": "count",
+            "quantity": 1
+          }
+        ],
+        "unit": 1
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": [
+    {
+      "id": "plc",
+      "alias": "plc",
+      "started_ns": 1092429,
+      "stopped_ns": 3004742920,
+      "request_ns": 1041392,
+      "clock": {
+        "source": "host clock (synthetic slave on an in-memory link: no real bus)",
+        "resolution_ns": 1000,
+        "error_min_ns": 0,
+        "error_min_bounded": false,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "SYNTHETIC; times only order the events"
+      },
+      "events": 54,
+      "samples": 0,
+      "dropped_batches": 0
+    }
+  ]
+}

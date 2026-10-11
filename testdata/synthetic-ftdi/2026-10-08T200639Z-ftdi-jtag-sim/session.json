@@ -1,0 +1,26 @@
+{
+  "format_version": 1,
+  "id": "2026-10-08T200639Z-ftdi-jtag-sim",
+  "name": "ftdi-jtag-sim",
+  "status": "complete",
+  "created_at": "2026-10-08T20:06:39.633507973Z",
+  "wall_epoch_unix_ns": 1791489999633507973,
+  "duration_ns": 1601653280,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# SYNTHETIC FTDI/MPSSE JTAG adapter: an in-process Sipeed-shaped adapter with\n# one fabricated TAP (IDCODE 0x1BA01477, 4-bit IR). Nothing here was measured\n# on hardware; it exercises the native MPSSE/JTAG stack and the replay path.\n#\n#   HWLAB_FTDI_SIM=1 hwlab run examples/ftdi-jtag-sim.yaml\n#\n# HWLAB_FTDI_SIM=empty simulates an adapter with no target (TDO floating high)\n# and HWLAB_FTDI_SIM=chain a three-TAP chain.\nname: ftdi-jtag-sim\nduration: 3s\n\ndevices:\n  jtag:\n    plugin: ftdi\n    device: sim-ftdi\n\nsteps:\n  - {name: adapter-info, at: 100ms, device: jtag, call: JTAGTransport.info}\n  - {name: selftest, at: 300ms, device: jtag, call: JTAGTransport.selftest}\n  - {name: tap-reset, at: 500ms, device: jtag, call: JTAGTransport.tap_reset}\n  - {name: scan-1, at: 700ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}\n  - {name: scan-2, at: 1000ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}\n  - {name: scan-3, at: 1300ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}\n  - {name: identify, at: 1600ms, device: jtag, call: TargetIdentify.identify}\n",
+  "devices": [
+    {
+      "alias": "jtag",
+      "device_id": "sim-ftdi",
+      "plugin_id": "ftdi",
+      "name": "Simulated FTDI MPSSE adapter (SYNTHETIC)",
+      "capabilities": [
+        "JTAGScan",
+        "JTAGTransport",
+        "TargetIdentify"
+      ],
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": []
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "id": "a001",
+    "name": "nrf802154-ch15.pcapng",
+    "kind": "pcap",
+    "mime_type": "application/vnd.tcpdump.pcapng",
+    "path": "artifacts/radio/nrf802154-ch15.pcapng",
+    "size": 22704,
+    "source": "radio",
+    "capture": "radio",
+    "created_at": "2026-10-06T18:38:03.014336731Z",
+    "metadata": {
+      "channel": "15",
+      "clock.device_resets": "0",
+      "clock.drift_ppm": "9.97",
+      "clock.latency_max_ns": "16838121",
+      "clock.latency_mean_ns": "3803328",
+      "clock.latency_min_ns": "0",
+      "clock.note": "relative timing between frames is device-timer accurate; absolute alignment is late by the unknown minimum USB transit latency",
+      "clock.offset_ns": "-107645023700962",
+      "clock.resolution_ns": "1000",
+      "clock.source": "device timer (us since boot), mapped by minimum-offset estimator",
+      "decode": "synthetic MAC frames; original network fields removed",
+      "link_type": "283",
+      "packets": "242",
+      "rssi_mean_dbm": "-73.5",
+      "session.start_ns": "826248305",
+      "wall.start_utc": "2026-10-06T18:37:52.524095922Z",
+      "fixture.sanitized": "real timing/RSSI; synthetic packet bytes"
+    }
+  }
+]

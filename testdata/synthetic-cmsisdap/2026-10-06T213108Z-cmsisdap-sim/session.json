@@ -1,0 +1,25 @@
+{
+  "format_version": 1,
+  "id": "2026-10-06T213108Z-cmsisdap-sim",
+  "name": "cmsisdap-sim",
+  "status": "complete",
+  "created_at": "2026-10-06T21:31:08.291300753Z",
+  "wall_epoch_unix_ns": 1791322268291300753,
+  "duration_ns": 801265383,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# CMSIS-DAP debug probe through the native SWD stack.\n#\n# The default run uses the plugin's in-process SYNTHETIC probe and Cortex-M\n# target, so it needs no hardware. Everything it shows (the core, the vector\n# table, the registers) is simulated, not measured:\n#\n#   HWLAB_CMSISDAP_SIM=1 hwlab run --yes examples/cmsisdap-sim.yaml\n#\n# For a real probe (UNVALIDATED: the USB transports and the behaviour on real\n# probes and targets have never run; no CMSIS-DAP probe was available):\n#\n#   hwlab devices                                  # cmsisdap/\u003cvid\u003e:\u003cpid\u003e:\u003cserial\u003e\n#   hwlab invoke cmsisdap/\u003cid\u003e DebugProbe.info\n#   hwlab invoke cmsisdap/\u003cid\u003e DebugProbe.connect\n#\n# and replace `device:` below. Linux needs access to the probe's usbfs node\n# (v2) or hidraw node (v1), e.g. through a udev rule. The steps halt and\n# reset the target, so they need --yes; nothing here writes memory or flash.\nname: cmsisdap-sim\nduration: 2s\n\ndevices:\n  dbg:\n    plugin: cmsisdap\n    device: sim-cmsisdap\n\nsteps:\n  - {name: probe-info, at: 100ms, device: dbg, call: DebugProbe.info}\n  - {name: connect,    at: 200ms, device: dbg, call: DebugProbe.connect}\n  - {name: vectors,    at: 300ms, device: dbg, call: MemoryAccess.read, args: {address: \"0x0\", length: 16}}\n  - {name: halt,       at: 400ms, device: dbg, call: DebugProbe.halt}\n  - {name: registers,  at: 500ms, device: dbg, call: DebugProbe.read_registers}\n  - {name: step,       at: 600ms, device: dbg, call: DebugProbe.step}\n  - {name: reset-halt, at: 700ms, device: dbg, call: DebugProbe.reset, args: {halt: true}}\n  - {name: resume,     at: 800ms, device: dbg, call: DebugProbe.resume}\n",
+  "devices": [
+    {
+      "alias": "dbg",
+      "device_id": "sim-cmsisdap",
+      "plugin_id": "cmsisdap",
+      "name": "Simulated CMSIS-DAP (SYNTHETIC)",
+      "capabilities": [
+        "DebugProbe",
+        "MemoryAccess"
+      ],
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": []
+}

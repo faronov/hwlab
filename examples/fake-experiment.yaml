@@ -1,0 +1,48 @@
+# Simulated lab: a power meter, logic analyzer, 802.15.4 sniffer and debug
+# probe observing the same periodic radio-TX scenario. No hardware needed.
+#
+#   make build && ./bin/hwlab run examples/fake-experiment.yaml
+name: fake-radio-tx
+duration: 1s
+
+devices:
+  power:                       # alias on the timeline
+    plugin: fake
+    device: power0
+    requires: [PowerMeasurement]
+    realtime: false            # simulated time: finishes instantly (CI friendly)
+    first_tx_ms: 12.34
+    period_ms: 100
+    burst_us: 2261
+    idle_ua: 8
+    burst_ma: 16.2
+  logic:
+    plugin: fake
+    device: logic0
+    realtime: false
+  radio:
+    plugin: fake
+    device: radio0
+    realtime: false
+    channel: 15
+  debug:
+    plugin: fake
+    device: debug0
+    realtime: false
+
+analysis:
+  nominal_voltage: 3.3
+
+plots:
+  - name: overview
+    title: Fake radio TX - overview
+    format: svg
+  - name: overview
+    title: Fake radio TX - overview
+    format: png
+  - name: first-tx
+    title: First TX burst (log current)
+    start: 10ms
+    end: 18ms
+    format: png
+    log_power: true

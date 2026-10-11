@@ -1,0 +1,595 @@
+//
+// Saleae gRPC Automation API 1.0.0
+//
+// This file contains the protobuf description for the automation API integrated
+// into the Saleae Logic 2 software, versions 2.3.56 and later.
+//
+// Please see https://saleae.github.io/logic2-automation/ for more information on
+// the gRPC API and the Python wrapper library.
+//
+
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "saleae";
+option java_outer_classname = "SaleaeProto";
+option objc_class_prefix = "Saleae";
+// hwlab: the only modification to the upstream file is this go_package option.
+option go_package = "github.com/faronov/hwlab/plugins/saleae/internal/saleaepb";
+
+package saleae.automation;
+
+// Saleae Logic 2 Automation API
+
+
+/*****************************************************************************
+ *
+ * gRPC API
+ *
+ ****************************************************************************/
+
+service Manager {
+    rpc GetAppInfo(GetAppInfoRequest) returns (GetAppInfoReply) {}
+
+    // Get list of connected devices.
+    rpc GetDevices(GetDevicesRequest) returns (GetDevicesReply) {}
+
+    // Start a capture
+    rpc StartCapture(StartCaptureRequest) returns (StartCaptureReply) {}
+
+    // Stop an active capture
+    rpc StopCapture(StopCaptureRequest) returns (StopCaptureReply) {}
+
+    // Wait until a capture has completed
+    rpc WaitCapture(WaitCaptureRequest) returns (WaitCaptureReply) {}
+
+    // Load a capture from file.
+    rpc LoadCapture(LoadCaptureRequest) returns (LoadCaptureReply) {}
+
+    // Save a capture to file.
+    rpc SaveCapture(SaveCaptureRequest) returns (SaveCaptureReply) {}
+
+    // Close a capture.
+    // Note: It is recommended to close a capture once it is no longer being used
+    // so that any consumed resources can be released.
+    rpc CloseCapture(CloseCaptureRequest) returns (CloseCaptureReply) {}
+
+    // Add an analyzer to a capture.
+    rpc AddAnalyzer(AddAnalyzerRequest) returns (AddAnalyzerReply) {}
+
+    // Remove an analyzer from a capture.
+    rpc RemoveAnalyzer(RemoveAnalyzerRequest) returns (RemoveAnalyzerReply) {}
+
+    // Add a high level analyzer to a capture.
+    rpc AddHighLevelAnalyzer(AddHighLevelAnalyzerRequest) returns (AddHighLevelAnalyzerReply) {}
+
+    // Remove a high level analyzer from a capture.
+    rpc RemoveHighLevelAnalyzer(RemoveHighLevelAnalyzerRequest) returns (RemoveHighLevelAnalyzerReply) {}
+
+    // Export raw channel data to CSV files.
+    rpc ExportRawDataCsv(ExportRawDataCsvRequest)
+            returns (ExportRawDataCsvReply) {}
+
+    // Export raw channel data to binary files.
+    rpc ExportRawDataBinary(ExportRawDataBinaryRequest)
+            returns (ExportRawDataBinaryReply) {}
+
+    // Export analyzer data to CSV file.
+    rpc ExportDataTableCsv(ExportDataTableCsvRequest) returns (ExportDataTableCsvReply) {}
+
+    // Export custom analyzer export data to file.
+    rpc LegacyExportAnalyzer(LegacyExportAnalyzerRequest)
+            returns (LegacyExportAnalyzerReply) {}
+}
+
+
+
+/*****************************************************************************
+ *
+ * Core Types
+ *
+ ****************************************************************************/
+
+ // This enum is not used in any messages. It is here to version this .proto file, and make it accessible to
+ // users of this .proto file. Please see the automation API documentation for more info on
+ // versioning (link at top of file).
+ enum ThisApiVersion {
+    option allow_alias = true;
+
+    // ZERO value here to appease protobuf - the first enum value must be zero.
+    THIS_API_VERSION_ZERO = 0;
+
+    THIS_API_VERSION_MAJOR = 1;
+    THIS_API_VERSION_MINOR = 0;
+    THIS_API_VERSION_PATCH = 0;
+ }
+
+ message Version {
+    uint32 major = 1;
+    uint32 minor = 2;
+    uint32 patch = 3;
+ }
+
+ // Application version info for the
+ message AppInfo {
+    // The version of .proto that Logic 2 is using.
+    Version api_version = 1;
+
+    // Logic 2 Application Version
+    string application_version = 2;
+
+    // Process ID of the main Logic 2 process
+    uint64 launch_pid = 3;
+ }
+
+enum ErrorCode {
+    ERROR_CODE_UNSPECIFIED = 0; // Not used
+
+    // Unexpected Saleae Internal Error.
+    ERROR_CODE_INTERNAL_EXCEPTION = 1;
+
+    // Request is invalid, usually because of invalid arguments.
+    //
+    // Examples:
+    //     Invalid Capture Id - capture does not exist
+    //     Missing filepath
+    ERROR_CODE_INVALID_REQUEST = 10;
+
+    // Loading the capture failed
+    ERROR_CODE_LOAD_CAPTURE_FAILED = 20;
+
+    // Export failed
+    ERROR_CODE_EXPORT_FAILED = 21;
+
+    // The specified device id does not exist
+    ERROR_CODE_MISSING_DEVICE = 50;
+
+    // There was a device error during the capture
+    ERROR_CODE_DEVICE_ERROR = 51;
+
+    // Ran out of memory during capture
+    ERROR_CODE_OUT_OF_MEMORY = 52;
+}
+
+enum RadixType {
+    RADIX_TYPE_UNSPECIFIED = 0;
+
+    RADIX_TYPE_BINARY = 1;
+    RADIX_TYPE_DECIMAL = 2;
+    RADIX_TYPE_HEXADECIMAL = 3;
+    RADIX_TYPE_ASCII = 4;
+};
+
+enum DeviceType {
+    // Invalid Device Type
+    DEVICE_TYPE_UNSPECIFIED = 0;
+
+    // Saleae Logic - NOT SUPPORTED
+    DEVICE_TYPE_LOGIC = 1;
+
+    // Saleae Logic 4 - NOT SUPPORTED
+    DEVICE_TYPE_LOGIC_4 = 2;
+
+    // Saleae Logic 8
+    DEVICE_TYPE_LOGIC_8 = 3;
+
+    // Saleae Logic 16  - NOT SUPPORTED
+    DEVICE_TYPE_LOGIC_16 = 4;
+
+    // Saleae Logic Pro 8
+    DEVICE_TYPE_LOGIC_PRO_8 = 5;
+
+    // Saleae Logic Pro 16
+    DEVICE_TYPE_LOGIC_PRO_16 = 6;
+}
+
+// Device descriptor object.
+message Device {
+    // The device id of this device
+    string device_id = 1;
+
+    // The type of this device
+    DeviceType device_type = 2;
+
+    // True if this is a simulation device
+    bool is_simulation = 3;
+}
+
+enum ChannelType {
+    CHANNEL_TYPE_UNSPECIFIED = 0;
+
+    // Digial channel
+    CHANNEL_TYPE_DIGITAL = 1;
+
+    // Analog channel
+    CHANNEL_TYPE_ANALOG = 2;
+}
+
+message LogicChannels {
+    // Indices of Digital Channels, starting from 0
+    repeated uint32 digital_channels = 1;
+
+    // Indices of Analog Channels, starting from 0
+    repeated uint32 analog_channels = 2;
+}
+
+message CaptureInfo {
+    // Id of the capture.
+    uint64 capture_id = 1;
+}
+
+message LogicDeviceConfiguration {
+    // Analog and Digital channels to record on
+    oneof enabled_channels {
+        LogicChannels logic_channels = 1;
+    }
+
+    // Digital Sample Rate (samples per second)
+    uint32 digital_sample_rate = 2;
+
+    // Analog Sample Rate (samples per second)
+    uint32 analog_sample_rate = 3;
+
+    // For Pro 8 and Pro 16, this can be one of: 1.2, 1.8, or 3.3
+    // For other devices this is ignored
+    double digital_threshold_volts = 4;
+
+    // Glitch filter to apply to digital data
+    // See https://support.saleae.com/user-guide/using-logic/software-glitch-filter for more information
+    repeated GlitchFilterEntry glitch_filters = 5;
+}
+
+message GlitchFilterEntry {
+    // Channel index
+    uint32 channel_index = 1;
+
+    // Minimum pulse width, in seconds
+    double pulse_width_seconds = 2;
+}
+
+// When in manual capture mode, the capture must be manually stopped using the StopCapture request.
+message ManualCaptureMode { 
+    // Number of seconds to keep after the capture ends.
+    // If greater than 0, only the latest `trim_data_seconds` of the capture will be kept, otherwise the data will not be trimmed.
+    double trim_data_seconds = 1;
+}
+
+// When in timed capture mode, the capture will automatically stop after `duration_seconds`.
+// If `trim_data_seconds` is 
+message TimedCaptureMode {
+    // Seconds of data to capture
+    double duration_seconds = 1;
+
+    // Number of seconds to keep after the capture ends.
+    // If greater than 0, only the latest `trim_data_seconds` of the capture will be kept, otherwise the data will not be trimmed.
+    double trim_data_seconds = 2;
+}
+
+enum DigitalTriggerType {
+    DIGITAL_TRIGGER_TYPE_UNSPECIFIED = 0;
+
+    // Rising edge trigger, from LOW to HIGH
+    DIGITAL_TRIGGER_TYPE_RISING = 1;
+
+    // Falling edge trigger, from HIGH to LOW
+    DIGITAL_TRIGGER_TYPE_FALLING = 2;
+
+    // Pulse trigger, with a rising and falling edge
+    DIGITAL_TRIGGER_TYPE_PULSE_HIGH = 3;
+
+    // Pulse trigger, with a falling and rising edge
+    DIGITAL_TRIGGER_TYPE_PULSE_LOW = 4;
+}
+
+message DigitalTriggerLinkedChannel {
+    // Channel to link to
+    uint32 channel_index = 1;
+
+    // Expected state of channel at trigger
+    DigitalTriggerLinkedChannelState state = 2;
+}
+
+enum DigitalTriggerLinkedChannelState {
+    DIGITAL_TRIGGER_LINKED_CHANNEL_STATE_UNSPECIFIED = 0;
+
+    // The linked channel must be LOW
+    DIGITAL_TRIGGER_LINKED_CHANNEL_STATE_LOW = 1;
+
+    // The linked channel must be HIGH
+    DIGITAL_TRIGGER_LINKED_CHANNEL_STATE_HIGH = 2;
+}
+
+// When in digital trigger capture mode, the capture will automatically stop when the specified digital condition
+// has been met.
+message DigitalTriggerCaptureMode {
+    // Type of trigger
+    DigitalTriggerType trigger_type = 1;
+
+    // Number of seconds to continue capturing after trigger
+    double after_trigger_seconds = 2;
+
+    // Number of seconds to keep after the capture ends.
+    // If greater than 0, only the latest `trim_data_seconds` of the capture will be kept, otherwise the data will not be trimmed.
+    double trim_data_seconds = 3;
+
+    // Index of channel to search for `trigger_type`
+    uint32 trigger_channel_index = 4;
+
+    // Minimum pulse width to trigger on, in seconds (only applies when trigger_type is a pulse trigger type)
+    double min_pulse_width_seconds = 5;
+
+    // Maximum pulse width to trigger on, in seconds (only applies when trigger_type is a pulse trigger type)
+    double max_pulse_width_seconds = 6;
+
+    // Conditions on other digital channels that must be met in order to meet the trigger condition
+    // For an edge trigger, the linked channel must be in the specified state at when the trigger edge occurs.
+    // For a pulse trigger, the linked channel must be in the specified state for the duration of the pulse.
+    repeated DigitalTriggerLinkedChannel linked_channels = 7;
+}
+
+message CaptureConfiguration {
+    // Capture buffer size
+    // This is the maximum number of megabytes allowed for storing data during a capture.
+    // When this limit is reached, what happens depends on the capture mode:
+    //
+    //   Manual - the oldest data will be deleted until the total usage is under buffer_size_megabytes
+    //   Timer - the capture will be terminated
+    //   DigitalTriggerCapture - the capture will be terminated
+    //
+    uint32 buffer_size_megabytes = 1;
+
+    // Capture mode
+    oneof capture_mode {
+        ManualCaptureMode manual_capture_mode = 2;
+        TimedCaptureMode timed_capture_mode = 3;
+        DigitalTriggerCaptureMode digital_capture_mode = 4;
+    }
+}
+
+
+
+/*****************************************************************************
+ *
+ * Request/Reply Messages
+ *
+ ****************************************************************************/
+
+message GetDevicesRequest {
+    // If true, simulation devices will be included in the response
+    bool include_simulation_devices = 1;
+}
+message GetDevicesReply { repeated Device devices = 1; }
+
+// Start Capture
+message StartCaptureRequest {
+    // Device id of device to capture with.
+    // If a device id is not specified, the first physical device will be used.
+    // If no physical device is connected, an error will be returned.
+    string device_id = 1;
+
+    oneof device_configuration {
+        LogicDeviceConfiguration logic_device_configuration = 2;
+    }
+
+    CaptureConfiguration capture_configuration = 3;
+}
+message StartCaptureReply { CaptureInfo capture_info = 1; }
+
+// Stop Capture
+// If the capture is running, this will stop the capture, otherwise it will do nothing.
+message StopCaptureRequest { uint64 capture_id = 1; }
+message StopCaptureReply {}
+
+// Wait Capture
+// If the capture is running, this will wait for the capture to end, otherwise it will do nothing.
+// This should not be used with ManualCaptureMode. It requires that the capture ends on its own.
+message WaitCaptureRequest { uint64 capture_id = 1; }
+message WaitCaptureReply {}
+
+message LoadCaptureRequest {
+    // Absolute filepath of Logic 2 .sal capture file to load.
+    string filepath = 1;
+}
+message LoadCaptureReply {
+    // Information about the capture that was loaded.
+    CaptureInfo capture_info = 1;
+}
+
+message SaveCaptureRequest {
+    // Id of capture to save.
+    uint64 capture_id = 1;
+
+    // Absolute filepath to save the file to, usually ending in ".sal".
+    // The save file will be exactly as specified, and will _NOT_ have ".sal" appended to it.
+    string filepath = 2;
+}
+message SaveCaptureReply {}
+
+message CloseCaptureRequest {
+    // Id of capture to close.
+    uint64 capture_id = 1;
+}
+message CloseCaptureReply {}
+
+message ExportRawDataCsvRequest {
+    // Id of capture to export data from.
+    uint64 capture_id = 1;
+
+    // Directory to create exported CSV files in.
+    string directory = 2;
+
+    // Channels to export.
+    oneof channels {
+        LogicChannels logic_channels = 3;
+    }
+
+    // Must be between 1 and 1,000,000, inclusive.
+    uint64 analog_downsample_ratio = 4;
+
+    // If true, timestamps will be in ISO8601 format.
+    bool iso8601_timestamp = 5;
+}
+message ExportRawDataCsvReply {}
+
+message ExportRawDataBinaryRequest {
+    // Id of capture to export data from.
+    uint64 capture_id = 1;
+
+    // Directory to create exported binary files in.
+    string directory = 2;
+
+    // Channels to export.
+    oneof channels {
+        LogicChannels logic_channels = 3;
+    }
+
+    // Must be between 1 and 1,000,000, inclusive.
+    uint64 analog_downsample_ratio = 4;
+}
+message ExportRawDataBinaryReply {}
+
+message AnalyzerSettingValue {
+    oneof value {
+        // String value
+        string string_value = 1;
+
+        // Integer value
+        int64 int64_value = 2;
+
+        // Boolean value
+        bool bool_value = 3;
+
+        // Double floating-point value
+        double double_value = 4;
+    }
+}
+message AddAnalyzerRequest {
+    // Id of capture to add analyzer to.
+    uint64 capture_id = 1;
+
+    // Name of analyzer. This should exactly match the name seen in the
+    // application. Examples: "SPI", "I2C", "Async Serial"
+    string analyzer_name = 2;
+
+    // User-facing name for the analyzer.
+    string analyzer_label = 3;
+
+    // Analyzer settings. These should match the names shown in analyzer's
+    // settings shown in the application.
+    map<string, AnalyzerSettingValue> settings = 4;
+}
+message AddAnalyzerReply {
+    // Id of the newly created analyzer.
+    uint64 analyzer_id = 1;
+}
+
+message RemoveAnalyzerRequest {
+    // Id of capture to remove analyzer from.
+    uint64 capture_id = 1;
+
+    // Id of analyzer to remove.
+    uint64 analyzer_id = 2;
+}
+message RemoveAnalyzerReply {}
+
+message HighLevelAnalyzerSettingValue {
+    oneof value {
+        // String value
+        string string_value = 1;
+
+        // Double-precision floating point value
+        double number_value = 2;
+    }
+}
+message AddHighLevelAnalyzerRequest {
+    // Id of capture to add analyzer to.
+    uint64 capture_id = 1;
+
+    // The path to the extension directory containing the HLA
+    // Note: The extension directory is the directory that contains `extension.json`
+    string extension_directory = 2;
+
+    // The name of the HLA to use, as listed in `extension.json`
+    string hla_name = 3;
+
+    // User-facing name for the HLA.
+    string hla_label = 4;
+
+    // Id of analyzer to use as input to this HLA
+    uint64 input_analyzer_id = 5;
+
+    // Analyzer settings. These should match the names shown in analyzer's
+    // settings shown in the application.
+    map<string, HighLevelAnalyzerSettingValue> settings = 6;
+
+}
+message AddHighLevelAnalyzerReply {
+    // Id of the newly created analyzer.
+    uint64 analyzer_id = 1;
+}
+
+message RemoveHighLevelAnalyzerRequest {
+    // Id of capture to remove analyzer from.
+    uint64 capture_id = 1;
+
+    // Id of high level analyzer to remove.
+    uint64 analyzer_id = 2;
+}
+message RemoveHighLevelAnalyzerReply {}
+
+
+
+message DataTableAnalyzerConfiguration {
+    // Id of analyzers to export data from.
+    uint64 analyzer_id = 1;
+
+    // Radix type to use for this analyzer
+    RadixType radix_type = 2;
+}
+message DataTableFilter {
+    // Query to filter by
+    string query = 1;
+
+    // Columns to query
+    repeated string columns = 2;
+}
+message ExportDataTableCsvRequest {
+    // Id of capture to export data from.
+    uint64 capture_id = 1;
+
+    // Path to export CSV data to.
+    string filepath = 2;
+
+    // Id of analyzers to export data from.
+    repeated DataTableAnalyzerConfiguration analyzers = 3;
+
+    // If true, timestamps will be in ISO8601 format.
+    bool iso8601_timestamp = 4;
+
+    // Columns to export. If empty, all columns will be exported.
+    repeated string export_columns = 5;
+
+    DataTableFilter filter = 6;
+}
+message ExportDataTableCsvReply {}
+
+message LegacyExportAnalyzerRequest {
+    // Id of capture to export data from.
+    uint64 capture_id = 1;
+
+    // Path to export data to.
+    string filepath = 2;
+
+    // Id of analyzer to export data from.
+    uint64 analyzer_id = 3;
+
+    // Radix to use for exported data.
+    RadixType radix_type = 4;
+}
+message LegacyExportAnalyzerReply {}
+
+message GetAppInfoRequest {}
+message GetAppInfoReply{
+    AppInfo app_info = 1;
+}
+

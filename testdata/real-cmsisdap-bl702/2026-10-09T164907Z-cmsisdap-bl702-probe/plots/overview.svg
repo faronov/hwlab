@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="114" viewBox="0 0 1200 114" font-family="monospace" font-size="11">
+<rect x="0.00" y="0.00" width="1200.00" height="114.00" fill="#ffffff"/>
+<text x="90.00" y="18.00" fill="#1e1e1e" text-anchor="start">cmsisdap-bl702-probe   [100.552188 ms .. 6002.464152 ms]</text>
+<line x1="256.12" y1="34.00" x2="256.12" y2="68.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="256.12" y="90.00" fill="#1e1e1e" text-anchor="middle">1</text>
+<line x1="440.80" y1="34.00" x2="440.80" y2="68.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="440.80" y="90.00" fill="#1e1e1e" text-anchor="middle">2</text>
+<line x1="625.49" y1="34.00" x2="625.49" y2="68.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="625.49" y="90.00" fill="#1e1e1e" text-anchor="middle">3</text>
+<line x1="810.17" y1="34.00" x2="810.17" y2="68.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="810.17" y="90.00" fill="#1e1e1e" text-anchor="middle">4</text>
+<line x1="994.86" y1="34.00" x2="994.86" y2="68.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="994.86" y="90.00" fill="#1e1e1e" text-anchor="middle">5</text>
+<line x1="1179.54" y1="34.00" x2="1179.54" y2="68.00" stroke="#e1e1e1" stroke-width="1.00"/>
+<text x="1179.54" y="90.00" fill="#1e1e1e" text-anchor="middle">6</text>
+<text x="1180.00" y="104.00" fill="#1e1e1e" text-anchor="end">time (s)</text>
+<line x1="90.00" y1="68.00" x2="1180.00" y2="68.00" stroke="#505050" stroke-width="1.00"/>
+<rect x="90.00" y="34.00" width="1090.00" height="34.00" fill="#fafafc"/>
+<line x1="90.00" y1="34.00" x2="90.00" y2="68.00" stroke="#505050" stroke-width="1.00"/>
+<text x="94.00" y="45.00" fill="#1f77b4" text-anchor="start">dbg events (8)</text>
+<line x1="90.00" y1="50.00" x2="90.00" y2="65.00" stroke="#1f77b4" stroke-width="1.50"/>
+<text x="92.00" y="63.00" fill="#1e1e1e" text-anchor="start">DebugProbe.inf</text>
+<line x1="163.83" y1="50.00" x2="163.83" y2="65.00" stroke="#1f77b4" stroke-width="1.50"/>
+<text x="165.83" y="63.00" fill="#1e1e1e" text-anchor="start">DebugProbe.pin</text>
+<line x1="256.23" y1="50.00" x2="256.23" y2="65.00" stroke="#1f77b4" stroke-width="1.50"/>
+<text x="258.23" y="63.00" fill="#1e1e1e" text-anchor="start">DebugProbe.clo</text>
+<line x1="440.82" y1="50.00" x2="440.82" y2="65.00" stroke="#1f77b4" stroke-width="1.50"/>
+<text x="442.82" y="63.00" fill="#1e1e1e" text-anchor="start">DebugProbe.jta</text>
+<line x1="625.60" y1="50.00" x2="625.60" y2="65.00" stroke="#1f77b4" stroke-width="1.50"/>
+<text x="627.60" y="63.00" fill="#1e1e1e" text-anchor="start">DebugProbe.con</text>
+<line x1="810.34" y1="50.00" x2="810.34" y2="65.00" stroke="#1f77b4" stroke-width="1.50"/>
+<text x="812.34" y="63.00" fill="#1e1e1e" text-anchor="start">MemoryAccess.r</text>
+<line x1="994.97" y1="50.00" x2="994.97" y2="65.00" stroke="#1f77b4" stroke-width="1.50"/>
+<text x="996.97" y="63.00" fill="#1e1e1e" text-anchor="start">DebugProbe.sta</text>
+<line x1="1179.60" y1="50.00" x2="1179.60" y2="65.00" stroke="#1f77b4" stroke-width="1.50"/>
+<text x="1181.60" y="63.00" fill="#1e1e1e" text-anchor="start">DebugProbe.inf</text>
+</svg>

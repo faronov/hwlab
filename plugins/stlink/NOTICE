@@ -1,0 +1,16 @@
+hwlab ST-Link backend (plugins/stlink, internal/cortexm)
+
+Implemented independently in Go. No third-party source code is included.
+
+References (documentation and hardware facts, not code):
+  * ARM Debug Interface Architecture Specification ADIv5 and the ARMv7-M
+    Architecture Reference Manual (DHCSR, DCRSR, AIRCR, DEMCR, FPB, DWT).
+  * stlink-org/stlink (BSD-3-Clause): the ST-Link V2 USB command set was read as a
+    protocol reference. No code was copied; the protocol was then verified and
+    corrected against a real ST-LINK/V2.
+  * OpenOCD (GPL-2.0) was consulted for behaviour only; no code was copied,
+    translated, linked or executed, and it is not required.
+  * STM32 reference manuals (RM0090/RM0368/RM0383, RM0008) for the flash
+    controller registers and the F1/F4 device ids. The F1 flash layer (SRAM
+    halfword loader written by hwlab) was verified on a real STM32F1; the F4
+    layer was tested against a simulator only.

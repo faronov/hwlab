@@ -1,0 +1,83 @@
+{
+  "format_version": 1,
+  "id": "2026-10-06T195520Z-saleae-real-analyzers-long",
+  "name": "saleae-real-analyzers-long",
+  "status": "complete",
+  "created_at": "2026-10-06T19:55:20.489034553Z",
+  "wall_epoch_unix_ns": 1791316520489034553,
+  "duration_ns": 93136968467,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "name: saleae-real-analyzers-long\nduration: 90s\n\ndevices:\n  logic:\n    plugin: saleae\n    device: AABBCCDDEEFF0001\n    requires: [DigitalCapture]\n    digital_channels: [0, 1, 2, 3]\n    digital_sample_rate: 4000000\n    channel_names:\n      \"0\": CH1\n      \"1\": CH2\n      \"2\": CH3\n      \"3\": CH4\n    analyzers:\n      - type: uart\n        label: uart-ch1\n        channels: {rx: 0}\n        settings: {\"Bit Rate (Bits/s)\": 9600}\n      - type: i2c\n        label: i2c-ch1-ch2\n        channels: {sda: 0, scl: 1}\n\nplots:\n  - name: overview\n    title: Saleae real capture with analyzers\n    format: svg\n",
+  "devices": [
+    {
+      "alias": "logic",
+      "device_id": "AABBCCDDEEFF0001",
+      "plugin_id": "saleae",
+      "name": "Saleae Logic",
+      "capabilities": [
+        "AnalogCapture",
+        "ArtifactExport",
+        "DigitalCapture",
+        "OfflineCapture",
+        "TimedCapture"
+      ],
+      "config": {
+        "analyzers": [
+          {
+            "channels": {
+              "rx": 0
+            },
+            "label": "uart-ch1",
+            "settings": {
+              "Bit Rate (Bits/s)": 9600
+            },
+            "type": "uart"
+          },
+          {
+            "channels": {
+              "scl": 1,
+              "sda": 0
+            },
+            "label": "i2c-ch1-ch2",
+            "type": "i2c"
+          }
+        ],
+        "channel_names": {
+          "0": "CH1",
+          "1": "CH2",
+          "2": "CH3",
+          "3": "CH4"
+        },
+        "digital_channels": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "digital_sample_rate": 4000000
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": [
+    {
+      "id": "logic",
+      "alias": "logic",
+      "started_ns": 543807274,
+      "stopped_ns": 93136968467,
+      "request_ns": 6893672,
+      "clock": {
+        "source": "Logic 2 capture time offset, anchored at host time of StartCapture RPC return",
+        "resolution_ns": 250,
+        "error_min_ns": 0,
+        "error_min_bounded": false,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "Logic 2 buffers the capture and returns it after it ends; sample times are offsets from Logic 2's capture start, anchored at the host time the StartCapture RPC returned (RPC latency 537ms). The delay between that RPC and the device actually sampling is not measured, so no error bound is claimed."
+      },
+      "events": 7,
+      "samples": 0,
+      "dropped_batches": 0
+    }
+  ]
+}

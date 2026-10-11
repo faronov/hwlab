@@ -1,0 +1,24 @@
+# SYNTHETIC FTDI/MPSSE JTAG adapter: an in-process Sipeed-shaped adapter with
+# one fabricated TAP (IDCODE 0x1BA01477, 4-bit IR). Nothing here was measured
+# on hardware; it exercises the native MPSSE/JTAG stack and the replay path.
+#
+#   HWLAB_FTDI_SIM=1 hwlab run examples/ftdi-jtag-sim.yaml
+#
+# HWLAB_FTDI_SIM=empty simulates an adapter with no target (TDO floating high)
+# and HWLAB_FTDI_SIM=chain a three-TAP chain.
+name: ftdi-jtag-sim
+duration: 3s
+
+devices:
+  jtag:
+    plugin: ftdi
+    device: sim-ftdi
+
+steps:
+  - {name: adapter-info, at: 100ms, device: jtag, call: JTAGTransport.info}
+  - {name: selftest, at: 300ms, device: jtag, call: JTAGTransport.selftest}
+  - {name: tap-reset, at: 500ms, device: jtag, call: JTAGTransport.tap_reset}
+  - {name: scan-1, at: 700ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}
+  - {name: scan-2, at: 1000ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}
+  - {name: scan-3, at: 1300ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}
+  - {name: identify, at: 1600ms, device: jtag, call: TargetIdentify.identify}

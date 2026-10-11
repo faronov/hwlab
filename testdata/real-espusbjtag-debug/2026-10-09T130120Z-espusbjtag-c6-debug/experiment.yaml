@@ -1,0 +1,47 @@
+# Espressif native USB Serial/JTAG (ESP32-C6, 303a:1001): debug session through
+# the NATIVE Go stack: Linux usbfs -> Espressif USB-JTAG transport -> JTAG ->
+# RISC-V Debug Module. No OpenOCD, no Python, no ESP-IDF, no libusb, no CGO.
+#
+# Recorded on a REAL ESP32-C6 (testdata/real-espusbjtag-debug). It exercises
+# halt, hart/system reset, single-step, a hardware breakpoint that really hits,
+# an SRAM write that is restored, flash geometry (read-only) and a SoC reset
+# that drops and re-enumerates the USB device. It never erases or programs
+# flash and writes no eFuse.
+#
+#   hwlab run --yes examples/espusbjtag-c6-debug.yaml
+#
+# The SRAM scratch address 0x4086d3b8 (16 bytes) was verified to read as zeros
+# before the run and is written back as zeros; adjust it for another firmware.
+# The breakpoint address 0x40001688 is on the ROM reset path that every
+# reset-halt executes, so it is hit deterministically.
+name: espusbjtag-c6-debug
+duration: 30s
+
+devices:
+  jtag:
+    plugin: espusbjtag
+    allow_memory_write: true
+    allow_reset: true
+
+steps:
+  - {name: info, at: 100ms, device: jtag, call: JTAGTransport.info}
+  - {name: scan, at: 500ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}
+  - {name: identify, at: 1s, device: jtag, call: TargetIdentify.identify}
+  - {name: chip-info, at: 1500ms, device: jtag, call: DebugProbe.chip_info}
+  - {name: harts, at: 2s, device: jtag, call: DebugProbe.harts}
+  - {name: reset-halt, at: 3s, device: jtag, call: DebugProbe.reset, args: {kind: system, halt: true}}
+  - {name: step, at: 4s, device: jtag, call: DebugProbe.step, args: {count: 4}}
+  - {name: reset-halt-again, at: 5s, device: jtag, call: DebugProbe.reset, args: {kind: system, halt: true}}
+  - {name: breakpoint-hit, at: 6s, device: jtag, call: DebugProbe.set_breakpoint, args: {address: 0x40001688, run_wait_ms: 1000}}
+  - {name: list-breakpoints, at: 7s, device: jtag, call: DebugProbe.list_breakpoints}
+  - {name: clear-breakpoints, at: 7500ms, device: jtag, call: DebugProbe.clear_breakpoint, args: {all: true}}
+  - {name: registers, at: 8s, device: jtag, call: DebugProbe.read_registers, args: {keep_halted: true}}
+  - {name: sram-before, at: 9s, device: jtag, call: MemoryAccess.read, args: {address: 0x4086d3b8, length: 16}}
+  - {name: sram-write, at: 9500ms, device: jtag, call: MemoryAccess.write, args: {address: 0x4086d3b8, data: a55a1234deadbeef0102030405060708}}
+  - {name: sram-after-write, at: 10s, device: jtag, call: MemoryAccess.read, args: {address: 0x4086d3b8, length: 16}}
+  - {name: sram-restore, at: 10500ms, device: jtag, call: MemoryAccess.write, args: {address: 0x4086d3b8, data: "00000000000000000000000000000000"}}
+  - {name: sram-final, at: 11s, device: jtag, call: MemoryAccess.read, args: {address: 0x4086d3b8, length: 16}}
+  - {name: flash-info, at: 12s, device: jtag, call: FlashProgramming.info}
+  - {name: soc-reset, at: 14s, device: jtag, call: DebugProbe.reset, args: {kind: soc, confirm: reset-soc}}
+  - {name: rom-after-soc-reset, at: 16s, device: jtag, call: MemoryAccess.read, args: {address: 0x40001000, length: 4}}
+  - {name: scan-after-reset, at: 17s, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}

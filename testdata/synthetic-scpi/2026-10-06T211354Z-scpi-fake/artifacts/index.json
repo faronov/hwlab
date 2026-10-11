@@ -1,0 +1,62 @@
+[
+  {
+    "id": "a001",
+    "name": "waveform-ch1.csv",
+    "kind": "csv",
+    "mime_type": "text/csv",
+    "path": "artifacts/scope/waveform-ch1.csv",
+    "size": 17241,
+    "source": "scope",
+    "capture": "scope",
+    "created_at": "2026-10-06T21:13:54.319241504Z",
+    "metadata": {
+      "channel": "1",
+      "dt_s": "1e-06",
+      "profile": "rigol",
+      "profile_validated": "false",
+      "samples": "1200",
+      "source": "CHAN1",
+      "synthetic": "true",
+      "t0_s": "-0.0006",
+      "unit": "V"
+    }
+  },
+  {
+    "id": "a002",
+    "name": "waveform-ch2.csv",
+    "kind": "csv",
+    "mime_type": "text/csv",
+    "path": "artifacts/scope/waveform-ch2.csv",
+    "size": 16929,
+    "source": "scope",
+    "capture": "scope",
+    "created_at": "2026-10-06T21:13:54.319792945Z",
+    "metadata": {
+      "channel": "2",
+      "dt_s": "1e-06",
+      "profile": "rigol",
+      "profile_validated": "false",
+      "samples": "1200",
+      "source": "CHAN2",
+      "synthetic": "true",
+      "t0_s": "-0.0006",
+      "unit": "V"
+    }
+  },
+  {
+    "id": "a003",
+    "name": "screenshot.png",
+    "kind": "screenshot",
+    "mime_type": "image/png",
+    "path": "artifacts/scope/screenshot.png",
+    "size": 77,
+    "source": "scope",
+    "capture": "scope",
+    "created_at": "2026-10-06T21:13:54.320414986Z",
+    "metadata": {
+      "bytes": "77",
+      "profile": "rigol",
+      "synthetic": "true"
+    }
+  }
+]

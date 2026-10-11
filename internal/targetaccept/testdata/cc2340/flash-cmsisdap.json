@@ -1,0 +1,1001 @@
+{
+  "backend": "cmsisdap",
+  "checks": [
+    {
+      "phase": "firmware",
+      "name": "connect",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "firmware",
+      "name": "application runs: the SRAM counter advances",
+      "status": "PASS",
+      "detail": "counter 4838544 -\u003e 4976791 (\u003cnil\u003e \u003cnil\u003e)"
+    },
+    {
+      "phase": "firmware",
+      "name": "flash content equals the acceptance image",
+      "status": "PASS",
+      "detail": "160 bytes, err \u003cnil\u003e"
+    },
+    {
+      "phase": "firmware",
+      "name": "firmware marker is in flash",
+      "status": "PASS",
+      "detail": "marker \"HWLAB-CC2340-ACCEPT-1\""
+    },
+    {
+      "phase": "firmware",
+      "name": "halt",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "firmware",
+      "name": "registers readable and PC is inside the image",
+      "status": "PASS",
+      "detail": "pc 0000004c err \u003cnil\u003e"
+    },
+    {
+      "phase": "firmware",
+      "name": "counter is stable while halted",
+      "status": "PASS",
+      "detail": "4994977 4994977"
+    },
+    {
+      "phase": "firmware",
+      "name": "breakpoint round 1: bp_func hit, counter advanced",
+      "status": "PASS",
+      "detail": "hit=true pc=0000005c counter 4994977 (previous 0)"
+    },
+    {
+      "phase": "firmware",
+      "name": "breakpoint round 2: bp_func hit, counter advanced",
+      "status": "PASS",
+      "detail": "hit=true pc=0000005c counter 5046272 (previous 4994977)"
+    },
+    {
+      "phase": "firmware",
+      "name": "breakpoint round 3: bp_func hit, counter advanced",
+      "status": "PASS",
+      "detail": "hit=true pc=0000005c counter 5097291 (previous 5046272)"
+    },
+    {
+      "phase": "firmware",
+      "name": "breakpoint round 4: bp_func hit, counter advanced",
+      "status": "PASS",
+      "detail": "hit=true pc=0000005c counter 5148320 (previous 5097291)"
+    },
+    {
+      "phase": "firmware",
+      "name": "breakpoint round 5: bp_func hit, counter advanced",
+      "status": "PASS",
+      "detail": "hit=true pc=0000005c counter 5199617 (previous 5148320)"
+    },
+    {
+      "phase": "firmware",
+      "name": "every breakpoint round hit",
+      "status": "PASS",
+      "detail": "5 of 5"
+    },
+    {
+      "phase": "firmware",
+      "name": "reset-and-halt 1 stops at the application reset handler",
+      "status": "PASS",
+      "detail": "pc 00000040 want 00000040 (reset \u003cnil\u003e, regs \u003cnil\u003e)"
+    },
+    {
+      "phase": "firmware",
+      "name": "reset-and-halt 1: application runs after resume",
+      "status": "PASS",
+      "detail": "counter 6770 -\u003e 144752 (\u003cnil\u003e \u003cnil\u003e)"
+    },
+    {
+      "phase": "firmware",
+      "name": "reset-and-halt 2 stops at the application reset handler",
+      "status": "PASS",
+      "detail": "pc 00000040 want 00000040 (reset \u003cnil\u003e, regs \u003cnil\u003e)"
+    },
+    {
+      "phase": "firmware",
+      "name": "reset-and-halt 2: application runs after resume",
+      "status": "PASS",
+      "detail": "counter 7041 -\u003e 145303 (\u003cnil\u003e \u003cnil\u003e)"
+    },
+    {
+      "phase": "firmware",
+      "name": "reset-and-halt 3 stops at the application reset handler",
+      "status": "PASS",
+      "detail": "pc 00000040 want 00000040 (reset \u003cnil\u003e, regs \u003cnil\u003e)"
+    },
+    {
+      "phase": "firmware",
+      "name": "reset-and-halt 3: application runs after resume",
+      "status": "PASS",
+      "detail": "counter 6766 -\u003e 144732 (\u003cnil\u003e \u003cnil\u003e)"
+    },
+    {
+      "phase": "firmware",
+      "name": "hardware nRESET",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "firmware",
+      "name": "application runs after nRESET",
+      "status": "PASS",
+      "detail": "counter 20815 -\u003e 158804 (\u003cnil\u003e \u003cnil\u003e)"
+    },
+    {
+      "phase": "firmware",
+      "name": "system reset while running",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "firmware",
+      "name": "application runs after SYSRESETREQ",
+      "status": "PASS",
+      "detail": "counter 26820 -\u003e 163972 (\u003cnil\u003e \u003cnil\u003e)"
+    },
+    {
+      "phase": "identify",
+      "name": "connect",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "identify",
+      "name": "core is identified",
+      "status": "PASS",
+      "detail": "core Cortex-M0+ arch ARMv6-M r0p1 cpuid 0x410cc601"
+    },
+    {
+      "phase": "discover",
+      "name": "breakpoint resources",
+      "status": "INFO",
+      "detail": "present=true slots=4 fpb_revision=0"
+    },
+    {
+      "phase": "discover",
+      "name": "watchpoint resources",
+      "status": "INFO",
+      "detail": "present=false comparators=0"
+    },
+    {
+      "phase": "sram",
+      "name": "halt",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "sram",
+      "name": "scratch window chosen",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "sram",
+      "name": "save original",
+      "status": "PASS",
+      "detail": "window 0x20004780+256: \u003cnil\u003e"
+    },
+    {
+      "phase": "sram",
+      "name": "scratch window",
+      "status": "INFO",
+      "detail": "0x20004780..0x20004880 straddles 0x20004800"
+    },
+    {
+      "phase": "sram",
+      "name": "bulk 256 B pattern",
+      "status": "PASS",
+      "detail": "256 B at +0x0; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "8-bit write",
+      "status": "PASS",
+      "detail": "1 B at +0x1; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "8-bit write, next byte",
+      "status": "PASS",
+      "detail": "1 B at +0x2; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "16-bit aligned write",
+      "status": "PASS",
+      "detail": "2 B at +0x10; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "16-bit write, upper half-word",
+      "status": "PASS",
+      "detail": "2 B at +0x12; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "32-bit aligned write",
+      "status": "PASS",
+      "detail": "4 B at +0x20; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "32-bit write at the 1 KiB boundary",
+      "status": "PASS",
+      "detail": "4 B at +0x80; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "16-bit write ending at the boundary",
+      "status": "PASS",
+      "detail": "2 B at +0x7e; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "16-bit write starting at the boundary",
+      "status": "PASS",
+      "detail": "2 B at +0x84; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "unaligned 3-byte write",
+      "status": "PASS",
+      "detail": "3 B at +0x41; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "6-byte write across a word pair",
+      "status": "PASS",
+      "detail": "6 B at +0x7e; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "1 byte at window start",
+      "status": "PASS",
+      "detail": "1 B at +0x0; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "1 byte at window end",
+      "status": "PASS",
+      "detail": "1 B at +0xff; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "all-zero pattern",
+      "status": "PASS",
+      "detail": "32 B at +0x90; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "all-ones pattern",
+      "status": "PASS",
+      "detail": "8 B at +0xb0; window and guards match the expected image (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "sram",
+      "name": "write to an unmapped address is refused",
+      "status": "PASS",
+      "detail": "error class FailedPrecondition"
+    },
+    {
+      "phase": "sram",
+      "name": "read of an unmapped address is refused",
+      "status": "PASS",
+      "detail": "error class FailedPrecondition"
+    },
+    {
+      "phase": "sram",
+      "name": "link recovers after a bus fault",
+      "status": "PASS",
+      "detail": "err \u003cnil\u003e"
+    },
+    {
+      "phase": "sram",
+      "name": "empty write is refused",
+      "status": "PASS",
+      "detail": "error class InvalidArgument"
+    },
+    {
+      "phase": "sram",
+      "name": "odd-length hex is refused",
+      "status": "PASS",
+      "detail": "error class InvalidArgument"
+    },
+    {
+      "phase": "sram",
+      "name": "non-hex data is refused",
+      "status": "PASS",
+      "detail": "error class InvalidArgument"
+    },
+    {
+      "phase": "sram",
+      "name": "oversize write is refused",
+      "status": "PASS",
+      "detail": "error class InvalidArgument"
+    },
+    {
+      "phase": "sram",
+      "name": "zero-length read is refused",
+      "status": "PASS",
+      "detail": "error class InvalidArgument"
+    },
+    {
+      "phase": "sram",
+      "name": "read wrapping the address space is refused",
+      "status": "PASS",
+      "detail": "error class FailedPrecondition"
+    },
+    {
+      "phase": "sram",
+      "name": "window untouched by refused accesses",
+      "status": "PASS",
+      "detail": "err \u003cnil\u003e"
+    },
+    {
+      "phase": "sram",
+      "name": "restoration exact",
+      "status": "PASS",
+      "detail": "288 bytes incl. 16-byte guards, err \u003cnil\u003e"
+    },
+    {
+      "phase": "registers",
+      "name": "resume for the running-state check",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "registers",
+      "name": "register write while running is refused",
+      "status": "PASS",
+      "detail": "error class FailedPrecondition"
+    },
+    {
+      "phase": "registers",
+      "name": "halt",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "registers",
+      "name": "read all",
+      "status": "PASS",
+      "detail": "20 registers, err \u003cnil\u003e"
+    },
+    {
+      "phase": "registers",
+      "name": "write r0",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "registers",
+      "name": "readback r0",
+      "status": "PASS",
+      "detail": "wrote a5a50001 read a5a50001 (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "registers",
+      "name": "no other register changed by r0",
+      "status": "PASS",
+      "detail": "differences []"
+    },
+    {
+      "phase": "registers",
+      "name": "write r4",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "registers",
+      "name": "readback r4",
+      "status": "PASS",
+      "detail": "wrote 5a5a0004 read 5a5a0004 (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "registers",
+      "name": "no other register changed by r4",
+      "status": "PASS",
+      "detail": "differences []"
+    },
+    {
+      "phase": "registers",
+      "name": "write r8",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "registers",
+      "name": "readback r8",
+      "status": "PASS",
+      "detail": "wrote c3c30008 read c3c30008 (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "registers",
+      "name": "no other register changed by r8",
+      "status": "PASS",
+      "detail": "differences []"
+    },
+    {
+      "phase": "registers",
+      "name": "write r12",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "registers",
+      "name": "readback r12",
+      "status": "PASS",
+      "detail": "wrote 3c3c000c read 3c3c000c (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "registers",
+      "name": "no other register changed by r12",
+      "status": "PASS",
+      "detail": "differences []"
+    },
+    {
+      "phase": "registers",
+      "name": "write lr",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "registers",
+      "name": "readback lr",
+      "status": "PASS",
+      "detail": "wrote 11223345 read 11223345 (err \u003cnil\u003e)"
+    },
+    {
+      "phase": "registers",
+      "name": "no other register changed by lr",
+      "status": "PASS",
+      "detail": "differences []"
+    },
+    {
+      "phase": "registers",
+      "name": "unknown register is refused",
+      "status": "PASS",
+      "detail": "error class InvalidArgument"
+    },
+    {
+      "phase": "registers",
+      "name": "restoration exact incl. PC/SP/xPSR",
+      "status": "PASS",
+      "detail": "differences [] err \u003cnil\u003e"
+    },
+    {
+      "phase": "step",
+      "name": "halt",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "step",
+      "name": "100 single steps each end halted",
+      "status": "PASS",
+      "detail": "0 bad steps; PC deltas map[+2:62 branch:38]"
+    },
+    {
+      "phase": "step",
+      "name": "PC chains from step to step",
+      "status": "PASS",
+      "detail": "0 discontinuities (a core that changed PC while halted would show here)"
+    },
+    {
+      "phase": "step",
+      "name": "status after the steps: halted at the last PC",
+      "status": "PASS",
+      "detail": "status pc 00000050 last step pc 00000050 err \u003cnil\u003e"
+    },
+    {
+      "phase": "step",
+      "name": "the PC moves",
+      "status": "PASS",
+      "detail": "map[+2:62 branch:38]"
+    },
+    {
+      "phase": "step",
+      "name": "instruction widths seen",
+      "status": "INFO",
+      "detail": "+2:62 +4:0 branch/other:38 same:0 (not every instruction is 32-bit)"
+    },
+    {
+      "phase": "step",
+      "name": "one call of 100 steps",
+      "status": "PASS",
+      "detail": "pc_changed 100 err \u003cnil\u003e"
+    },
+    {
+      "phase": "step",
+      "name": "20 steps with interrupts unmasked",
+      "status": "PASS",
+      "detail": "pc_changed 20 err \u003cnil\u003e"
+    },
+    {
+      "phase": "step",
+      "name": "resume normally",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "step",
+      "name": "running after resume",
+      "status": "PASS",
+      "detail": "halted=false err \u003cnil\u003e"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "slot count is reported",
+      "status": "PASS",
+      "detail": "slots 4 fpb_revision 0"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "halt",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 1: breakpoint at 0x0000004c hit",
+      "status": "PASS",
+      "detail": "hit=true halted_pc=0x0000004c cause=breakpoint"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 1: one slot in use",
+      "status": "PASS",
+      "detail": "slots_in_use 1"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 1: BPU registers restored exactly",
+      "status": "PASS",
+      "detail": "before 40000000/400000407402019020240c01a02c2812 after 40000000/400000407402019020240c01a02c2812"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 2: breakpoint at 0x0000005e hit",
+      "status": "PASS",
+      "detail": "hit=true halted_pc=0x0000005e cause=breakpoint"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 2: one slot in use",
+      "status": "PASS",
+      "detail": "slots_in_use 1"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 2: BPU registers restored exactly",
+      "status": "PASS",
+      "detail": "before 40000000/400000407402019020240c01a02c2812 after 40000000/400000407402019020240c01a02c2812"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 3: breakpoint at 0x0000005c hit",
+      "status": "PASS",
+      "detail": "hit=true halted_pc=0x0000005c cause=breakpoint"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 3: one slot in use",
+      "status": "PASS",
+      "detail": "slots_in_use 1"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 3: BPU registers restored exactly",
+      "status": "PASS",
+      "detail": "before 40000000/400000407402019020240c01a02c2812 after 40000000/400000407402019020240c01a02c2812"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 4: breakpoint at 0x0000005e hit",
+      "status": "PASS",
+      "detail": "hit=true halted_pc=0x0000005e cause=breakpoint"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 4: one slot in use",
+      "status": "PASS",
+      "detail": "slots_in_use 1"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 4: BPU registers restored exactly",
+      "status": "PASS",
+      "detail": "before 40000000/400000407402019020240c01a02c2812 after 40000000/400000407402019020240c01a02c2812"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 5: breakpoint at 0x0000004c hit",
+      "status": "PASS",
+      "detail": "hit=true halted_pc=0x0000004c cause=breakpoint"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 5: one slot in use",
+      "status": "PASS",
+      "detail": "slots_in_use 1"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "round 5: BPU registers restored exactly",
+      "status": "PASS",
+      "detail": "before 40000000/400000407402019020240c01a02c2812 after 40000000/400000407402019020240c01a02c2812"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "every round hit its breakpoint",
+      "status": "PASS",
+      "detail": "5 of 5"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "all 4 comparators can be used",
+      "status": "PASS",
+      "detail": "4 set"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "one more than the hardware has is refused",
+      "status": "PASS",
+      "detail": "error class ResourceExhausted"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "an address outside the Code region is refused",
+      "status": "PASS",
+      "detail": "error class FailedPrecondition"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "BPU registers restored exactly after a full fill",
+      "status": "PASS",
+      "detail": "before 40000000/400000407402019020240c01a02c2812 after 40000000/400000407402019020240c01a02c2812"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset while running",
+      "status": "PASS",
+      "detail": "halted=false reset_seen=true debug_kept=\u003cnil\u003e debug_lost=\u003cnil\u003e core_changed=\u003cnil\u003e at_vector=\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset while running: reconnect",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset while running: same DPIDR and CPUID",
+      "status": "PASS",
+      "detail": "dpidr 0x6ba02477 cpuid 0x410cc601"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset while running: flash readable and unchanged",
+      "status": "PASS",
+      "detail": "err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset while running: registers readable",
+      "status": "PASS",
+      "detail": "20 regs err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset while running: resume",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset while halted",
+      "status": "PASS",
+      "detail": "halted=false reset_seen=true debug_kept=\u003cnil\u003e debug_lost=\u003cnil\u003e core_changed=\u003cnil\u003e at_vector=\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset while halted: reconnect",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset while halted: same DPIDR and CPUID",
+      "status": "PASS",
+      "detail": "dpidr 0x6ba02477 cpuid 0x410cc601"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset while halted: flash readable and unchanged",
+      "status": "PASS",
+      "detail": "err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset while halted: registers readable",
+      "status": "PASS",
+      "detail": "20 regs err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset while halted: resume",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset and halt",
+      "status": "PASS",
+      "detail": "halted=true reset_seen=true debug_kept=\u003cnil\u003e debug_lost=\u003cnil\u003e core_changed=\u003cnil\u003e at_vector=true"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset and halt: core is halted",
+      "status": "PASS",
+      "detail": "halted=true"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset and halt: reconnect",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset and halt: same DPIDR and CPUID",
+      "status": "PASS",
+      "detail": "dpidr 0x6ba02477 cpuid 0x410cc601"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset and halt: flash readable and unchanged",
+      "status": "PASS",
+      "detail": "err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset and halt: registers readable",
+      "status": "PASS",
+      "detail": "20 regs err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "sysreset and halt: resume",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "core reset (VECTRESET)",
+      "status": "UNSUPPORTED_BY_ATTACHED_HW",
+      "detail": "rpc error: code = FailedPrecondition desc = UNSUPPORTED_BY_ATTACHED_HW: the Cortex-M0+ in a CC23xx has no VECTRESET (core reset); use sysreset or hardware"
+    },
+    {
+      "phase": "reset",
+      "name": "core reset (VECTRESET): reconnect",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "core reset (VECTRESET): same DPIDR and CPUID",
+      "status": "PASS",
+      "detail": "dpidr 0x6ba02477 cpuid 0x410cc601"
+    },
+    {
+      "phase": "reset",
+      "name": "core reset (VECTRESET): flash readable and unchanged",
+      "status": "PASS",
+      "detail": "err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "core reset (VECTRESET): registers readable",
+      "status": "PASS",
+      "detail": "20 regs err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "core reset (VECTRESET): resume",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "hardware nRESET while running",
+      "status": "PASS",
+      "detail": "halted=false reset_seen=true debug_kept=\u003cnil\u003e debug_lost=\u003cnil\u003e core_changed=\u003cnil\u003e at_vector=\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "hardware nRESET while running: reconnect",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "hardware nRESET while running: same DPIDR and CPUID",
+      "status": "PASS",
+      "detail": "dpidr 0x6ba02477 cpuid 0x410cc601"
+    },
+    {
+      "phase": "reset",
+      "name": "hardware nRESET while running: flash readable and unchanged",
+      "status": "PASS",
+      "detail": "err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "hardware nRESET while running: registers readable",
+      "status": "PASS",
+      "detail": "20 regs err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "hardware nRESET while running: resume",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "hardware nRESET and halt",
+      "status": "PASS",
+      "detail": "halted=true reset_seen=true debug_kept=\u003cnil\u003e debug_lost=\u003cnil\u003e core_changed=\u003cnil\u003e at_vector=true"
+    },
+    {
+      "phase": "reset",
+      "name": "hardware nRESET and halt: core is halted",
+      "status": "PASS",
+      "detail": "halted=true"
+    },
+    {
+      "phase": "reset",
+      "name": "hardware nRESET and halt: reconnect",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "hardware nRESET and halt: same DPIDR and CPUID",
+      "status": "PASS",
+      "detail": "dpidr 0x6ba02477 cpuid 0x410cc601"
+    },
+    {
+      "phase": "reset",
+      "name": "hardware nRESET and halt: flash readable and unchanged",
+      "status": "PASS",
+      "detail": "err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "hardware nRESET and halt: registers readable",
+      "status": "PASS",
+      "detail": "20 regs err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "hardware nRESET and halt: resume",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "dap_reset",
+      "status": "UNSUPPORTED_BY_ATTACHED_HW",
+      "detail": "rpc error: code = FailedPrecondition desc = UNSUPPORTED_BY_ATTACHED_HW: the probe does not implement DAP_ResetTarget; use hardware (nRESET) or sysreset"
+    },
+    {
+      "phase": "reset",
+      "name": "dap_reset: reconnect",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "dap_reset: same DPIDR and CPUID",
+      "status": "PASS",
+      "detail": "dpidr 0x6ba02477 cpuid 0x410cc601"
+    },
+    {
+      "phase": "reset",
+      "name": "dap_reset: flash readable and unchanged",
+      "status": "PASS",
+      "detail": "err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "dap_reset: registers readable",
+      "status": "PASS",
+      "detail": "20 regs err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "dap_reset: resume",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "breakpoint",
+      "name": "reset-handler breakpoint through sysreset",
+      "status": "INFO",
+      "detail": "no halt after the reset (reset ok, wait DeadlineExceeded): the BPU does not survive this reset, or the reset dropped debug"
+    },
+    {
+      "phase": "reset",
+      "name": "reset-handler breakpoint: reconnect",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "reset-handler breakpoint: same DPIDR and CPUID",
+      "status": "PASS",
+      "detail": "dpidr 0x6ba02477 cpuid 0x410cc601"
+    },
+    {
+      "phase": "reset",
+      "name": "reset-handler breakpoint: flash readable and unchanged",
+      "status": "PASS",
+      "detail": "err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "reset-handler breakpoint: registers readable",
+      "status": "PASS",
+      "detail": "20 regs err \u003cnil\u003e"
+    },
+    {
+      "phase": "reset",
+      "name": "reset-handler breakpoint: resume",
+      "status": "PASS",
+      "detail": "\u003cnil\u003e"
+    }
+  ],
+  "facts": {
+    "ap_idr": "0x84770001",
+    "architecture": "ARMv6-M",
+    "bp.present": "true",
+    "bp.revision": "0",
+    "bp.rounds_hit": "5/5",
+    "bp.slots": "4",
+    "bp.survives_sysreset": "false",
+    "core": "Cortex-M0+",
+    "cpuid": "0x410cc601",
+    "dpidr": "0x6ba02477",
+    "firmware.bp_hits": "5/5",
+    "flash_0_32": "0090002041000000810000008100000081000000810000008100000081000000",
+    "registers.msp.in_sram": "true",
+    "registers.names": "lr,msp,pc,psp,r0,r1,r10,r11,r12,r2,r3,r4,r5,r6,r7,r8,r9,sp,special,xpsr",
+    "reset.core reset (VECTRESET)": "UNSUPPORTED_BY_ATTACHED_HW",
+    "reset.core reset (VECTRESET).debug_after": "returned",
+    "reset.dap_reset": "UNSUPPORTED_BY_ATTACHED_HW",
+    "reset.dap_reset.debug_after": "returned",
+    "reset.hardware nRESET and halt": "ok",
+    "reset.hardware nRESET and halt.debug_after": "returned",
+    "reset.hardware nRESET while running": "ok",
+    "reset.hardware nRESET while running.debug_after": "returned",
+    "reset.reset-handler breakpoint.debug_after": "returned",
+    "reset.sysreset and halt": "ok",
+    "reset.sysreset and halt.debug_after": "returned",
+    "reset.sysreset while halted": "ok",
+    "reset.sysreset while halted.debug_after": "returned",
+    "reset.sysreset while running": "ok",
+    "reset.sysreset while running.debug_after": "returned",
+    "revision": "r0p1",
+    "sram.scratch": "0x20004780",
+    "wp.comparators": "0",
+    "wp.present": "false"
+  },
+  "perf_ms": {}
+}

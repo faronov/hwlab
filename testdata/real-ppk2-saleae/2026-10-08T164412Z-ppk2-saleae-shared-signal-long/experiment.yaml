@@ -1,0 +1,33 @@
+name: ppk2-saleae-shared-signal-long
+duration: 12s
+
+devices:
+  ppk2:
+    plugin: ppk2
+    requires: [PowerMeasurement, DigitalCapture]
+    mode: source
+    supply_mv: 3300
+  logic:
+    plugin: saleae
+    device: SALEAE-FIXTURE
+    requires: [DigitalCapture]
+    digital_channels: [0]
+    digital_sample_rate: 4000000
+    channel_names:
+      "0": SHARED
+  dbg:
+    plugin: jlink
+    target: NRF52840_XXAA
+
+steps:
+  - {name: stretch, at: 2s, device: dbg, call: MemoryAccess.write, args: {address: "0x4001B540", data: "401f0000"}}
+  - {name: restore, at: 5s, device: dbg, call: MemoryAccess.write, args: {address: "0x4001B540", data: "88130000"}}
+  - {name: clear, at: 5500ms, device: dbg, call: MemoryAccess.write, args: {address: "0x4001B00C", data: "01000000"}}
+  - {name: stretch-end, at: 8s, device: dbg, call: MemoryAccess.write, args: {address: "0x4001B540", data: "401f0000"}}
+  - {name: restore-end, at: 10s, device: dbg, call: MemoryAccess.write, args: {address: "0x4001B540", data: "88130000"}}
+  - {name: clear-end, at: 10500ms, device: dbg, call: MemoryAccess.write, args: {address: "0x4001B00C", data: "01000000"}}
+
+plots:
+  - name: overview
+    title: Shared DK signal on PPK2 D0 and Saleae CH0
+    format: svg

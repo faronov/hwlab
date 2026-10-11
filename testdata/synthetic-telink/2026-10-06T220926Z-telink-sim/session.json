@@ -1,0 +1,26 @@
+{
+  "format_version": 1,
+  "id": "2026-10-06T220926Z-telink-sim",
+  "name": "telink-sim",
+  "status": "complete",
+  "created_at": "2026-10-06T22:09:26.333961473Z",
+  "wall_epoch_unix_ns": 1791324566333961473,
+  "duration_ns": 3601850864,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# Telink SWire programmer + TLSR8258 target through the native SWS stack.\n#\n# The default run uses the plugin's in-process SYNTHETIC programmer and target,\n# so it needs no hardware. Everything it shows (chip id, flash contents,\n# registers, the breakpoint hit) is simulated, not measured:\n#\n#   HWLAB_TELINK_SIM=1 hwlab run --yes examples/telink-sim.yaml\n#\n# For a real programmer (UNVALIDATED: no SWire programmer or TLSR825x board has\n# been available; the protocol comes from the public TlsrPgm reference tool).\n# Serial ports are never scanned; list the programmer explicitly:\n#\n#   HWLAB_TELINK_PORTS=pgm=/dev/ttyUSB0 hwlab devices        # telink/pgm\n#   hwlab invoke telink/pgm DebugProbe.info\n#   hwlab invoke telink/pgm DebugProbe.connect               # read-only\n#\n# and replace `device:` below. attach pulses the target's RST pin. Nothing in\n# this file writes flash; the last step asks for the factory EUI-64 sector to\n# be erased on purpose, to show that the plugin refuses it (the step becomes a\n# warning in the run, and the flash stays untouched).\nname: telink-sim\nduration: 5s\n\ndevices:\n  pgm:\n    plugin: telink\n    device: sim-telink\n\nsteps:\n  - {name: programmer-info, at: 100ms, device: pgm, call: DebugProbe.info}\n  - {name: connect-before-attach, at: 400ms, device: pgm, call: DebugProbe.connect}\n  - {name: attach-halt, at: 700ms, device: pgm, call: DebugProbe.attach, args: {reset_ms: 20, activate_ms: 50, halt: true}}\n  - {name: status, at: 1100ms, device: pgm, call: DebugProbe.status}\n  - {name: step, at: 1400ms, device: pgm, call: DebugProbe.step, args: {count: 3}}\n  - {name: registers, at: 1700ms, device: pgm, call: DebugProbe.read_registers}\n  - {name: sram-read, at: 2000ms, device: pgm, call: MemoryAccess.read, args: {address: \"0x840000\", length: 16}}\n  - {name: flash-head, at: 2300ms, device: pgm, call: FlashProgramming.read, args: {address: \"0x0\", length: 16}}\n  - {name: factory-eui-read, at: 2600ms, device: pgm, call: FlashProgramming.read, args: {address: \"0x76000\", length: 8}}\n  - {name: breakpoint, at: 2900ms, device: pgm, call: DebugProbe.set_breakpoint, args: {address: \"0x2468\", wait_ms: 300}}\n  - {name: resume, at: 3300ms, device: pgm, call: DebugProbe.resume}\n  - {name: erase-factory-refused, at: 3600ms, device: pgm, call: FlashProgramming.erase, args: {address: \"0x76000\", length: 16, allow_journals: true}}\n",
+  "devices": [
+    {
+      "alias": "pgm",
+      "device_id": "sim-telink",
+      "plugin_id": "telink",
+      "name": "Simulated Telink SWire programmer + TLSR8258 (SYNTHETIC)",
+      "capabilities": [
+        "DebugProbe",
+        "FlashProgramming",
+        "MemoryAccess"
+      ],
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": []
+}

@@ -1,0 +1,51 @@
+{
+  "format_version": 1,
+  "id": "2026-10-06T224246Z-usbcap-synth",
+  "name": "usbcap-synth",
+  "status": "complete",
+  "created_at": "2026-10-06T22:42:46.803959817Z",
+  "wall_epoch_unix_ns": 1791326566803959817,
+  "duration_ns": 200365375,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# USB packet capture. URB events become timestamped \"usb\" packets and a pcapng\n# artifact (link type 220, usbmon) that Wireshark decodes natively.\n#\n# This example uses the plugin's SYNTHETIC source: a made-up HID mouse, a\n# mass-storage stick and a CDC serial port being enumerated and used. Nothing\n# is read from a bus. Real USB capture (Linux usbmon) has NOT been validated on\n# this host: it needs root or a readable /sys/kernel/debug/usb/usbmon.\n#\n#   HWLAB_USBCAP_SYNTH=1 hwlab run --yes examples/usbcap-synth.yaml\n#   hwlab usb analyze latest\n#   hwlab usb analyze latest --device 1:5 --errors\n#\n# Real sources, instead of HWLAB_USBCAP_SYNTH:\n#\n#   # live, as root (or with debugfs mounted and readable); usbmon0 = every bus\n#   sudo modprobe usbmon\n#   hwlab devices                                  # usbcap/usbmon1 ...\n#\n#   # a usbmon text capture taken elsewhere (cat /sys/kernel/debug/usb/usbmon/1u \u003e mon.txt)\n#   HWLAB_USBCAP_SOURCES=lab=mon.txt hwlab run --yes examples/usbcap-synth.yaml   # device: lab\n#\n# USB payloads can contain keystrokes and secrets: snaplen limits what is kept\n# (0 = headers only).\nname: usbcap-synth\nduration: 2s\n\ndevices:\n  usb:\n    plugin: usbcap\n    device: synthetic\n    speed: 1          # offline sources only: replay speed factor\n    snaplen: 256\n\nsteps:\n  - {name: info, at: 100ms, device: usb, call: USBPacketCapture.info}\n",
+  "devices": [
+    {
+      "alias": "usb",
+      "device_id": "synthetic",
+      "plugin_id": "usbcap",
+      "name": "synthetic",
+      "capabilities": [
+        "ArtifactExport",
+        "PacketCapture",
+        "TimedCapture",
+        "USBPacketCapture"
+      ],
+      "config": {
+        "snaplen": 256,
+        "speed": 1
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": [
+    {
+      "id": "usb",
+      "alias": "usb",
+      "started_ns": 1413640,
+      "stopped_ns": 200365375,
+      "request_ns": 1264625,
+      "clock": {
+        "source": "synthetic generator timeline, paced on the host clock",
+        "resolution_ns": 1000,
+        "error_min_ns": 0,
+        "error_min_bounded": true,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "synthetic data: the timing is made up and says nothing about any bus"
+      },
+      "events": 92,
+      "samples": 0,
+      "dropped_batches": 0
+    }
+  ]
+}

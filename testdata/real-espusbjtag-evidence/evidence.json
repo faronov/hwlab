@@ -1,0 +1,95 @@
+{
+  "kind": "REAL",
+  "note": "Recorded from a physical ESP32-C6 over its native USB Serial/JTAG by the hwlab espusbjtag plugin (no OpenOCD, Python, ESP-IDF or CGO). Bus/device numbers and sysfs paths removed. The USB serial is the chip MAC and is replaced by AA:BB:CC:DD:EE:FF. Register values are a snapshot of whatever firmware was running.",
+  "usb_identity": {
+    "vid": "303a",
+    "pid": "1001",
+    "manufacturer": "Espressif",
+    "product": "USB JTAG/serial debug unit",
+    "serial": "AA:BB:CC:DD:EE:FF",
+    "configuration": 1,
+    "interface_count": 3
+  },
+  "interfaces": [
+    {
+      "number": 0,
+      "class": "0x02",
+      "driver": "cdc_acm",
+      "endpoints": [
+        "0x82 interrupt IN 64B"
+      ],
+      "role": "CDC-ACM control, never claimed (ttyACM*)"
+    },
+    {
+      "number": 1,
+      "class": "0x0a",
+      "driver": "cdc_acm",
+      "endpoints": [
+        "0x01 bulk OUT 64B",
+        "0x81 bulk IN 64B"
+      ],
+      "role": "CDC-ACM data, never claimed"
+    },
+    {
+      "number": 2,
+      "class": "0xff",
+      "driver": "none",
+      "endpoints": [
+        "0x02 bulk OUT 64B",
+        "0x83 bulk IN 64B"
+      ],
+      "role": "vendor JTAG, the only interface claimed; no kernel driver detached"
+    }
+  ],
+  "transport": {
+    "capability_descriptor_hex": "010a0108c0120100ff00",
+    "capability_descriptor_note": "GET_DESCRIPTOR 0x2000: protocol 1, APB 48000 kHz, base clock 24000 kHz, divider 1..255; at 1000 kHz the divider is 24."
+  },
+  "jtag": {
+    "taps": 1,
+    "idcode": "0x0000dc25",
+    "version": 0,
+    "part": "0x000d",
+    "manufacturer_field": "0x612",
+    "ir_length": 5,
+    "stable_scans": "3 in-plugin, 10 one-shot CLI, all identical"
+  },
+  "riscv": {
+    "dtmcs": {
+      "raw": "0x1071",
+      "version": 1,
+      "abits": 7,
+      "idle": 1
+    },
+    "debug_spec": "0.13",
+    "harts": 2,
+    "progbuf_words": 16,
+    "datacount": 2,
+    "sba": {
+      "version": 1,
+      "width_bits": 32
+    },
+    "authenticated": true,
+    "hasresethaltreq": true,
+    "misa": "0x40903105",
+    "mvendorid": "0x00000612",
+    "marchid": "0x80000002",
+    "mimpid": "0x00000002",
+    "mhartid": "0x00000000"
+  },
+  "memory_reads_16_bytes_via_sba": {
+    "0x40000000": "6f100068000000000000000000000000",
+    "0x40800000": "6f00801a6f00c02d6f0080236f004024",
+    "0x42000000": "e90402201ae20042ee0000000d000000"
+  },
+  "operations": {
+    "halt": "ok (about 8 ms)",
+    "read_registers": "ok, hart halted, x0..x31, pc, dcsr, misa, mvendorid, marchid, mimpid, mhartid",
+    "resume": "ok, hart running again",
+    "reset": "NOT RUN (ndmreset may reset the USB peripheral and drop the session)",
+    "write_flash_erase": "NOT IMPLEMENTED"
+  },
+  "cdc_serial_after_jtag_sessions": "cdc_acm still bound to interfaces 0 and 1; /dev/ttyACM1 opened read-only",
+  "second_concurrent_open": "refused: interface 2 busy (FailedPrecondition)",
+  "openocd_comparison": "not possible: OpenOCD is not installed"
+}

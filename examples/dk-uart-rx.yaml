@@ -1,0 +1,40 @@
+# Real UART RX test on an nRF52840 DK without changing its flash.
+#
+# The DK is not reflashed: J-Link memory writes configure UARTE0 on P0.06 (the
+# DK's UART TX pin, routed by the on-board J-Link to the virtual COM port) and
+# trigger one transmission per STARTTX. The host-side uart plugin must then
+# receive real bytes from a real UART. A reset of the target restores it.
+#
+#   HWLAB_JLINK_EXE=~/sdk/jlink/JLink_Linux_V982_x86_64/JLinkExe \
+#     hwlab run --yes examples/dk-uart-rx.yaml
+#
+# All writes are CONFIRM operations (RAM and peripheral registers only).
+name: dk-uart-rx
+duration: 22s
+
+devices:
+  console:
+    plugin: uart
+    device: ttyACM0
+    baud: 115200
+    lines: true
+  dbg:
+    plugin: jlink
+    target: NRF52840_XXAA
+
+steps:
+  # message "hwlab uart rx test 01\r\n" in RAM
+  - {name: payload, at: 1s, device: dbg, call: MemoryAccess.write, args: {address: "0x20030000", data: "68776c6162207561727420727820746573742030310d0a"}}
+  # P0.06 output high (idle level of a UART TX)
+  - {name: pin-high, at: 3500ms, device: dbg, call: MemoryAccess.write, args: {address: "0x50000508", data: "40000000"}}
+  - {name: pin-output, at: 6s, device: dbg, call: MemoryAccess.write, args: {address: "0x50000518", data: "40000000"}}
+  # UARTE0: PSEL.TXD = P0.06
+  - {name: psel-txd, at: 8500ms, device: dbg, call: MemoryAccess.write, args: {address: "0x4000250C", data: "06000000"}}
+  # BAUDRATE = 115200
+  - {name: baud, at: 11s, device: dbg, call: MemoryAccess.write, args: {address: "0x40002524", data: "00e0d701"}}
+  # TXD.PTR, TXD.MAXCNT
+  - {name: txd-buffer, at: 13500ms, device: dbg, call: MemoryAccess.write, args: {address: "0x40002544", data: "0000032017000000"}}
+  # ENABLE = Enabled(8)
+  - {name: enable, at: 16s, device: dbg, call: MemoryAccess.write, args: {address: "0x40002500", data: "08000000"}}
+  # TASKS_STARTTX
+  - {name: starttx, at: 18500ms, device: dbg, call: MemoryAccess.write, args: {address: "0x40002008", data: "01000000"}}

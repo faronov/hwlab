@@ -1,0 +1,33 @@
+# CMSIS-DAP v2 (bulk) probe, REAL hardware: an XT-ZB1 / BL702 board running
+# CherryUSB BL702-DAPLink (USB d6e7:3507, "RV CMSIS-DAP"), through the native
+# Go stack: Linux usbfs -> CMSIS-DAP v2 -> generic SWD/ADIv5 -> Cortex-M.
+# No OpenOCD, probe-rs, libusb, Python or CGO.
+#
+# NO TARGET WAS WIRED to the probe when this was recorded, so the recording
+# proves the probe itself (descriptor-selected DAP interface, DAP_Info and
+# capabilities, SWJ clock acceptance, JTAG chain scan of an empty chain, read
+# only DAP_SWJ_Pins) and that every target operation fails explicitly instead
+# of succeeding. It never writes memory, flash or the target's reset line.
+#
+#   hwlab devices                                  # cmsisdap/d6e7:3507:<serial>
+#   hwlab run --yes examples/cmsisdap-bl702-probe.yaml
+#
+# Wire a target (3.3 V logic only, common GND):
+#   SWD : SWDIO = BL702 GPIO2, SWCLK = BL702 GPIO15, nRESET = BL702 GPIO24
+#   JTAG: TDI = GPIO0, TDO = GPIO1, TMS = GPIO2, TCK = GPIO15
+name: cmsisdap-bl702-probe
+duration: 12s
+
+devices:
+  dbg:
+    plugin: cmsisdap
+
+steps:
+  - {name: info,        at: 100ms, device: dbg, call: DebugProbe.info}
+  - {name: pins,        at: 500ms, device: dbg, call: DebugProbe.pins}
+  - {name: clock-probe, at: 1s,    device: dbg, call: DebugProbe.clock_probe, args: {rates_hz: [100000, 400000, 1000000, 2000000, 4000000]}}
+  - {name: jtag-scan,   at: 2s,    device: dbg, call: DebugProbe.jtag_scan}
+  - {name: connect,     at: 3s,    device: dbg, call: DebugProbe.connect, args: {clock_hz: 100000}}
+  - {name: read,        at: 4s,    device: dbg, call: MemoryAccess.read, args: {address: "0x20000000", length: 16}}
+  - {name: status,      at: 5s,    device: dbg, call: DebugProbe.status}
+  - {name: info-final,  at: 6s,    device: dbg, call: DebugProbe.info}

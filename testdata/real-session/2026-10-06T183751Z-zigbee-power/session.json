@@ -1,0 +1,113 @@
+{
+  "format_version": 1,
+  "id": "2026-10-06T183751Z-zigbee-power",
+  "name": "zigbee-power",
+  "status": "complete",
+  "created_at": "2026-10-06T18:37:51.696488868Z",
+  "wall_epoch_unix_ns": 1791311871696488868,
+  "duration_ns": 11315223640,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# Real hardware: Nordic PPK2 + nRF52840 802.15.4 sniffer in ONE session.\n#\n# Wiring: the DUT is powered from the PPK2 (source mode, VOUT/GND), or the PPK2\n# is in series with an external supply (ampere mode). The sniffer DK listens on\n# the channel the DUT's radio uses.\n#\n#   hwlab run examples/zigbee-power.yaml --yes     # --yes: confirms the supply voltage\n#\n# Timing: both devices are started back-to-back by the experiment engine. Each\n# has its own clock; see the clock.* metadata of the session and the pcapng\n# artifact. Cross-device accuracy is NOT nanosecond-level: it is bounded by the\n# sniffer USB latency (milliseconds) and by the PPK2 start latency.\nname: zigbee-power\nduration: 10s\n\ndevices:\n  power:\n    plugin: ppk2\n    requires: [PowerMeasurement]\n    mode: ampere              # \"source\" drives the DUT supply: needs --yes\n    # mode: source\n    # supply_mv: 3300\n  radio:\n    plugin: nrf802154\n    requires: [PacketCapture]\n    channel: 15\n\nanalysis:\n  nominal_voltage: 3.3\n\nplots:\n  - name: overview\n    title: PPK2 current + 802.15.4 packets\n    format: png\n  - name: overview\n    title: PPK2 current + 802.15.4 packets\n    format: svg\n",
+  "devices": [
+    {
+      "alias": "power",
+      "device_id": "PPK2FIXTURE1",
+      "plugin_id": "ppk2",
+      "name": "Power Profiler Kit II",
+      "capabilities": [
+        "DigitalCapture",
+        "LiveRawStream",
+        "PowerMeasurement",
+        "PowerSource",
+        "TimedCapture"
+      ],
+      "config": {
+        "mode": "ampere"
+      },
+      "clock_offset_ns": 0
+    },
+    {
+      "alias": "radio",
+      "device_id": "NRFFIXTURE000001",
+      "plugin_id": "nrf802154",
+      "name": "nRF 802.15.4 sniffer",
+      "capabilities": [
+        "ArtifactExport",
+        "PacketCapture",
+        "TimedCapture"
+      ],
+      "config": {
+        "channel": 15
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": [
+    {
+      "id": "power",
+      "alias": "power",
+      "started_ns": 320011886,
+      "stopped_ns": 11315223640,
+      "request_ns": 219652759,
+      "clock": {
+        "source": "sample count x 10 us from the host time of the AVERAGE_START write",
+        "resolution_ns": 100000,
+        "error_min_ns": -4159769,
+        "error_min_bounded": true,
+        "error_max_ns": 31381,
+        "error_max_bounded": true,
+        "note": "the PPK2 has no per-sample timestamps; the start of sampling is bounded by the write time (late side) and by data arrival (early side), assuming the device clock does not drift over the first 2 s; later drift is not measured; fixture decimated 10:1, stored periods 100 us, original clock bounds retained"
+      },
+      "streams": [
+        {
+          "id": "current",
+          "kind": "power",
+          "file": "captures/power/current.hwcap",
+          "alias": "power",
+          "capture": "power",
+          "digital_names": [
+            "D0",
+            "D1",
+            "D2",
+            "D3",
+            "D4",
+            "D5",
+            "D6",
+            "D7"
+          ],
+          "attributes": {
+            "mode": "ampere",
+            "port": "/dev/ttyACM2",
+            "sample_period_ns": "100000",
+            "vdd_mv": "3300",
+            "fixture.decimation": "10:1 per block"
+          }
+        }
+      ],
+      "events": 1000,
+      "samples": 99962,
+      "dropped_batches": 0
+    },
+    {
+      "id": "radio",
+      "alias": "radio",
+      "started_ns": 826601783,
+      "stopped_ns": 11315223640,
+      "request_ns": 219751029,
+      "clock": {
+        "source": "device timer (us since boot), mapped by minimum-offset estimator",
+        "resolution_ns": 1000,
+        "error_min_ns": 0,
+        "error_min_bounded": true,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "jitter_ns": 16838121,
+        "drift_ppm": 9.96941869909113,
+        "note": "relative timing between frames is device-timer accurate (1 us); absolute alignment is late by the unknown minimum USB transit latency; host receive minus stamped time was 3.8 ms mean, 16.8 ms max (not a bound)"
+      },
+      "events": 346,
+      "samples": 0,
+      "dropped_batches": 0
+    }
+  ]
+}

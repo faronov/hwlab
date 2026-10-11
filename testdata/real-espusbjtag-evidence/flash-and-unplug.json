@@ -1,0 +1,87 @@
+{
+  "kind": "REAL",
+  "note": "Sanitized evidence from a physical ESP32-C6 (native USB Serial/JTAG, hwlab espusbjtag, no OpenOCD/Python/ESP-IDF/CGO). Only metadata and hashes: no firmware bytes, no MAC (USB serial replaced by AA:BB:CC:DD:EE:FF). The full flash backup stays a local artifact and is never committed.",
+  "flash_program_verify_boot_restore": {
+    "backup_bytes": 4194304,
+    "backup_read_seconds": 117.131658752,
+    "backup_reads_identical": true,
+    "backup_sha256": "3de8b04a77b539b1ac27dbcad45a4b8e6eb820b9d3942b006e028290c3bc0da6",
+    "boot": {
+      "counter_after_200ms": 4740875,
+      "counter_before": 3670016,
+      "proof": "SRAM counter at the image's hwlab_counter symbol increments: the ROM loaded and started the programmed image",
+      "reset_used": "system"
+    },
+    "corrupted_verify_detected": true,
+    "debug_of_programmed_image": {
+      "breakpoint_hits_at_hwlab_tick": 5,
+      "pc_in_image": true,
+      "sram_write_restore_bytes": 64,
+      "steps": 100
+    },
+    "error_paths_flash_unchanged": true,
+    "error_paths_rejected": 19,
+    "flash": {
+      "block": 65536,
+      "jedec": "5e4016",
+      "manufacturer": "Zbit",
+      "page": 256,
+      "sector": 4096,
+      "sfdp": "1.6",
+      "size_bytes": 4194304
+    },
+    "image": "accept.bin",
+    "original_firmware_back": {
+      "acceptance_image_gone": true,
+      "pc_samples_in_flash_mapped_code": "12 of 12"
+    },
+    "program": {
+      "bytes": 448,
+      "image_sha256": "c64a72113fefd2a10c8058fe78a6a0eb488942036cc6b4bc59734ecf66db63e0",
+      "program_ms": 319,
+      "throughput_kb_s": 12.521741930949586,
+      "verified": true,
+      "write_report": {
+        "bytes_preserved_outside_region": 3648,
+        "bytes_programmed": 4096,
+        "sectors_already_identical": 0,
+        "sectors_erased": 1,
+        "sectors_in_span": 1,
+        "sectors_programmed_without_erase": 0
+      }
+    },
+    "restore": {
+      "elapsed_ms": 58797,
+      "flash_sha256_after": "3de8b04a77b539b1ac27dbcad45a4b8e6eb820b9d3942b006e028290c3bc0da6",
+      "verified": true,
+      "write_report": {
+        "bytes_preserved_outside_region": 0,
+        "bytes_programmed": 4096,
+        "sectors_already_identical": 1023,
+        "sectors_erased": 1,
+        "sectors_in_span": 1024,
+        "sectors_programmed_without_erase": 0
+      }
+    },
+    "restore_full_readback_sha256_equal": true,
+    "result": "program+verify+boot+debug+restore all succeeded",
+    "sector0_tail_preserved": true,
+    "serial_banner": "HWLAB-ESP32C6-ACCEPT-1 counter=004c0000",
+    "verify_after_program": true
+  },
+  "unplug_replug": {
+    "physically_performed_by_user": true,
+    "rounds": 2,
+    "classification_after_unplug": "DEVICE_GONE on every call (memory read, identify, scan, chip_info); no hang, no stale success",
+    "slowest_call_seconds": 8.052,
+    "rediscovered_by": "USB serial number (bus/device number changed and is not identity)",
+    "after_replug": "identity (serial, IDCODE, ROM chip-detect word) equal, JTAG scan ok, ROM read ok",
+    "errno_seen": "ENODEV in both rounds; the EPROTO->DEVICE_GONE mapping is code-only and was not exercised on hardware",
+    "away_seconds": [
+      74.965,
+      79.509
+    ],
+    "usb_serial": "AA:BB:CC:DD:EE:FF"
+  },
+  "incident": "An earlier acceptance run's error-path case wrote zeros over bootloader, partition table and otadata because the multi-region check ignored the bootloader slot and the image-magic check was missing. The flash was restored byte-for-byte from the fresh backup; program now refuses multi-region writes and raw data without raw=true."
+}

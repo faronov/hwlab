@@ -1,0 +1,25 @@
+# Generic serial line (UART). On an nRF52840 DK the on-board J-Link exposes the
+# target's UART as a virtual COM port (/dev/ttyACM0 on Linux). Received bytes
+# and the step's write become timestamped "uart" packets; lines: true also
+# emits one log event per received text line.
+#
+#   hwlab devices                      # find the port, e.g. uart/ttyACM0
+#   hwlab run examples/uart-nrf52840-dk.yaml
+#
+# The write step is a state-changing call and needs --confirm-dangerous.
+name: uart-nrf52840-dk
+duration: 6s
+
+devices:
+  console:
+    plugin: uart
+    device: ttyACM0
+    baud: 115200
+    data_bits: 8
+    parity: none
+    stop_bits: 1
+    flow_control: none
+    lines: true
+
+steps:
+  - {name: say-hello, at: 2s, device: console, call: SerialTransport.write, args: {data: "hello\r\n"}}

@@ -1,0 +1,5 @@
+name,type,start_time,duration,"error","data"
+"uart-ch1","data",22.075894,0.0009895,"framing",0x00
+"uart-ch1","data",38.77311525,0.0009895,"framing",0x03
+"uart-ch1","data",39.2633365,0.0009895,"framing",0x00
+"uart-ch1","data",39.2683585,0.0009895,,0xFF

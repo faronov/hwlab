@@ -1,0 +1,32 @@
+# Telink SWire programmer + TLSR825x target, READ-ONLY, through the native Go
+# SWire stack (no Python, no probe-rs). Recorded on real hardware: a CH340
+# USB-UART programmer (TB-03F/TB-04 programmer firmware) wired to a TLSR825x
+# board; see docs/notes/phase14-telink-real-hardware-results.md.
+#
+#   HWLAB_TELINK_PORTS=pgm=/dev/ttyUSB0 hwlab devices      # or VID/PID discovery
+#   hwlab run --yes examples/telink-real.yaml
+#
+# Nothing here writes memory or flash. `halt` stalls the CPU (flash reads need
+# a captured CPU) and `resume` releases it. The write call asks for a
+# modification that must be REFUSED: no flash protection map is verified for
+# this board, so program and erase fail closed before any flash command reaches
+# the chip. (Selecting the tb04-512k layout does not help on this board: its
+# factory block reads blank, so that map is not confirmed either.)
+name: telink-real
+duration: 6s
+
+devices:
+  pgm:
+    plugin: telink
+    device: ttyUSB0
+
+steps:
+  - {name: programmer-info, at: 100ms, device: pgm, call: DebugProbe.info}
+  - {name: halt, at: 500ms, device: pgm, call: DebugProbe.halt}
+  - {name: connect, at: 1000ms, device: pgm, call: DebugProbe.connect}
+  - {name: status, at: 1500ms, device: pgm, call: DebugProbe.status}
+  - {name: peripheral-read, at: 2000ms, device: pgm, call: MemoryAccess.read, args: {address: "0x800000", length: 16}}
+  - {name: flash-head, at: 2500ms, device: pgm, call: FlashProgramming.read, args: {address: "0x0", length: 16}}
+  - {name: flash-factory-block, at: 3000ms, device: pgm, call: FlashProgramming.read, args: {address: "0x76000", length: 8}}
+  - {name: program-refused-unverified, at: 3500ms, device: pgm, call: FlashProgramming.program, args: {address: "0x76000", data: "ff"}}
+  - {name: resume, at: 4000ms, device: pgm, call: DebugProbe.resume}

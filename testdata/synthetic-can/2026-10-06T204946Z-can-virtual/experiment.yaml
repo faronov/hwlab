@@ -1,0 +1,35 @@
+# CAN / CAN-FD capture. Frames become timestamped "can" packets and a pcapng
+# artifact (link type 227, SocketCAN) that Wireshark decodes natively.
+#
+# This example uses the plugin's in-process VIRTUAL bus, so it needs no
+# hardware. Its frames are SYNTHETIC: injected by `inject` steps, not read from
+# a bus. Start with HWLAB_CAN_VIRTUAL=1:
+#
+#   HWLAB_CAN_VIRTUAL=1 hwlab run --yes examples/can-virtual.yaml
+#
+# For a real bus, bring the interface up first (hwlab never changes it):
+#
+#   sudo ip link set can0 up type can bitrate 500000        # classic
+#   sudo ip link set can0 up type can bitrate 500000 dbitrate 2000000 fd on
+#   hwlab devices                                           # can/can0
+#
+# and replace `device:` with can0. The send step transmits onto the bus, which
+# is a state-changing call and needs `hwlab run --yes`.
+name: can-virtual
+duration: 3s
+
+devices:
+  bus:
+    plugin: can
+    device: virtual-can0
+    fd: true
+    own: true
+    # filters: ["7E8:7F8"]     # candump notation, optional
+
+steps:
+  - {name: engine-rpm,  at: 300ms, device: bus, call: CANTransport.inject, args: {id: "0CF00400", data: "FF FF FF 20 4E FF FF FF"}}
+  - {name: odd-request, at: 600ms, device: bus, call: CANTransport.inject, args: {id: "123", data: "DEADBEEF"}}
+  - {name: remote,      at: 900ms, device: bus, call: CANTransport.inject, args: {id: "321", rtr: true, dlc: 4}}
+  - {name: obd-request, at: 1200ms, device: bus, call: CANTransport.send,  args: {id: "7DF", data: "02 01 0C"}}
+  - {name: obd-reply,   at: 1300ms, device: bus, call: CANTransport.inject, args: {id: "7E8", data: "04 41 0C 1A F8"}}
+  - {name: fd-frame,    at: 1700ms, device: bus, call: CANTransport.inject, args: {id: "18DAF110", fd: true, brs: true, data: "00112233445566778899AABBCCDDEEFF0102030405060708"}}

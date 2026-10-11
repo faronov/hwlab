@@ -1,0 +1,38 @@
+# Generated executables and root build outputs.
+/bin/
+/build/
+/dist/
+*.test
+/coverage.out
+/coverage.html
+/cpu.pprof
+/mem.pprof
+/trace.out
+/core
+/core.*
+
+# Local sessions, captures, dumps and backups, not bounded testdata fixtures.
+/sessions/
+/artifacts/
+/captures/
+/backups/
+/hwlab-backups/
+/tmp/
+/.hwlab/
+/plugins/espusbjtag/accept-fw/build/
+/testdata/real-saleae/2026-10-06T195520Z-saleae-real-analyzers-long/artifacts/logic/capture.sal
+
+# Credentials and machine/editor configuration.
+.env
+.env.*
+!.env.example
+!.env.template
+/.aws/
+/.azure/
+/.ssh/
+/.vscode/
+/.idea/
+.DS_Store
+*~
+*.swp
+*.swo

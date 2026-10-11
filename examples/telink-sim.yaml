@@ -1,0 +1,43 @@
+# Telink SWire programmer + TLSR8258 target through the native SWS stack.
+#
+# The default run uses the plugin's in-process SYNTHETIC programmer and target,
+# so it needs no hardware. Everything it shows (chip id, flash contents,
+# registers, the breakpoint hit) is simulated, not measured:
+#
+#   HWLAB_TELINK_SIM=1 hwlab run --yes examples/telink-sim.yaml
+#
+# For a real programmer see examples/telink-real.yaml (read-only; the
+# simulated steps here, such as erase, program, step and breakpoints, have not
+# been run on hardware). Serial ports are never opened during discovery;
+# USB-UART adapters are only listed as unprobed candidates. To name a port
+# explicitly:
+#
+#   HWLAB_TELINK_PORTS=pgm=/dev/ttyUSB0 hwlab devices        # telink/pgm
+#   hwlab invoke telink/pgm DebugProbe.info
+#   hwlab invoke telink/pgm DebugProbe.connect               # read-only
+#
+# and replace `device:` below. attach pulses the target's RST pin. Nothing in
+# this file writes flash; the last step asks for the factory EUI-64 sector to
+# be erased on purpose, to show that the plugin refuses it (the step becomes a
+# warning in the run, and the flash stays untouched).
+name: telink-sim
+duration: 5s
+
+devices:
+  pgm:
+    plugin: telink
+    device: sim-telink
+
+steps:
+  - {name: programmer-info, at: 100ms, device: pgm, call: DebugProbe.info}
+  - {name: connect-before-attach, at: 400ms, device: pgm, call: DebugProbe.connect}
+  - {name: attach-halt, at: 700ms, device: pgm, call: DebugProbe.attach, args: {reset_ms: 20, activate_ms: 50, halt: true}}
+  - {name: status, at: 1100ms, device: pgm, call: DebugProbe.status}
+  - {name: step, at: 1400ms, device: pgm, call: DebugProbe.step, args: {count: 3}}
+  - {name: registers, at: 1700ms, device: pgm, call: DebugProbe.read_registers}
+  - {name: sram-read, at: 2000ms, device: pgm, call: MemoryAccess.read, args: {address: "0x840000", length: 16}}
+  - {name: flash-head, at: 2300ms, device: pgm, call: FlashProgramming.read, args: {address: "0x0", length: 16}}
+  - {name: factory-eui-read, at: 2600ms, device: pgm, call: FlashProgramming.read, args: {address: "0x76000", length: 8}}
+  - {name: breakpoint, at: 2900ms, device: pgm, call: DebugProbe.set_breakpoint, args: {address: "0x2468", wait_ms: 300}}
+  - {name: resume, at: 3300ms, device: pgm, call: DebugProbe.resume}
+  - {name: erase-factory-refused, at: 3600ms, device: pgm, call: FlashProgramming.erase, args: {address: "0x76000", length: 16, allow_journals: true}}

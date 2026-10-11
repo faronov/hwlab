@@ -1,0 +1,88 @@
+{
+  "format_version": 1,
+  "id": "2026-10-08T210527Z-jlink-multiprobe",
+  "name": "jlink-multiprobe",
+  "status": "complete",
+  "created_at": "2026-10-08T21:05:27.030639226Z",
+  "wall_epoch_unix_ns": 1791493527030639226,
+  "duration_ns": 16179863258,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# Two SEGGER J-Link probes in one session, selected by serial number.\n# Nothing here writes, erases or programs a target; the halt/resume/reset\n# steps need `--yes`.\n#\n#   probe 90000001 (SAM-ICE)               -> EFR32MG1PxxxF256\n#   probe 900000002 (nRF52840 DK on-board) -> NRF52840_XXAA\n#\n#   HWLAB_JLINK_EXE=~/sdk/jlink/JLink_Linux_V982_x86_64/JLinkExe hwlab run --yes examples/jlink-multiprobe.yaml\n#\n# SEGGER's DLL lets other processes share only ONE probe that a long-running\n# Commander session holds, so RTT runs on the EFR32 probe only (`rtt: false`\n# on the other); calls to both probes work regardless.\n#\n# Replace the serials/targets with your own (`hwlab devices` lists the serials).\nname: jlink-multiprobe\nduration: 16s\n\ndevices:\n  efr:\n    plugin: jlink\n    device: \"90000001\"\n    target: EFR32MG1PxxxF256\n  nrf:\n    plugin: jlink\n    device: \"900000002\"\n    target: NRF52840_XXAA\n    rtt: false\n\nsteps:\n  - {name: efr-info,        at: 4s,    device: efr, call: DebugProbe.info}\n  - {name: nrf-info,        at: 4s,    device: nrf, call: DebugProbe.info}\n  - {name: efr-connect,     at: 5s,    device: efr, call: DebugProbe.connect}\n  - {name: nrf-connect,     at: 5s,    device: nrf, call: DebugProbe.connect}\n  - {name: efr-vectors,     at: 6s,    device: efr, call: MemoryAccess.read, args: {address: \"0x0\", length: 16}}\n  - {name: nrf-vectors,     at: 6s,    device: nrf, call: MemoryAccess.read, args: {address: \"0x0\", length: 16}}\n  - {name: efr-devinfo,     at: 7s,    device: efr, call: MemoryAccess.read, args: {address: \"0x0FE081F8\", length: 8}}\n  - {name: nrf-ficr-part,   at: 7s,    device: nrf, call: MemoryAccess.read, args: {address: \"0x10000100\", length: 4}}\n  - {name: efr-halt,        at: 8s,    device: efr, call: DebugProbe.halt}\n  - {name: nrf-halt,        at: 8s,    device: nrf, call: DebugProbe.halt}\n  - {name: efr-registers,   at: 9s,    device: efr, call: DebugProbe.read_registers}\n  - {name: nrf-registers,   at: 9s,    device: nrf, call: DebugProbe.read_registers}\n  - {name: efr-resume,      at: 10s,   device: efr, call: DebugProbe.resume}\n  - {name: nrf-resume,      at: 10s,   device: nrf, call: DebugProbe.resume}\n  - {name: efr-reset,       at: 11s,   device: efr, call: DebugProbe.reset}\n  - {name: nrf-reset,       at: 11s,   device: nrf, call: DebugProbe.reset}\n  - {name: efr-reconnect,   at: 12s,   device: efr, call: DebugProbe.connect}\n  - {name: nrf-reconnect,   at: 12s,   device: nrf, call: DebugProbe.connect}\n",
+  "devices": [
+    {
+      "alias": "efr",
+      "device_id": "90000001",
+      "plugin_id": "jlink",
+      "name": "SAM-ICE",
+      "capabilities": [
+        "DebugProbe",
+        "FlashProgramming",
+        "LiveRawStream",
+        "MemoryAccess",
+        "RTT"
+      ],
+      "config": {
+        "target": "EFR32MG1PxxxF256"
+      },
+      "clock_offset_ns": 0
+    },
+    {
+      "alias": "nrf",
+      "device_id": "900000002",
+      "plugin_id": "jlink",
+      "name": "J-Link OB-SAM3U128-V2-NordicSem",
+      "capabilities": [
+        "DebugProbe",
+        "FlashProgramming",
+        "LiveRawStream",
+        "MemoryAccess",
+        "RTT"
+      ],
+      "config": {
+        "rtt": false,
+        "target": "NRF52840_XXAA"
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": [
+    {
+      "id": "efr",
+      "alias": "efr",
+      "started_ns": 154213167,
+      "stopped_ns": 16179863258,
+      "request_ns": 1976469,
+      "clock": {
+        "source": "host clock at RTT telnet receive (target writes are polled by the probe)",
+        "resolution_ns": 1000000,
+        "error_min_ns": 0,
+        "error_min_bounded": true,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "the stamp is late by the unknown probe polling + USB + TCP latency and never early; lines are not stamped by the target; 3 lines; the 2 firmware log lines carrying the target EUI/network ids were removed from this fixture"
+      },
+      "events": 3,
+      "samples": 0,
+      "dropped_batches": 0
+    },
+    {
+      "id": "nrf",
+      "alias": "nrf",
+      "started_ns": 1938383,
+      "stopped_ns": 16179863258,
+      "request_ns": 1877996,
+      "clock": {
+        "source": "host clock at RTT telnet receive (target writes are polled by the probe)",
+        "resolution_ns": 1000000,
+        "error_min_ns": 0,
+        "error_min_bounded": true,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "the stamp is late by the unknown probe polling + USB + TCP latency and never early; lines are not stamped by the target; 0 lines, 0 bytes"
+      },
+      "events": 0,
+      "samples": 0,
+      "dropped_batches": 0
+    }
+  ]
+}

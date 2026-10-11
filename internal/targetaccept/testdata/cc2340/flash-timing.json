@@ -1,0 +1,8 @@
+{
+  "backup_ms": null,
+  "cmsisdap_restore_ms": 1727,
+  "xds110_erase_ms": 18,
+  "xds110_program_erase_ms": 12,
+  "xds110_program_program_ms": 6,
+  "xds110_program_verify_ms": 218
+}

@@ -1,0 +1,58 @@
+{
+ "synthetic": false,
+ "description": "300 s real PPK2 digital input D0 + Saleae Logic CH0 shared-signal run (nRF52840 DK TIMER4/PPI/GPIOTE square wave, 100 Hz); timeline not stored (120k edges), only the measured calibration",
+ "session": "2026-10-08T164432Z-ppk2-saleae-shared-signal-long",
+ "duration_ns": 302735719477,
+ "clock_calibrations": [
+  {
+   "alias": "ppk2",
+   "reference": "logic",
+   "method": "shared-digital-edges/least-squares-affine",
+   "signal": "SHARED~D0",
+   "pairs": 59970,
+   "rejected": 1,
+   "span_ns": 299649260000,
+   "ref_device_ns": 150280394860,
+   "ref_session_ns": 150338500552,
+   "rate": 1.0000926116820013,
+   "initial_offset_ns": 44206400,
+   "drift_ppm": 92.61168200125347,
+   "drift_stderr_ppm": 0.00014517365573100944,
+   "residual_median_ns": 2483,
+   "residual_p95_ns": 5333,
+   "residual_max_ns": 43055,
+   "uncertainty_ns": 48180,
+   "offset_only_p95_ns": 13083000,
+   "note": "uncertainty = worst residual + half of each timestamp resolution; common-mode delays and probe-point skew are not observable"
+  }
+ ],
+ "captures_clock": {
+  "ppk2": {
+   "source": "sample count x 10 us from the host time of the AVERAGE_START write",
+   "resolution_ns": 10000,
+   "error_min_ns": -5052545,
+   "error_min_bounded": true,
+   "error_max_ns": 14516,
+   "error_max_bounded": true,
+   "note": "the PPK2 has no per-sample timestamps; the start of sampling is bounded by the write time (late side) and by data arrival (early side), assuming the device clock does not drift over the first 2 s; later drift is not measured"
+  },
+  "logic": {
+   "source": "Logic 2 capture time offset, anchored at host time of StartCapture RPC return",
+   "resolution_ns": 250,
+   "error_min_ns": 0,
+   "error_min_bounded": false,
+   "error_max_ns": 0,
+   "error_max_bounded": false,
+   "note": "Logic 2 buffers the capture and returns it after it ends; sample times are offsets from Logic 2's capture start, anchored at the host time the StartCapture RPC returned (RPC latency 484ms). The delay between that RPC and the device actually sampling is not measured, so no error bound is claimed."
+  },
+  "dbg": {
+   "source": "host clock at RTT telnet receive (target writes are polled by the probe)",
+   "resolution_ns": 1000000,
+   "error_min_ns": 0,
+   "error_min_bounded": true,
+   "error_max_ns": 0,
+   "error_max_bounded": false,
+   "note": "the stamp is late by the unknown probe polling + USB + TCP latency and never early; lines are not stamped by the target; 3 lines, 112 bytes"
+  }
+ }
+}

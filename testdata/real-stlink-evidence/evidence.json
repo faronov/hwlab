@@ -1,0 +1,65 @@
+{
+  "kind": "REAL",
+  "note": "Recorded from a physical ST-LINK/V2 attached to an nRF52840 DK by the hwlab stlink plugin (native Go usbfs; no OpenOCD, STM32CubeProgrammer, st-flash, libusb, Python or CGO). Bus/device numbers and sysfs paths removed. The USB serial is replaced by 38FFAABBCCDDEEFF00112233. The target is NOT an STM32.",
+  "probe": {
+    "vid": "0483",
+    "pid": "3748",
+    "manufacturer": "STMicroelectronics",
+    "product": "STM32 STLink",
+    "serial": "38FFAABBCCDDEEFF00112233",
+    "serial_note": "the USB string descriptor is UTF-16 with units <= 0xFF; sysfs shows them UTF-8 encoded (38c3bf...) so the plugin reads the raw descriptor",
+    "firmware": "V2J39S7",
+    "jtag_version": 39,
+    "swim_version": 7,
+    "target_voltage_v": 3.25,
+    "interface": {"number": 0, "class": "0xff", "driver": "none", "endpoints": ["0x02 bulk OUT 64B", "0x81 bulk IN 64B (replies)", "0x83 bulk IN 64B (SWO, unused)"]},
+    "genuine_or_counterfeit": "not determined"
+  },
+  "target": {
+    "transport": "swd",
+    "dp_idcode": "0x2BA01477",
+    "cpuid": "0x410FC241",
+    "core": "Cortex-M4 r0p1 (ARMv7-M)",
+    "fpb": {"code_comparators": 6, "literal_comparators": 2},
+    "dwt_comparators": 4,
+    "vendor_hint": "FICR word 0x00052840 (nRF52840), a hint only",
+    "swd_clocks_khz": [4000, 1800, 1200, 950, 480, 240, 125, 100, 50, 25, 15, 5],
+    "stm32_dbgmcu_idcode": "0x00000000 (not an STM32)"
+  },
+  "results": {
+    "halt_resume_cycles": 25,
+    "single_steps": 100,
+    "breakpoint_hits": 5,
+    "watchpoint_hits": 1,
+    "sram_write_restore": "8/16/32-bit and unaligned, restored byte for byte, invalid addresses refused",
+    "reset": "system and core reset observed (PC at the reset vector after reset-halt); NRST pin not wired, not claimed",
+    "reopen_cycles": 10,
+    "concurrent_open": "refused with 'usb: interface is busy'",
+    "flash": "UNSUPPORTED_BY_ATTACHED_HW; nothing was erased or programmed"
+  },
+  "throughput": {
+    "register_block_ms": 8.2,
+    "read_16B_ms": 0.49,
+    "read_2KiB_ms": 19.6,
+    "read_64KiB_ms": 628,
+    "read_KBps": 102,
+    "write_4KiB_sram_ms": 123,
+    "write_KBps": 32
+  },
+  "timing_before_after": {
+    "close_before_ms": 2000,
+    "close_after_ms": 0.15,
+    "open_ms": 110,
+    "hardware_suite_before_s": 58,
+    "hardware_suite_after_s": 8.8,
+    "cause": "the probe sends no reply to DEBUG_EXIT (F2 21); the first implementation waited its full 2 s timeout"
+  },
+  "unplug_replug": {
+    "rounds": 2,
+    "physically_performed_by_user": true,
+    "classification": "DEVICE_GONE on MemoryAccess.read, TargetIdentify.identify, DebugProbe.halt/read_registers/chip_info",
+    "slowest_call_ms": 224,
+    "away_s": [68.6, 61.9],
+    "rediscovery": "by USB serial; bus address changed (081 -> 083 -> 084), identity (DP IDCODE, CPUID, vendor word) unchanged, memory read and halt/resume OK"
+  }
+}

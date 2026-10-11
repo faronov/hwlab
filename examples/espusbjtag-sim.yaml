@@ -1,0 +1,25 @@
+# SYNTHETIC Espressif USB Serial/JTAG device: an in-process USB model with a
+# fabricated RISC-V target (IDCODE 0x0000dc25, 2 harts, SBA). Nothing here was
+# measured on hardware; it exercises the native transport, JTAG, RISC-V DM and
+# the replay path.
+#
+#   HWLAB_ESPJTAG_SIM=1 hwlab run --yes examples/espusbjtag-sim.yaml
+name: espusbjtag-sim
+duration: 10s
+
+devices:
+  jtag:
+    plugin: espusbjtag
+    device: sim-espusbjtag
+
+steps:
+  - {name: info, at: 100ms, device: jtag, call: JTAGTransport.info}
+  - {name: scan, at: 300ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}
+  - {name: identify, at: 600ms, device: jtag, call: TargetIdentify.identify}
+  - {name: chip-info, at: 900ms, device: jtag, call: DebugProbe.chip_info}
+  - {name: halt, at: 1200ms, device: jtag, call: DebugProbe.halt}
+  - {name: registers, at: 1500ms, device: jtag, call: DebugProbe.read_registers, args: {keep_halted: true}}
+  - {name: read-sram, at: 2000ms, device: jtag, call: MemoryAccess.read, args: {address: 0x40800000, length: 16}}
+  - {name: read-flash, at: 2300ms, device: jtag, call: MemoryAccess.read, args: {address: 0x42000000, length: 16}}
+  - {name: resume, at: 2600ms, device: jtag, call: DebugProbe.resume}
+  - {name: scan-again, at: 2900ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}

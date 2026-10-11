@@ -1,0 +1,52 @@
+{
+  "format_version": 1,
+  "id": "2026-10-06T204946Z-can-virtual",
+  "name": "can-virtual",
+  "status": "complete",
+  "created_at": "2026-10-06T20:49:46.177383967Z",
+  "wall_epoch_unix_ns": 1791319786177383967,
+  "duration_ns": 3007747204,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# CAN / CAN-FD capture. Frames become timestamped \"can\" packets and a pcapng\n# artifact (link type 227, SocketCAN) that Wireshark decodes natively.\n#\n# This example uses the plugin's in-process VIRTUAL bus, so it needs no\n# hardware. Its frames are SYNTHETIC: injected by `inject` steps, not read from\n# a bus. Start with HWLAB_CAN_VIRTUAL=1:\n#\n#   HWLAB_CAN_VIRTUAL=1 hwlab run --yes examples/can-virtual.yaml\n#\n# For a real bus, bring the interface up first (hwlab never changes it):\n#\n#   sudo ip link set can0 up type can bitrate 500000        # classic\n#   sudo ip link set can0 up type can bitrate 500000 dbitrate 2000000 fd on\n#   hwlab devices                                           # can/can0\n#\n# and replace `device:` with can0. The send step transmits onto the bus, which\n# is a state-changing call and needs `hwlab run --yes`.\nname: can-virtual\nduration: 3s\n\ndevices:\n  bus:\n    plugin: can\n    device: virtual-can0\n    fd: true\n    own: true\n    # filters: [\"7E8:7F8\"]     # candump notation, optional\n\nsteps:\n  - {name: engine-rpm,  at: 300ms, device: bus, call: CANTransport.inject, args: {id: \"0CF00400\", data: \"FF FF FF 20 4E FF FF FF\"}}\n  - {name: odd-request, at: 600ms, device: bus, call: CANTransport.inject, args: {id: \"123\", data: \"DEADBEEF\"}}\n  - {name: remote,      at: 900ms, device: bus, call: CANTransport.inject, args: {id: \"321\", rtr: true, dlc: 4}}\n  - {name: obd-request, at: 1200ms, device: bus, call: CANTransport.send,  args: {id: \"7DF\", data: \"02 01 0C\"}}\n  - {name: obd-reply,   at: 1300ms, device: bus, call: CANTransport.inject, args: {id: \"7E8\", data: \"04 41 0C 1A F8\"}}\n  - {name: fd-frame,    at: 1700ms, device: bus, call: CANTransport.inject, args: {id: \"18DAF110\", fd: true, brs: true, data: \"00112233445566778899AABBCCDDEEFF0102030405060708\"}}\n",
+  "devices": [
+    {
+      "alias": "bus",
+      "device_id": "virtual-can0",
+      "plugin_id": "can",
+      "name": "virtual-can0",
+      "capabilities": [
+        "ArtifactExport",
+        "CANTransport",
+        "LiveRawStream",
+        "PacketCapture",
+        "TimedCapture"
+      ],
+      "config": {
+        "fd": true,
+        "own": true
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": [
+    {
+      "id": "bus",
+      "alias": "bus",
+      "started_ns": 1264629,
+      "stopped_ns": 3007747204,
+      "request_ns": 1151883,
+      "clock": {
+        "source": "host clock at in-process delivery (synthetic bus)",
+        "resolution_ns": 1,
+        "error_min_ns": 0,
+        "error_min_bounded": true,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "synthetic virtual interface: no physical bus, no bit timing; the stamps order frames and nothing more"
+      },
+      "events": 6,
+      "samples": 0,
+      "dropped_batches": 0
+    }
+  ]
+}

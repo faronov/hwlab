@@ -1,0 +1,178 @@
+{
+  "format_version": 1,
+  "id": "2026-10-08T164412Z-ppk2-saleae-shared-signal-long",
+  "name": "ppk2-saleae-shared-signal-long",
+  "status": "complete",
+  "created_at": "2026-10-08T16:44:12.746025003Z",
+  "wall_epoch_unix_ns": 1791477852746025003,
+  "duration_ns": 14238753954,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "name: ppk2-saleae-shared-signal-long\nduration: 12s\n\ndevices:\n  ppk2:\n    plugin: ppk2\n    requires: [PowerMeasurement, DigitalCapture]\n    mode: source\n    supply_mv: 3300\n  logic:\n    plugin: saleae\n    device: SALEAE-FIXTURE\n    requires: [DigitalCapture]\n    digital_channels: [0]\n    digital_sample_rate: 4000000\n    channel_names:\n      \"0\": SHARED\n  dbg:\n    plugin: jlink\n    target: NRF52840_XXAA\n\nsteps:\n  - {name: stretch, at: 2s, device: dbg, call: MemoryAccess.write, args: {address: \"0x4001B540\", data: \"401f0000\"}}\n  - {name: restore, at: 5s, device: dbg, call: MemoryAccess.write, args: {address: \"0x4001B540\", data: \"88130000\"}}\n  - {name: clear, at: 5500ms, device: dbg, call: MemoryAccess.write, args: {address: \"0x4001B00C\", data: \"01000000\"}}\n  - {name: stretch-end, at: 8s, device: dbg, call: MemoryAccess.write, args: {address: \"0x4001B540\", data: \"401f0000\"}}\n  - {name: restore-end, at: 10s, device: dbg, call: MemoryAccess.write, args: {address: \"0x4001B540\", data: \"88130000\"}}\n  - {name: clear-end, at: 10500ms, device: dbg, call: MemoryAccess.write, args: {address: \"0x4001B00C\", data: \"01000000\"}}\n\nplots:\n  - name: overview\n    title: Shared DK signal on PPK2 D0 and Saleae CH0\n    format: svg",
+  "devices": [
+    {
+      "alias": "ppk2",
+      "device_id": "PPK2-FIXTURE",
+      "plugin_id": "ppk2",
+      "name": "Power Profiler Kit II",
+      "capabilities": [
+        "DigitalCapture",
+        "LiveRawStream",
+        "PowerMeasurement",
+        "PowerSource",
+        "TimedCapture"
+      ],
+      "config": {
+        "mode": "source",
+        "supply_mv": 3300
+      },
+      "clock_offset_ns": 0
+    },
+    {
+      "alias": "logic",
+      "device_id": "SALEAE-FIXTURE",
+      "plugin_id": "saleae",
+      "name": "Saleae Logic",
+      "capabilities": [
+        "AnalogCapture",
+        "ArtifactExport",
+        "DigitalCapture",
+        "OfflineCapture",
+        "TimedCapture"
+      ],
+      "config": {
+        "channel_names": {
+          "0": "SHARED"
+        },
+        "digital_channels": [
+          0
+        ],
+        "digital_sample_rate": 4000000
+      },
+      "clock_offset_ns": 0
+    },
+    {
+      "alias": "dbg",
+      "device_id": "900000002",
+      "plugin_id": "jlink",
+      "name": "J-Link",
+      "capabilities": [
+        "DebugProbe",
+        "FlashProgramming",
+        "LiveRawStream",
+        "MemoryAccess",
+        "RTT"
+      ],
+      "config": {
+        "target": "NRF52840_XXAA"
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": [
+    {
+      "id": "ppk2",
+      "alias": "ppk2",
+      "started_ns": 322486740,
+      "stopped_ns": 14238753954,
+      "request_ns": 222120106,
+      "clock": {
+        "source": "sample count x 10 us from the host time of the AVERAGE_START write",
+        "resolution_ns": 10000,
+        "error_min_ns": -5002385,
+        "error_min_bounded": true,
+        "error_max_ns": 18970,
+        "error_max_bounded": true,
+        "note": "the PPK2 has no per-sample timestamps; the start of sampling is bounded by the write time (late side) and by data arrival (early side), assuming the device clock does not drift over the first 2 s; later drift is not measured"
+      },
+      "streams": [
+        {
+          "id": "current",
+          "kind": "power",
+          "file": "captures/ppk2/current.hwcap",
+          "alias": "ppk2",
+          "capture": "ppk2",
+          "digital_names": [
+            "D0",
+            "D1",
+            "D2",
+            "D3",
+            "D4",
+            "D5",
+            "D6",
+            "D7"
+          ],
+          "attributes": {
+            "mode": "source",
+            "port": "/dev/ttyACM1",
+            "sample_period_ns": "10000",
+            "vdd_mv": "3300"
+          }
+        }
+      ],
+      "events": 1200,
+      "samples": 1199488,
+      "dropped_batches": 0
+    },
+    {
+      "id": "logic",
+      "alias": "logic",
+      "started_ns": 665869602,
+      "stopped_ns": 14238753954,
+      "request_ns": 222042239,
+      "clock": {
+        "source": "Logic 2 capture time offset, anchored at host time of StartCapture RPC return",
+        "resolution_ns": 250,
+        "error_min_ns": 0,
+        "error_min_bounded": false,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "Logic 2 buffers the capture and returns it after it ends; sample times are offsets from Logic 2's capture start, anchored at the host time the StartCapture RPC returned (RPC latency 444ms). The delay between that RPC and the device actually sampling is not measured, so no error bound is claimed."
+      },
+      "events": 1,
+      "samples": 0,
+      "dropped_batches": 0
+    },
+    {
+      "id": "dbg",
+      "alias": "dbg",
+      "started_ns": 374322407,
+      "stopped_ns": 14238753954,
+      "request_ns": 221973109,
+      "clock": {
+        "source": "host clock at RTT telnet receive (target writes are polled by the probe)",
+        "resolution_ns": 1000000,
+        "error_min_ns": 0,
+        "error_min_bounded": true,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "the stamp is late by the unknown probe polling + USB + TCP latency and never early; lines are not stamped by the target; 3 lines, 112 bytes"
+      },
+      "events": 3,
+      "samples": 0,
+      "dropped_batches": 0
+    }
+  ],
+  "clock_calibrations": [
+    {
+      "alias": "ppk2",
+      "reference": "logic",
+      "method": "shared-digital-edges/least-squares-affine",
+      "signal": "SHARED~D0",
+      "pairs": 1982,
+      "rejected": 4,
+      "span_ns": 11683930000,
+      "ref_device_ns": 6588741543,
+      "ref_session_ns": 6640363610,
+      "rate": 1.0000927485155013,
+      "initial_offset_ns": 51001625,
+      "drift_ppm": 92.74851550133967,
+      "drift_stderr_ppm": 0.02986892485048447,
+      "residual_median_ns": 2476,
+      "residual_p95_ns": 4977,
+      "residual_max_ns": 68034,
+      "uncertainty_ns": 73159,
+      "offset_only_p95_ns": 518500,
+      "note": "uncertainty = worst residual + half of each timestamp resolution; common-mode delays and probe-point skew are not observable"
+    }
+  ]
+}

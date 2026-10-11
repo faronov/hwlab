@@ -1,0 +1,57 @@
+# ST-Link V2 (0483:3748) debug session through the NATIVE Go stack: Linux
+# usbfs -> ST-Link protocol -> SWD -> generic Cortex-M debug (internal/cortexm).
+# No OpenOCD, no STM32CubeProgrammer, no st-flash, no libusb, no Python, no CGO.
+#
+# Recorded on a REAL ST-Link whose target is an nRF52840 (not an STM32): it
+# exercises identification, halt/resume, registers, an SRAM write that is
+# restored, single-step, a hardware breakpoint that really hits, a data
+# watchpoint that really hits, resets, the SWD clock, and shows that the
+# STM32 flash layer refuses a target it did not positively recognise
+# (UNSUPPORTED_BY_ATTACHED_HW). It never erases or programs flash.
+#
+#   hwlab run --yes examples/stlink-debug.yaml
+#
+# The SRAM scratch address 0x2003be00 (16 bytes) was verified to read
+# identically twice while halted and is written back with its original bytes;
+# adjust it for another firmware. The breakpoint address 0x0002aecc is on the
+# reset path of the attached firmware that every reset-halt executes.
+name: stlink-debug
+duration: 40s
+
+devices:
+  stlink:
+    plugin: stlink
+    allow_memory_write: true
+    allow_reset: true
+
+steps:
+  - {name: info, at: 100ms, device: stlink, call: DebugProbe.info}
+  - {name: identify, at: 500ms, device: stlink, call: TargetIdentify.identify}
+  - {name: chip-info, at: 1s, device: stlink, call: DebugProbe.chip_info}
+  - {name: harts, at: 1500ms, device: stlink, call: DebugProbe.harts}
+  - {name: halt, at: 2s, device: stlink, call: DebugProbe.halt}
+  - {name: registers, at: 2500ms, device: stlink, call: DebugProbe.read_registers, args: {keep_halted: true, crosscheck: true}}
+  - {name: sram-before, at: 3s, device: stlink, call: MemoryAccess.read, args: {address: 0x2003be00, length: 16}}
+  - {name: sram-write, at: 3500ms, device: stlink, call: MemoryAccess.write, args: {address: 0x2003be00, data: a55a1234deadbeef0102030405060708}}
+  - {name: sram-after-write, at: 4s, device: stlink, call: MemoryAccess.read, args: {address: 0x2003be00, length: 16}}
+  - {name: sram-restore, at: 4500ms, device: stlink, call: MemoryAccess.write, args: {address: 0x2003be00, data: df6df55f1846000239f2f48f0c011000}}
+  - {name: sram-final, at: 5s, device: stlink, call: MemoryAccess.read, args: {address: 0x2003be00, length: 16}}
+  - {name: resume, at: 5500ms, device: stlink, call: DebugProbe.resume}
+  - {name: reset-halt, at: 6s, device: stlink, call: DebugProbe.reset, args: {kind: system, halt: true}}
+  - {name: step, at: 7s, device: stlink, call: DebugProbe.step, args: {count: 12}}
+  - {name: reset-halt-again, at: 8s, device: stlink, call: DebugProbe.reset, args: {kind: system, halt: true}}
+  - {name: breakpoint-hit, at: 9s, device: stlink, call: DebugProbe.set_breakpoint, args: {address: 0x0002aecc, run_wait_ms: 1000}}
+  - {name: list-breakpoints, at: 10s, device: stlink, call: DebugProbe.list_breakpoints}
+  - {name: clear-breakpoints, at: 10500ms, device: stlink, call: DebugProbe.clear_breakpoint, args: {all: true}}
+  - {name: reset-halt-watch, at: 11s, device: stlink, call: DebugProbe.reset, args: {kind: system, halt: true}}
+  - {name: watchpoint-set, at: 12s, device: stlink, call: DebugProbe.set_watchpoint, args: {address: 0x20000000, kind: write, mask_bits: 4}}
+  - {name: watch-resume, at: 12500ms, device: stlink, call: DebugProbe.resume}
+  - {name: watch-hit, at: 13s, device: stlink, call: DebugProbe.wait_halt, args: {wait_ms: 1500}}
+  - {name: watchpoint-clear, at: 15s, device: stlink, call: DebugProbe.clear_watchpoint, args: {all: true}}
+  - {name: resume-after-watch, at: 15500ms, device: stlink, call: DebugProbe.resume}
+  - {name: core-reset, at: 16s, device: stlink, call: DebugProbe.reset, args: {kind: core}}
+  - {name: speed-950, at: 17s, device: stlink, call: DebugProbe.set_speed, args: {khz: 950}}
+  - {name: read-at-950, at: 17500ms, device: stlink, call: MemoryAccess.read, args: {address: 0x20000000, length: 16}}
+  - {name: speed-1800, at: 18s, device: stlink, call: DebugProbe.set_speed, args: {khz: 1800}}
+  - {name: flash-info, at: 19s, device: stlink, call: FlashProgramming.info}
+  - {name: identify-final, at: 20s, device: stlink, call: TargetIdentify.identify}

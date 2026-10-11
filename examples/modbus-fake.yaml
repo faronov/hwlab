@@ -1,0 +1,34 @@
+# Modbus master over the modbus plugin (RTU or TCP).
+#
+# The default run uses the plugin's in-process SYNTHETIC slave, so it needs no
+# device. Its register values are generated, not measured:
+#
+#   HWLAB_MODBUS_FAKE=1 hwlab run --yes examples/modbus-fake.yaml
+#
+# For a real device (UNVALIDATED: the Modbus stack was written from the public
+# specification and has only run against its own simulator; no Modbus device
+# was available):
+#
+#   export HWLAB_MODBUS_HOSTS="meter=tcp://192.168.1.60:502,rs485=rtu:/dev/ttyUSB0@19200:8E1"
+#   hwlab devices                                  # modbus/meter, modbus/rs485
+#   hwlab invoke modbus/meter Modbus.read_holding_registers '{"address":0,"quantity":2}'
+#
+# and replace `device:` below. Writes are CONFIRM operations and need --yes;
+# polls in a capture are read-only by design.
+name: modbus-fake
+duration: 3s
+
+devices:
+  plc:
+    plugin: modbus
+    device: fake-modbus
+    unit: 1
+    polls:
+      - {name: regs,  function: read_holding_registers, address: 0,  quantity: 3, interval_ms: 500}
+      - {name: temp,  function: read_holding_registers, address: 10, quantity: 2, interval_ms: 500, as: f32}
+      - {name: count, function: read_input_registers,   address: 0,  quantity: 1, interval_ms: 700}
+
+steps:
+  - {name: read-coils, at: 200ms,  device: plc, call: Modbus.read_coils, args: {address: 0, quantity: 4}}
+  - {name: write-reg,  at: 1200ms, device: plc, call: Modbus.write_register, args: {address: 4, value: 777}}
+  - {name: bad-addr,   at: 1700ms, device: plc, call: Modbus.read_holding_registers, args: {address: 9000, quantity: 1}}   # exception: recorded as a failed step, not fatal

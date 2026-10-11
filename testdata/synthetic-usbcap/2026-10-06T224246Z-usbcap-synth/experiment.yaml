@@ -1,0 +1,35 @@
+# USB packet capture. URB events become timestamped "usb" packets and a pcapng
+# artifact (link type 220, usbmon) that Wireshark decodes natively.
+#
+# This example uses the plugin's SYNTHETIC source: a made-up HID mouse, a
+# mass-storage stick and a CDC serial port being enumerated and used. Nothing
+# is read from a bus. Real USB capture (Linux usbmon) has NOT been validated on
+# this host: it needs root or a readable /sys/kernel/debug/usb/usbmon.
+#
+#   HWLAB_USBCAP_SYNTH=1 hwlab run --yes examples/usbcap-synth.yaml
+#   hwlab usb analyze latest
+#   hwlab usb analyze latest --device 1:5 --errors
+#
+# Real sources, instead of HWLAB_USBCAP_SYNTH:
+#
+#   # live, as root (or with debugfs mounted and readable); usbmon0 = every bus
+#   sudo modprobe usbmon
+#   hwlab devices                                  # usbcap/usbmon1 ...
+#
+#   # a usbmon text capture taken elsewhere (cat /sys/kernel/debug/usb/usbmon/1u > mon.txt)
+#   HWLAB_USBCAP_SOURCES=lab=mon.txt hwlab run --yes examples/usbcap-synth.yaml   # device: lab
+#
+# USB payloads can contain keystrokes and secrets: snaplen limits what is kept
+# (0 = headers only).
+name: usbcap-synth
+duration: 2s
+
+devices:
+  usb:
+    plugin: usbcap
+    device: synthetic
+    speed: 1          # offline sources only: replay speed factor
+    snaplen: 256
+
+steps:
+  - {name: info, at: 100ms, device: usb, call: USBPacketCapture.info}

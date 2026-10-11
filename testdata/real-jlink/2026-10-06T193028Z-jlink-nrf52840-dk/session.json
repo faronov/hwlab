@@ -1,0 +1,51 @@
+{
+  "format_version": 1,
+  "id": "2026-10-06T193028Z-jlink-nrf52840-dk",
+  "name": "jlink-nrf52840-dk",
+  "status": "complete",
+  "created_at": "2026-10-06T19:30:28.174316357Z",
+  "wall_epoch_unix_ns": 1791315028174316357,
+  "duration_ns": 6185908261,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# SEGGER J-Link (nRF52840 DK on-board J-Link OB) with RTT and read-only steps.\n# Needs SEGGER's JLinkExe (see docs/hardware.md). Nothing here writes, erases\n# or programs the target.\n#\n#   HWLAB_JLINK_EXE=~/sdk/jlink/JLink_Linux_V982_x86_64/JLinkExe hwlab run examples/jlink-nrf52840-dk.yaml\nname: jlink-nrf52840-dk\nduration: 6s\n\ndevices:\n  dbg:\n    plugin: jlink\n    target: NRF52840_XXAA\n\nsteps:\n  - {name: probe-info, at: 4s, device: dbg, call: DebugProbe.info}\n  - {name: read-vectors, at: 4500ms, device: dbg, call: MemoryAccess.read, args: {address: \"0x0\", length: 16}}\n",
+  "devices": [
+    {
+      "alias": "dbg",
+      "device_id": "900000002",
+      "plugin_id": "jlink",
+      "name": "J-Link",
+      "capabilities": [
+        "DebugProbe",
+        "FlashProgramming",
+        "LiveRawStream",
+        "MemoryAccess",
+        "RTT"
+      ],
+      "config": {
+        "target": "NRF52840_XXAA"
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": [
+    {
+      "id": "dbg",
+      "alias": "dbg",
+      "started_ns": 153106055,
+      "stopped_ns": 6185908261,
+      "request_ns": 936412,
+      "clock": {
+        "source": "host clock at RTT telnet receive (target writes are polled by the probe)",
+        "resolution_ns": 1000000,
+        "error_min_ns": 0,
+        "error_min_bounded": true,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "the stamp is late by the unknown probe polling + USB + TCP latency and never early; lines are not stamped by the target; 3 lines, 112 bytes"
+      },
+      "events": 3,
+      "samples": 0,
+      "dropped_batches": 0
+    }
+  ]
+}

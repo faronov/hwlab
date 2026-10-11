@@ -1,0 +1,52 @@
+{"t_ns":22619651580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":1}
+{"t_ns":22619680330,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":2}
+{"t_ns":22619709330,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":3}
+{"t_ns":22619740580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":4}
+{"t_ns":22619765580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":5}
+{"t_ns":23529808080,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":6}
+{"t_ns":32540313080,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH2 falling","data":{"bit":1,"channel":"CH2","level":false},"seq":7}
+{"t_ns":33247334080,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH2 rising","data":{"bit":1,"channel":"CH2","level":true},"seq":8}
+{"t_ns":39316872830,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":9}
+{"t_ns":39317011580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":10}
+{"t_ns":39317191830,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":11}
+{"t_ns":39807062580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":12}
+{"t_ns":39807094080,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":13}
+{"t_ns":39807094830,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":14}
+{"t_ns":39807096830,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":15}
+{"t_ns":39807100080,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":16}
+{"t_ns":39807100580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":17}
+{"t_ns":39807101580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":18}
+{"t_ns":39807102080,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":19}
+{"t_ns":39807106330,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":20}
+{"t_ns":39807107080,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":21}
+{"t_ns":39807108330,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":22}
+{"t_ns":39807109580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":23}
+{"t_ns":39807129580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":24}
+{"t_ns":39807132830,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":25}
+{"t_ns":39807133580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":26}
+{"t_ns":39807134580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":27}
+{"t_ns":39807134830,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":28}
+{"t_ns":39807135080,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":29}
+{"t_ns":39807136830,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":30}
+{"t_ns":39807139830,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":31}
+{"t_ns":39807140580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":32}
+{"t_ns":39807159580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":33}
+{"t_ns":39807316330,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":34}
+{"t_ns":39807342080,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":35}
+{"t_ns":39807342330,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":36}
+{"t_ns":39807344080,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":37}
+{"t_ns":39812115580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":38}
+{"t_ns":39812116080,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":39}
+{"t_ns":39812118330,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":40}
+{"t_ns":39812118580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":41}
+{"t_ns":39812120580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":42}
+{"t_ns":39812120830,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":43}
+{"t_ns":39812130580,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":44}
+{"t_ns":39812133080,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 falling","data":{"bit":0,"channel":"CH1","level":false},"seq":45}
+{"t_ns":39812139080,"source":"logic","device":"AABBCCDDEEFF0001","stream":"digital","type":"digital.edge","summary":"CH1 rising","data":{"bit":0,"channel":"CH1","level":true},"seq":46}
+{"t_ns":22619651580,"dur_ns":989500,"source":"logic","device":"AABBCCDDEEFF0001","stream":"analyzers","type":"decoded","summary":"uart-ch1 data data=0x00 error=framing","data":{"fields":{"analyzer":"uart-ch1","data":"0x00","error":"framing","type":"data"},"protocol":"uart"},"seq":47}
+{"t_ns":39316872830,"dur_ns":989500,"source":"logic","device":"AABBCCDDEEFF0001","stream":"analyzers","type":"decoded","summary":"uart-ch1 data data=0x03 error=framing","data":{"fields":{"analyzer":"uart-ch1","data":"0x03","error":"framing","type":"data"},"protocol":"uart"},"seq":48}
+{"t_ns":39807094080,"dur_ns":989500,"source":"logic","device":"AABBCCDDEEFF0001","stream":"analyzers","type":"decoded","summary":"uart-ch1 data data=0x00 error=framing","data":{"fields":{"analyzer":"uart-ch1","data":"0x00","error":"framing","type":"data"},"protocol":"uart"},"seq":49}
+{"t_ns":39812116080,"dur_ns":989500,"source":"logic","device":"AABBCCDDEEFF0001","stream":"analyzers","type":"decoded","summary":"uart-ch1 data data=0xFF","data":{"fields":{"analyzer":"uart-ch1","data":"0xFF","error":"","type":"data"},"protocol":"uart"},"seq":50}
+{"t_ns":22619651580,"dur_ns":250,"source":"logic","device":"AABBCCDDEEFF0001","stream":"analyzers","type":"decoded","summary":"i2c-ch1-ch2 start","data":{"fields":{"analyzer":"i2c-ch1-ch2","type":"start"},"protocol":"i2c"},"seq":51}
+{"t_ns":39316872830,"dur_ns":250,"source":"logic","device":"AABBCCDDEEFF0001","stream":"analyzers","type":"decoded","summary":"i2c-ch1-ch2 start","data":{"fields":{"analyzer":"i2c-ch1-ch2","type":"start"},"protocol":"i2c"},"seq":52}

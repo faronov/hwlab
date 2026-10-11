@@ -1,0 +1,34 @@
+{
+  "format_version": 1,
+  "id": "2026-10-08T185957Z-ccdebugger-identify",
+  "name": "ccdebugger-identify",
+  "status": "complete",
+  "created_at": "2026-10-08T18:59:57.957527717Z",
+  "wall_epoch_unix_ns": 1791485997957527717,
+  "duration_ns": 1002608123,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# Real CC-Debugger + CC2530 through the NATIVE USB backend: identify the target\n# from its hardware registers and read its lock bits and IEEE addresses.\n#\n# This RESETS the target into debug halt (access: reset-debug-session), reads\n# only, then re-enables DMA and resumes the firmware. It never writes memory,\n# erases or programs flash, MAC or lock bytes (no allow_memory_write and no\n# allow_flash_* keys).\n#\n#   make build \u0026\u0026 ./bin/hwlab run --yes examples/ccdebugger-identify.yaml\nname: ccdebugger-identify\nduration: 3s\n\ndevices:\n  dbg:\n    plugin: ccdebugger\n    backend: native\n    access: reset-debug-session\n    allow_target_reset: true\n    allow_cpu_control: true\n    allow_memory_access: true\n    allow_dma_enable: true\n\nsteps:\n  - {name: attach, at: 100ms, device: dbg, call: DebugProbe.attach}\n  - {name: dma, at: 200ms, device: dbg, call: DebugProbe.enable_dma}\n  - {name: chip, at: 300ms, device: dbg, call: DebugProbe.chip_info}\n  - {name: lock, at: 400ms, device: dbg, call: DebugProbe.read_lock}\n  - {name: ieee, at: 500ms, device: dbg, call: DebugProbe.read_ieee}\n  - {name: registers, at: 600ms, device: dbg, call: DebugProbe.read_registers}\n  - {name: xdata, at: 700ms, device: dbg, call: MemoryAccess.read, args: {space: xdata, address: 0x1C00, length: 16}}\n  - {name: run, at: 1s, device: dbg, call: DebugProbe.resume}\n",
+  "devices": [
+    {
+      "alias": "dbg",
+      "device_id": "90000003",
+      "plugin_id": "ccdebugger",
+      "name": "CC Debugger",
+      "capabilities": [
+        "DebugProbe",
+        "FlashProgramming",
+        "MemoryAccess"
+      ],
+      "config": {
+        "access": "reset-debug-session",
+        "allow_cpu_control": true,
+        "allow_dma_enable": true,
+        "allow_memory_access": true,
+        "allow_target_reset": true,
+        "backend": "native"
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": []
+}

@@ -1,0 +1,5 @@
+Vendored from https://github.com/saleae/logic2-automation (proto/saleae/grpc/saleae.proto,
+Saleae gRPC Automation API 1.0.0), Apache License 2.0 (see LICENSE).
+
+The only change is an added `option go_package`. The generated Go code lives in
+plugins/saleae/internal/saleaepb (regenerate with `make proto`).

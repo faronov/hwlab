@@ -1,0 +1,32 @@
+# FTDI/MPSSE JTAG adapter through the NATIVE Go stack (Linux usbfs ->
+# FTDI protocol -> MPSSE -> JTAG TAP). No OpenOCD, no Python, no libusb.
+#
+# Recorded on a REAL Sipeed RV-Debugger-BL702 (an FT2232D emulator, USB
+# 0403:6010 "SIPEED JTAG Debugger"). Only USB interface 0 is claimed; the
+# companion UART (interface 1, /dev/ttyUSBx) stays with the kernel and the
+# uart plugin. See docs/notes/phase16-ftdi-mpsse-jtag-results.md.
+#
+#   hwlab devices                       # ftdi/0403:6010:<serial>
+#   hwlab run examples/ftdi-jtag-scan.yaml
+#
+# Every step is safe: TAP reset, a clock-less sync probe, a loopback check and
+# an IDCODE/BYPASS enumeration. Nothing is written to a target. With no target
+# on the JTAG pins the scan correctly reports status "no-device".
+#
+# For a SYNTHETIC adapter with one fabricated Cortex-M-like TAP (no hardware):
+#   HWLAB_FTDI_SIM=1 hwlab run examples/ftdi-jtag-sim.yaml
+name: ftdi-jtag-scan
+duration: 3s
+
+devices:
+  jtag:
+    plugin: ftdi
+
+steps:
+  - {name: adapter-info, at: 100ms, device: jtag, call: JTAGTransport.info}
+  - {name: selftest, at: 300ms, device: jtag, call: JTAGTransport.selftest}
+  - {name: tap-reset, at: 500ms, device: jtag, call: JTAGTransport.tap_reset}
+  - {name: scan-1, at: 700ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}
+  - {name: scan-2, at: 1000ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}
+  - {name: scan-3, at: 1300ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}
+  - {name: identify, at: 1600ms, device: jtag, call: TargetIdentify.identify}

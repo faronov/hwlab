@@ -1,0 +1,57 @@
+# Real two-device timing calibration: ONE physical digital signal seen by the
+# PPK2 (digital input D0) and by a Saleae Logic (CH0) in one experiment.
+#
+# Signal source: an nRF52840 DK whose flash is NOT changed. J-Link memory
+# writes configure TIMER4 + PPI + GPIOTE so that ONE timer compare event toggles
+# P0.03 and P0.04 through two GPIOTE tasks (PPI fork), so both pins switch in the
+# same clock cycle (~60 ns apart). A DK reset restores everything.
+#
+# Wiring (one-to-one dupont wires, 3.3 V logic):
+#   DK P0.03 -> PPK2 D0 (logic port)   DK P0.04 -> Saleae CH0
+#   DK VDD   -> PPK2 logic-port VCC    (required: the port is referenced to it)
+#   DK GND   -> PPK2 GND, Saleae GND
+#
+# Set the square wave up first (register sequence in docs/notes/milestone-hw-validation-results.md), then:
+#
+#   HWLAB_JLINK_EXE=... hwlab run --yes examples/ppk2-saleae-shared-signal.yaml
+#
+# Measure the clock relation of the two captures with:
+#   hwlab calibrate-clocks latest --ref logic --dev ppk2 --ref-channel SHARED --dev-channel D0 --save
+name: ppk2-saleae-shared-signal
+duration: 10s
+
+devices:
+  ppk2:
+    plugin: ppk2
+    requires: [PowerMeasurement, DigitalCapture]
+    # Source mode, no load needed. D0 only works with the logic-port VCC pin wired
+    # to the target I/O voltage.
+    mode: source
+    supply_mv: 3300
+  logic:
+    plugin: saleae
+    device: AABBCCDDEEFF0001
+    requires: [DigitalCapture]
+    digital_channels: [0]
+    digital_sample_rate: 4000000
+    channel_names:
+      "0": SHARED
+
+  dbg:
+    plugin: jlink
+    target: NRF52840_XXAA
+
+steps:
+  # A square wave is periodic, so identical edges cannot be told apart. Two J-Link
+  # writes to TIMER4.CC0 stretch the half-period (5 ms -> 8 ms -> 5 ms): the
+  # transition edges are a signature both devices see, which anchors the edge
+  # matching of `hwlab calibrate-clocks`.
+  - {name: stretch, at: 2s, device: dbg, call: MemoryAccess.write, args: {address: "0x4001B540", data: "401f0000"}}
+  - {name: restore, at: 5s, device: dbg, call: MemoryAccess.write, args: {address: "0x4001B540", data: "88130000"}}
+  # Shortening CC0 below the running counter would stall the wave: clear TIMER4.
+  - {name: clear, at: 5500ms, device: dbg, call: MemoryAccess.write, args: {address: "0x4001B00C", data: "01000000"}}
+
+plots:
+  - name: overview
+    title: Shared DK signal on PPK2 D0 and Saleae CH0
+    format: svg

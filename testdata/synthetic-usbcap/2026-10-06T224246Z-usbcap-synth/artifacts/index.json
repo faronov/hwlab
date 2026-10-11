@@ -1,0 +1,33 @@
+[
+  {
+    "id": "a001",
+    "name": "usb-synthetic.pcapng",
+    "kind": "pcap",
+    "mime_type": "application/vnd.tcpdump.pcapng",
+    "path": "artifacts/usb/usb-synthetic.pcapng",
+    "size": 9644,
+    "source": "usb",
+    "capture": "usb",
+    "created_at": "2026-10-06T22:42:47.005133754Z",
+    "metadata": {
+      "backend": "synthetic",
+      "bulk": "16",
+      "completions": "46",
+      "control": "36",
+      "errors": "2",
+      "events_dropped_batches": "0",
+      "interrupt": "40",
+      "isochronous": "0",
+      "layout": "usbmon mmapped header; URB level",
+      "link_type": "220",
+      "packets": "92",
+      "reached_end_of_source": "true",
+      "skipped_lines": "0",
+      "snaplen": "256",
+      "source": "synthetic",
+      "submissions": "46",
+      "synthetic": "true",
+      "truncated_by_snaplen": "0"
+    }
+  }
+]

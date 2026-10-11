@@ -1,0 +1,23 @@
+hwlab Espressif USB Serial/JTAG backend (plugins/espusbjtag, internal/riscv)
+
+Implemented independently in Go. No third-party source code is included.
+
+References (specifications and hardware facts, not code):
+  * RISC-V Debug Specification 0.13 (public specification): DTM (dtmcs, dmi),
+    Debug Module registers, Access Register and System Bus Access semantics.
+  * IEEE 1149.1 TAP state machine (public standard).
+  * Espressif's published protocol description of the USB Serial/JTAG
+    "esp_usb_jtag" bridge (comment block in the OpenOCD driver, GPL-2.0, and
+    Espressif documentation): read as DOCUMENTATION of the wire protocol only
+    (capability descriptor layout, vendor control requests, nibble command
+    encoding). No OpenOCD source was copied, translated or linked, and OpenOCD
+    is not run by hwlab. The implementation was then confirmed against, and
+    corrected by, a real ESP32-C6.
+  * ESP32-C6 register addresses and bit positions (SPI1/SPI_MEM, LP_WDT, timer
+    groups, USB Serial/JTAG, eFuse, LP_AON) taken from public ESP-IDF headers
+    (Apache-2.0) as documentation; no code was copied. The flash command
+    sequence (JEDEC 0x9F, SFDP 0x5A, READ, WREN, PP 0x02, SE 0x20, BE 0xD8,
+    CE 0xC7) is the standard SPI-NOR command set (JEDEC JESD216).
+  * Observations of a real ESP32-C6 (USB descriptors, IDCODE, DM registers).
+
+internal/usb and internal/jtag are shared with plugins/ftdi.

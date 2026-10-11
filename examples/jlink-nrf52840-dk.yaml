@@ -1,0 +1,16 @@
+# SEGGER J-Link (nRF52840 DK on-board J-Link OB) with RTT and read-only steps.
+# Needs SEGGER's JLinkExe (see docs/hardware.md). Nothing here writes, erases
+# or programs the target.
+#
+#   HWLAB_JLINK_EXE=~/sdk/jlink/JLink_Linux_V982_x86_64/JLinkExe hwlab run examples/jlink-nrf52840-dk.yaml
+name: jlink-nrf52840-dk
+duration: 6s
+
+devices:
+  dbg:
+    plugin: jlink
+    target: NRF52840_XXAA
+
+steps:
+  - {name: probe-info, at: 4s, device: dbg, call: DebugProbe.info}
+  - {name: read-vectors, at: 4500ms, device: dbg, call: MemoryAccess.read, args: {address: "0x0", length: 16}}

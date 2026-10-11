@@ -1,0 +1,39 @@
+# Saleae Logic 2 capture with an SPI analyzer.
+#
+# Needs Saleae Logic 2 running with the automation server enabled
+# (Preferences > Automation, default 127.0.0.1:10430; override with
+# HWLAB_SALEAE_ADDR) and a Saleae analyzer attached. Logic 2 and hwlab must
+# share a filesystem because Logic 2 writes the exported files.
+#
+#   hwlab devices                         # find the device id
+#   hwlab run examples/saleae-spi.yaml
+#
+# Sample rates are mandatory: the legal values depend on the device model and
+# on how many channels are enabled, so hwlab does not guess them.
+name: saleae-spi
+duration: 2s
+
+devices:
+  logic:
+    plugin: saleae
+    device: ""                 # fill in the Saleae device id from `hwlab devices`
+    requires: [DigitalCapture]
+    digital_channels: [0, 1, 2, 3]
+    digital_sample_rate: 10000000
+    # analog_channels: [4]
+    # analog_sample_rate: 625000
+    channel_names:
+      "0": CLK
+      "1": MOSI
+      "2": CS
+      "3": IRQ
+    analyzers:
+      - type: spi
+        label: radio-spi
+        channels: {clk: 0, mosi: 1, cs: 2}
+        # settings: {"Bits per Transfer": "8 Bits per Transfer (Standard)"}
+
+plots:
+  - name: overview
+    title: Saleae SPI capture
+    format: svg

@@ -1,0 +1,86 @@
+{
+  "format_version": 1,
+  "id": "2026-10-07T051426Z-dk-uart-rx",
+  "name": "dk-uart-rx",
+  "status": "complete",
+  "created_at": "2026-10-07T05:14:26.17981011Z",
+  "wall_epoch_unix_ns": 1791350066179810110,
+  "duration_ns": 22185906109,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# Real UART RX test on an nRF52840 DK without changing its flash.\n#\n# The DK is not reflashed: J-Link memory writes configure UARTE0 on P0.06 (the\n# DK's UART TX pin, routed by the on-board J-Link to the virtual COM port) and\n# trigger one transmission per STARTTX. The host-side uart plugin must then\n# receive real bytes from a real UART. A reset of the target restores it.\n#\n#   HWLAB_JLINK_EXE=~/sdk/jlink/JLink_Linux_V982_x86_64/JLinkExe \\\n#     hwlab run --yes examples/dk-uart-rx.yaml\n#\n# All writes are CONFIRM operations (RAM and peripheral registers only).\nname: dk-uart-rx\nduration: 22s\n\ndevices:\n  console:\n    plugin: uart\n    device: ttyACM0\n    baud: 115200\n    lines: true\n  dbg:\n    plugin: jlink\n    target: NRF52840_XXAA\n\nsteps:\n  # message \"hwlab uart rx test 01\\r\\n\" in RAM\n  - {name: payload, at: 1s, device: dbg, call: MemoryAccess.write, args: {address: \"0x20030000\", data: \"68776c6162207561727420727820746573742030310d0a\"}}\n  # P0.06 output high (idle level of a UART TX)\n  - {name: pin-high, at: 3500ms, device: dbg, call: MemoryAccess.write, args: {address: \"0x50000508\", data: \"40000000\"}}\n  - {name: pin-output, at: 6s, device: dbg, call: MemoryAccess.write, args: {address: \"0x50000518\", data: \"40000000\"}}\n  # UARTE0: PSEL.TXD = P0.06\n  - {name: psel-txd, at: 8500ms, device: dbg, call: MemoryAccess.write, args: {address: \"0x4000250C\", data: \"06000000\"}}\n  # BAUDRATE = 115200\n  - {name: baud, at: 11s, device: dbg, call: MemoryAccess.write, args: {address: \"0x40002524\", data: \"00e0d701\"}}\n  # TXD.PTR, TXD.MAXCNT\n  - {name: txd-buffer, at: 13500ms, device: dbg, call: MemoryAccess.write, args: {address: \"0x40002544\", data: \"0000032017000000\"}}\n  # ENABLE = Enabled(8)\n  - {name: enable, at: 16s, device: dbg, call: MemoryAccess.write, args: {address: \"0x40002500\", data: \"08000000\"}}\n  # TASKS_STARTTX\n  - {name: starttx, at: 18500ms, device: dbg, call: MemoryAccess.write, args: {address: \"0x40002008\", data: \"01000000\"}}\n",
+  "devices": [
+    {
+      "alias": "console",
+      "device_id": "ttyACM0",
+      "plugin_id": "uart",
+      "name": "J-Link (ttyACM0)",
+      "capabilities": [
+        "LiveRawStream",
+        "SerialTransport",
+        "TimedCapture"
+      ],
+      "config": {
+        "baud": 115200,
+        "lines": true
+      },
+      "clock_offset_ns": 0
+    },
+    {
+      "alias": "dbg",
+      "device_id": "900000002",
+      "plugin_id": "jlink",
+      "name": "J-Link",
+      "capabilities": [
+        "DebugProbe",
+        "FlashProgramming",
+        "LiveRawStream",
+        "MemoryAccess",
+        "RTT"
+      ],
+      "config": {
+        "target": "NRF52840_XXAA"
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": [
+    {
+      "id": "console",
+      "alias": "console",
+      "started_ns": 4149149,
+      "stopped_ns": 22185906109,
+      "request_ns": 4027941,
+      "clock": {
+        "source": "host clock at serial read return (rx) / before write call (tx)",
+        "resolution_ns": 1000000,
+        "error_min_ns": 0,
+        "error_min_bounded": true,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "115200 8N1 flow=none; rx 23 bytes, tx 0 bytes; the chunk stamp is the first read of the chunk, late by the unmeasured USB and driver latency"
+      },
+      "events": 2,
+      "samples": 0,
+      "dropped_batches": 0
+    },
+    {
+      "id": "dbg",
+      "alias": "dbg",
+      "started_ns": 156437105,
+      "stopped_ns": 22185906109,
+      "request_ns": 3933822,
+      "clock": {
+        "source": "host clock at RTT telnet receive (target writes are polled by the probe)",
+        "resolution_ns": 1000000,
+        "error_min_ns": 0,
+        "error_min_bounded": true,
+        "error_max_ns": 0,
+        "error_max_bounded": false,
+        "note": "the stamp is late by the unknown probe polling + USB + TCP latency and never early; lines are not stamped by the target; 3 lines, 112 bytes"
+      },
+      "events": 3,
+      "samples": 0,
+      "dropped_batches": 0
+    }
+  ]
+}

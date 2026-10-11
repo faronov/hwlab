@@ -1,0 +1,650 @@
+# Support matrix
+
+<!-- Generated: HWLAB_UPDATE_DOCS=1 go test ./internal/status. Do not edit by hand. -->
+
+Implementation says what is written. Validation says the highest evidence that it works.
+Code, fixtures and passing tests are not hardware validation.
+
+- implementation: `complete` | `partial` | `skeleton` | `missing`
+- validation: `untested` | `synthetic` | `replay` | `real-hardware-partial` | `real-hardware`
+- dependency: `native` | `vendor-sdk` | `external-tool` | `optional-external-tool`
+- replay fixture: `real` (recorded from hardware) | `synthetic` (generated) | `none`
+
+| Plugin: backend | Implementation | Validation | Replay fixture | Dependency | CGO |
+|---|---|---|---|---|---|
+| can: SocketCAN (Linux) + virtual bus | complete | synthetic | synthetic | native | no |
+| cc2340: internal/ti/cc23xx over internal/adiv5 + internal/cortexm; reached through native XDS110 and CMSIS-DAP HID | partial | real-hardware-partial | real | native | no |
+| ccdebugger: native Go USB (0451:16a2) | partial | real-hardware-partial | real | native | no |
+| ccdebugger: cc-tool fallback | complete | synthetic | none | optional-external-tool | no |
+| cmsisdap: native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) | partial | real-hardware-partial | real | native | no |
+| espusbjtag: native Go usbfs Espressif USB-JTAG transport + JTAG + RISC-V DM (spec 0.13) + SPI1 flash driver over system bus access | partial | real-hardware-partial | real | native | no |
+| fake: in-process simulation | complete | synthetic | synthetic | native | no |
+| ftdi: native Go usbfs FTDI protocol + MPSSE + JTAG | partial | real-hardware-partial | real | native | no |
+| jlink: J-Link Commander + RTT telnet (jlink-segger) | complete | real-hardware-partial | real | external-tool | no |
+| jlinknative: native Go J-Link over Linux usbfs + SWD bit sequences + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + target-memory RTT (internal/rtt) + JTAG chain scan (internal/jtag) | partial | real-hardware-partial | real | native | no |
+| modbus: native Modbus (RTU over serial, TCP) | complete | synthetic | synthetic | native | no (was inherited from plugins/uart on darwin; split by build tags) |
+| nrf802154: nRF Sniffer for 802.15.4 over serial | complete | real-hardware-partial | real | native | linux/windows: no; darwin: only for VID/PID discovery |
+| picoscope: simulated device | complete | synthetic | synthetic | native | no |
+| picoscope: PicoSDK (ps2000a/ps5000a/…) | missing | untested | none | vendor-sdk | would need cgo or a purego loader |
+| ppk2: native serial protocol | complete | real-hardware-partial | real | native | linux/windows: no; darwin: only for VID/PID discovery (IOKit via go.bug.st/serial/enumerator) |
+| saleae: Logic 2 Automation gRPC | complete | real-hardware-partial | real | vendor-sdk | no |
+| scpi: generic SCPI over TCP/serial | complete | synthetic | synthetic | native | no (TCP never needed cgo; serial is pure Go since the uart split) |
+| scpi: Rigol profile | partial | synthetic | synthetic | native | no |
+| scpi: Siglent profile | partial | synthetic | synthetic | native | no |
+| stlink: native Go usbfs ST-Link V2 protocol + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 (real silicon) and F4 (simulator only) flash layers | partial | real-hardware-partial | real | native | no |
+| telink: native SWS/SWire over UART | complete | real-hardware-partial | real | native | no (was inherited from plugins/uart on darwin) |
+| uart: serial (go.bug.st/serial) | complete | real-hardware-partial | real | native | no (device listing on darwin without cgo is a /dev/cu.* glob without VID/PID) |
+| usbcap: usbmon text input | partial | synthetic | synthetic | native | no |
+| usbcap: physical USB bus analyzer | missing | untested | none | vendor-sdk | n/a |
+| xds110: native Go XDS110 vendor protocol over Linux usbfs (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only | partial | real-hardware-partial | real | native | no |
+
+## Details
+
+### can — CAN bus (SocketCAN)
+
+**SocketCAN (Linux) + virtual bus**
+
+- implementation: complete; validation: synthetic; dependency: native
+- verified:
+  - virtual bus loopback
+  - pcap export decoded by tshark
+- unverified:
+  - any real CAN adapter
+  - CAN FD on a bus
+- known gaps:
+  - no USB-CAN adapter backend (slcan, gs_usb, PCAN) is written
+
+### cc2340 — TI CC23xx target layer (SACI, CCFG, flash) shared by the xds110 and cmsisdap plugins; real target: a user-owned CC2340 (E104-BT55SP, DEVICEID 0x1BB8402F) on an LP-XDS110ET
+
+**internal/ti/cc23xx over internal/adiv5 + internal/cortexm; reached through native XDS110 and CMSIS-DAP HID**
+
+- implementation: partial; validation: real-hardware-partial; dependency: native (the xds110 or cmsisdap plugin and a debug probe on the SWD pins; UniFlash, Code Composer Studio, OpenOCD, Python and cgo are not used)
+- capabilities:
+
+  | Capability | Status | Evidence |
+  |---|---|---|
+  | SWD | REAL_HW_VERIFIED | DPIDR 0x6BA02477 through both probes; clocks 100 kHz to 10 MHz stable on both (speed ladder, 0 failures) |
+  | CFG-AP / SEC-AP / AHB MEM-AP discovery | REAL_HW_VERIFIED | AP0 AHB (IDR 0x84770001), AP1 CFG-AP (0x002E0001), AP2 SEC-AP (0x002E0000), identical through both probes |
+  | SACI mailbox protocol | REAL_HW_VERIFIED | enter/leave SACI, DEVICESTATUS/BOOTSTA, CCFG and flash commands through both probes; entered both by nRESET and after SYSRESETREQ |
+  | identify (Cortex-M0+, part, state) | REAL_HW_VERIFIED | CPUID 0x410CC601 (r0p1, ARMv6-M), DEVICEID 0x1BB8402F, raw PARTID 0x80012DDA (no marketing name is invented), boot state, flash and SRAM geometry |
+  | ROM table | REAL_HW_VERIFIED | Cortex-M0+ SCS and BPU only; same through both probes |
+  | halt/resume | REAL_HW_VERIFIED | halt, resume, status on the original and on the acceptance firmware through both probes |
+  | register read | REAL_HW_VERIFIED | r0-r12, sp, lr, pc, xpsr, msp, psp, special; same through both probes |
+  | register write | REAL_HW_VERIFIED | known values written, read back, restored exactly; PC and SP untouched |
+  | memory read | REAL_HW_VERIFIED | SRAM, CPUID and flash through both probes; byte-identical |
+  | memory write | REAL_HW_VERIFIED | SRAM scratch: 8/16/32-bit and aligned boundaries, invalid accesses refused, exact restore; no flash written this way |
+  | single-step | REAL_HW_VERIFIED | 100 steps per probe, halt-confirmed, mixed 16/32-bit instruction lengths |
+  | breakpoint (FPB) | REAL_HW_VERIFIED | 4 code comparators, rev 0; hits verified on the acceptance firmware (5 hits per probe with the counter advancing), through both probes |
+  | watchpoint (DWT) | UNSUPPORTED_BY_ATTACHED_HW | ROM table has no DWT; DWT_CTRL reads 0 (NUMCOMP 0) |
+  | external JTAG debug | UNSUPPORTED_BY_ATTACHED_HW | the CC23xx debug port is SWD only |
+  | reset | REAL_HW_VERIFIED | hardware (nRESET), SYSRESETREQ, with halt: 50 reset/reconnect loops per probe, 0 failures, DPIDR/CPUID/vector table identical every time; no power cycle used |
+  | reset-and-halt | REAL_HW_VERIFIED | 3 times on the acceptance firmware: pc equals the reset handler, then runs; also inside the 50-loop test |
+  | power-cycle recovery | NOT_IMPLEMENTED | needs an external PowerSwitch provider (ADR 0033); the probe's SET_SUPPLY does not switch the LP-XDS110ET 3V3 pin, so no recovery path through the probe exists |
+  | CCFG parse | REAL_HW_VERIFIED | valid CCFG of the real chip parsed with all CRCs checked, permissions and debug authorization decoded; never logs die ID, user record, password or hash |
+  | flash geometry | REAL_HW_VERIFIED | 512 KiB, 256 sectors of 2 KiB, 2 banks, 16-byte program granule |
+  | flash backup | REAL_HW_VERIFIED | whole 512 KiB read through both probes, identical, SHA-256 verified, artifact with manifest, mode 0600 |
+  | chip erase | REAL_HW_VERIFIED | SACI ERASE_CHIP on the real chip (18 ms), blank verified; needs token, --yes, permissions and a verified backup |
+  | flash program (MAIN) | REAL_HW_VERIFIED | acceptance firmware programmed and CRC-verified through XDS110, original firmware restored through CMSIS-DAP; boot, debug and reset verified in between |
+  | flash program (pipelined) | NOT_IMPLEMENTED | only the plain SACI program command is implemented |
+  | flash verify | REAL_HW_VERIFIED | readback compare and SACI CRC through both probes |
+  | CCFG program | IMPLEMENTED_UNTESTED | implemented and simulated; no real CCFG write was done on purpose (a wrong CCFG can lock the chip) |
+  | flash restore | REAL_HW_VERIFIED | original image restored through CMSIS-DAP, 512 KiB read back byte- and SHA-256-identical to the backup, CCFG unchanged |
+  | XDS110 transport | REAL_HW_VERIFIED | every capability above |
+  | CMSIS-DAP transport | REAL_HW_VERIFIED | every capability above (flash program only through the restore path) |
+  | ROM serial bootloader | NOT_IMPLEMENTED | architecture boundary: documented, not implemented |
+
+- verified:
+  - SACI entry by nRESET and by SYSRESETREQ, reset/reconnect loops, identify, CCFG parse
+  - flash backup, chip erase, program, verify, restore with exact restoration, on the real chip
+  - the same results through the native XDS110 and the CMSIS-DAP HID backends (cross-backend comparison clean)
+  - speed ladder 100 kHz to 10 MHz stable on both probes
+- unverified:
+  - power-cycle recovery (no PowerSwitch provider yet)
+  - CCFG write on hardware
+  - other CC23xx parts
+- known gaps:
+  - after SYSRESETREQ the SWD clock must be 400 kHz or lower until the first SACI exchange is done: 600 kHz and above left the SACI mailbox stuck. Empirical, cause not understood
+  - neither probe reports the clock it really generates
+  - pipelined program and flash protection (flashProt, chipEraseRetain) offsets are not implemented / decoded
+  - flash program through CMSIS-DAP was exercised only as the restore
+
+### ccdebugger — TI CC-Debugger / CC2530 debug interface
+
+**native Go USB (0451:16a2)**
+
+- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access (udev rule))
+- verified:
+  - USB discovery and adapter info
+  - target identification from CHIPID/CHVER/CHIPINFO registers and GET_CHIP_ID
+  - flash size, RAM size, page size and bank geometry
+  - lock bits
+  - info page (identical to cc-tool)
+  - primary IEEE address (identical to cc-tool)
+  - debug status and config
+  - PC and register snapshot
+  - CODE, XDATA and physical banked flash reads (full 256 KB dump identical to cc-tool)
+  - pipelined reads and DMA-assisted burst staging into scratch RAM
+  - hardware CRC-16 verify of flash against an image (full flash in 3 s)
+  - XDATA scratch write with restore and unchanged CPU state
+  - halt and resume of a running target
+  - hardware breakpoint and single step
+- unverified:
+  - chip erase
+  - page erase
+  - flash program (flash-controller write path)
+  - lock-bit and secondary IEEE write
+  - secondary IEEE location 0x3FFE8 (this device's secondary address is erased, so the location is unconfirmed)
+  - debug-locked targets
+  - CC253x/CC254x chips other than the connected CC2530F256
+- known gaps:
+  - flash erase, program and config write are implemented natively but deliberately never run: the only CC2530 is private (implemented: yes, validation: simulator only)
+  - reset (run) of the target without debug attach is cc-tool only
+  - RTT is not applicable
+  - CC251x/CC111x and CC243x target families are not implemented
+
+**cc-tool fallback**
+
+- implementation: complete; validation: synthetic; dependency: optional-external-tool (cc-tool (GPL-2.0, run as a separate process only))
+- verified:
+  - argument construction and output parsing against recorded text
+  - read-only operations (info, flash read, info page read, MAC read) against the real CC2530, used to cross-check the native backend
+- known gaps:
+  - erase and program never run: the only CC2530 is private and must not be erased or programmed
+
+### cmsisdap — CMSIS-DAP v2 (bulk) / v1 (HID) probe: native SWD + generic Cortex-M; real probes BL702-DAPLink (no target) and the LP-XDS110ET HID interface (CC2340 target)
+
+**native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag)**
+
+- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe's DAP interface (udev rule in docs/hardware.md); OpenOCD, probe-rs, libusb, Python are not used)
+- capabilities:
+
+  | Capability | Status | Evidence |
+  |---|---|---|
+  | discovery | REAL_HW_VERIFIED | BL702-DAPLink d6e7:3507 (Bouffalo / RV CMSIS-DAP), identity = USB serial 012345ABCDEF (a firmware placeholder, so two such probes cannot be told apart); the interface is found by its sysfs string, bus/device numbers (088, 093, 095 across replugs) are never identity |
+  | v2 bulk transport | REAL_HW_VERIFIED | interface 0 (vendor 0xff, OUT 0x01, IN 0x82, 64 B); 2000 DAP_Info round trips, 25 open/close rounds, oversize request refused host-side, undefined command times out without hanging and stale replies are drained |
+  | v1 HID transport | REAL_HW_VERIFIED | LP-XDS110ET HID interface 5 (/dev/hidraw0, 64 B reports, protocol 1.2.0, capabilities 0x33): DAP_Info, DAP_Connect, SWJ sequences, transfers and block reads against a real CC2340 target. The BL702-DAPLink itself offers no HID interface |
+  | DAP_Info / capabilities | REAL_HW_VERIFIED | protocol version 2.1.0, capabilities 0x33 (SWD, JTAG, atomic commands, test-domain timer; no SWO, no UART/COM port), packet size 64, packet count 8; every string and the firmware version are empty and reported as absent |
+  | SWD mode (DAP_Connect, line reset, sequences, transfer status) | REAL_HW_VERIFIED | DAP_Connect(SWD), DAP_TransferConfigure, DAP_SWD_Configure, DAP_SWJ_Sequence, DAP_ResetTarget (executed=false) accepted; a DP read with nothing attached is decoded as no-ACK, never as success |
+  | SWD target link (DPIDR, AP, memory) | REAL_HW_VERIFIED | a user-owned CC2340 module (E104-BT55SP) over the LP-XDS110ET HID interface: DPIDR 0x6BA02477, MEM-AP 0 (AHB3-AP, IDR 0x84770001) plus two further TI APs, ROM table with Cortex-M0 SCS and BPU; stable at 50k, 100k and 400k. The BL702-DAPLink was never attached to a target. A nRESET-low attach gets no ACK (the DAP is held in reset): connect without reset |
+  | JTAG (DAP_Connect JTAG, chain scan) | REAL_HW_VERIFIED | DAP_Connect(JTAG) accepted; a 320-bit scan with nothing wired reads all ones and reports no-device. No TAP was ever found on hardware |
+  | JTAG debugging of a core | NOT_IMPLEMENTED | TAP enumeration only; debug access over JTAG is not implemented |
+  | clock control | REAL_HW_VERIFIED | DAP_SWJ_Clock accepted (status OK) at 100k, 400k, 1M, 2M, 4M and 10 MHz; the reply carries no rate. Timing shows about 78 kHz at 100 kHz and 275 kHz at 400 kHz (the firmware approximates); 1 MHz and up cannot be resolved from the host. No precision is claimed |
+  | DAP_SWJ_Pins (read-only) | REAL_HW_VERIFIED | input levels read without driving any pin (0x8c typical); proves nothing about target wiring |
+  | target identify | REAL_HW_VERIFIED | CC2340 module over the XDS110 HID path: Cortex-M0+ r0p1, ARMv6-M, CPUID 0x410CC601. Which TI part it is was not read (no vendor profile) |
+  | halt/resume | REAL_HW_VERIFIED | halt at a real PC, resume, status confirmed running; the firmware kept running afterwards |
+  | registers | REAL_HW_VERIFIED | r0-r12, sp, lr, pc, xpsr, msp, psp and the packed special register read from the halted CC2340 (running an RTOS: CONTROL 2, PSP in use); the same register set and names as through the native XDS110 backend |
+  | memory read | REAL_HW_VERIFIED | CPUID (0xE000ED00), SRAM 0x20000000 and 0x00000000 read over SWD on the CC2340; first words are an initial SP 0x20009000 and a reset vector, consistent with a Cortex-M image |
+  | memory write | REAL_HW_VERIFIED | SRAM scratch window 0x20004780..0x20004880 on the CC2340: original bytes saved, 8/16/32-bit and aligned-boundary patterns written and verified, misaligned and out-of-range accesses refused, original bytes restored and verified exactly; no flash written. Same result as through XDS110 |
+  | register write | REAL_HW_VERIFIED | r0, r4, r8, r12 and lr written with a known value, read back, shown not to disturb any other register, and restored exactly (PC and SP not written); writes while running are refused; same through XDS110 |
+  | single-step | REAL_HW_VERIFIED | 100 single steps on the halted CC2340, each halt-confirmed, PC changed consistently (+2 x80, +4 x2, branches x18: not every instruction is 32-bit); 100 steps in one call took 1.3 s |
+  | breakpoint (FPB) | REAL_HW_VERIFIED | discovered from FP_CTRL: 4 code comparators, no literal comparators, FPB revision 0 (Cortex-M0+ BPU, not the ARMv7-M FPBv2). 5/5 rounds hit at the requested PC; the 4-slot fill, a refused 5th slot and a refused address outside the Code region behave as the hardware dictates; FP_CTRL and FP_COMP0-3 restored bit-exact. Same through XDS110 |
+  | watchpoint (DWT) | UNSUPPORTED_BY_ATTACHED_HW | the CC2340 ROM table lists only the SCS and the BPU; DWT_CTRL reads 0 (NUMCOMP 0): no data watchpoint hardware exists on the attached core. Reported as UNSUPPORTED_BY_ATTACHED_HW, not NOT_IMPLEMENTED |
+  | reset (SYSRESETREQ) | REAL_HW_VERIFIED | issued while running, while halted and with halt requested: the CC2340 re-gates MEM-AP 0 at the reset request, so the plugin re-enters the debug state through SACI (CC23xx layer, internal/ti/cc23xx) and reads the result back: reset and reset-and-halt are confirmed, DPIDR/CPUID identical afterwards, no power cycle needed. The SWD clock is capped to 400 kHz around the AIRCR write (empirical, cause not understood). Same through XDS110 |
+  | reset (VECTRESET core reset) | UNSUPPORTED_BY_ATTACHED_HW | Cortex-M0+ AIRCR is baseline-only: VECTRESET does not exist. Refused as UNSUPPORTED_BY_ATTACHED_HW; the code does not fake it with SYSRESETREQ |
+  | reset (DAP_ResetTarget) | REAL_HW_VERIFIED | the command is accepted and the probe reports that it executes nothing (no device-specific reset sequence); not a target reset |
+  | reset (nRESET pin, BL702 GPIO24) | UNSUPPORTED_BY_ATTACHED_HW | no target wired to the BL702-DAPLink; a pin reset is only claimed when the target is seen to reset |
+  | reset (nRESET pin, LP-XDS110ET HID path) | REAL_HW_VERIFIED | reset kind=hardware through DAP_SWJ_Pins on the CC2340; since the CC23xx SACI layer (internal/ti/cc23xx) the target is entered through SACI after the pulse, so debug access is recovered without a power cycle (50 reset/reconnect loops, 0 failures; see the cc2340 entry). Earlier: EnergyTrace current fell from 6.95 mA to 38.6 uA for a 3 s hold and the firmware restarted on release |
+  | reconnect / rediscovery | REAL_HW_VERIFIED | two physical unplug/replug cycles with the session open: DEVICE_GONE (no hang, no stale success), same serial rediscovered after 5.3 s and 5.8 s, DAP_Info works after reopen |
+  | concurrent open | REAL_HW_VERIFIED | a second open of interface 0 gets BUSY (usb: interface is busy); after release it succeeds |
+  | CDC coexistence | REAL_HW_VERIFIED | interfaces 1 and 2 stayed bound to cdc_acm, /dev/ttyACM0 stayed present and was opened while hwlab held interface 0; only interface 0 is ever claimed and no driver is detached |
+  | performance: DAP_Info round trip | REAL_HW_VERIFIED | 110-126 us average over 2000 round trips |
+  | performance: target memory throughput | REAL_HW_VERIFIED | CC2340 over the HID interface at 400 kHz, medians of 15: register block 61 ms, 16 B read 1.6 ms, 2 KiB read 44 ms, 256 B write 15 ms verified / 7.5 ms unverified, 100 steps 1.3 s. The BL702-DAPLink was never attached to a target. XDS110 is 2-3x faster on the same target |
+  | flash programming | REAL_HW_VERIFIED | FlashProgramming is served for TI CC23xx targets by the shared SACI layer (see the cc2340 entry; restore of the original 512 KiB through this probe verified exactly); other targets are refused with a clear error, flash belongs to target-specific layers |
+  | SWO / UART / COM port | NOT_IMPLEMENTED | not implemented; this probe does not report them either |
+
+- verified:
+  - USB discovery of the composite BL702-DAPLink by serial; only the DAP interface is claimed
+  - DAP_Info, capabilities, packet size and count from the real probe
+  - DAP_Connect/Disconnect (SWD and JTAG), SWJ clock and sequences, transfer configuration, read-only pins, empty-chain JTAG scan
+  - failures with nothing attached are explicit (no ACK), never success
+  - CDC ACM coexistence, BUSY on a second open, 25 open/close rounds, two physical unplug/replug cycles
+  - bugs found on the real probe: stale replies from an earlier owner were read as answers (a fresh handle now drains them); DAP_Delay(0) hangs the firmware (never sent); DAP_Info 0x04 is the protocol version, not the firmware version
+- unverified:
+  - BL702-DAPLink with a target attached (the CC2340 was reached through the LP-XDS110ET's HID interface instead)
+  - BL702-DAPLink DAP_ResetTarget and SYSRESETREQ followed by a debug reconnect (no target was attached to it; the CC2340 SACI reset layer was verified through the LP-XDS110ET HID interface)
+  - effective SWD clock precision, DAP_ResetTarget on a probe that implements it
+- known gaps:
+  - the probe's USB serial 012345ABCDEF is a firmware placeholder, so identity by serial is ambiguous with several boards
+  - the firmware does not answer undefined commands, so one stray out-of-sync reply may be reported before the stream is back in step
+  - SWO, UART/COM port and JTAG debugging are not implemented
+  - Linux only (usbfs and hidraw)
+
+### espusbjtag — Espressif native USB Serial/JTAG (ESP32-C6) + generic RISC-V Debug Module + ESP flash
+
+**native Go usbfs Espressif USB-JTAG transport + JTAG + RISC-V DM (spec 0.13) + SPI1 flash driver over system bus access**
+
+- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the device (udev rule in docs/hardware.md); OpenOCD, esptool, ESP-IDF, libusb and Python are not used)
+- capabilities:
+
+  | Capability | Status | Evidence |
+  |---|---|---|
+  | ESP USB transport | REAL_HW_VERIFIED | 303a:1001, interface 2 only (OUT 0x02/IN 0x83), cdc_acm stays bound; docs/notes/phase18, phase19 |
+  | JTAG transport | REAL_HW_VERIFIED | stable scan: 1 TAP, IDCODE 0x0000dc25, IR length 5 (observed evidence, not an identity proof) |
+  | RISC-V DM | REAL_HW_VERIFIED | Debug Module 0.13, 2 harts, progbuf 16, SBA v1 32-bit |
+  | halt/resume | REAL_HW_VERIFIED | hart 0, confirmed through dmstatus acknowledge |
+  | registers | REAL_HW_VERIFIED | x0..x31, pc, dcsr, identification CSRs on hart 0 |
+  | memory read | REAL_HW_VERIFIED | ROM, SRAM, flash-mapped window; 64 KiB in 0.53 s |
+  | memory write | REAL_HW_VERIFIED | SRAM 8/16/32-bit with read-modify-write, saved and restored byte for byte; invalid, ROM and flash-mapped writes refused |
+  | single-step | REAL_HW_VERIFIED | 100 steps on hart 0 checked against decoded instruction lengths (2, 4, 12, branches); dcsr.step restored |
+  | breakpoints | REAL_HW_VERIFIED | 4 mcontrol triggers discovered (slot 0 used by firmware); real hits, cause=trigger and pc==address, repeated; state restored |
+  | reset | REAL_HW_VERIFIED | hart reset, system reset, and SoC reset with USB re-enumeration (rediscovery by serial, identity re-verified), twice |
+  | unplug/replug | REAL_HW_VERIFIED | cable physically pulled and re-inserted twice with the session open: DEVICE_GONE on every call, no hang, rediscovered by serial, identity and ROM read verified |
+  | multi-hart: enumeration and selection | REAL_HW_VERIFIED | hart 1 reports dmstatus unavailable; halt request on it times out explicitly and hart 0 is not disturbed |
+  | multi-hart: debugging hart 1 | IMPLEMENTED_UNTESTED | generic hart selection is implemented and exercised on the DM sim; on the board hart 1 stays unavailable, so halt/step/registers on it never ran (nothing is claimed about what it is) |
+  | flash read | REAL_HW_VERIFIED | physical SPI1 reads of the whole 4 MiB (two identical reads), 4 KiB aligned/unaligned, mapped-window cross-check; ~65 KB/s |
+  | flash erase (region) | REAL_HW_VERIFIED | sector erase through SPI1 user-mode PE: 9 sectors during a recovery restore and 1 per program/restore cycle, verified by read-back |
+  | flash erase (app partition, full chip) | SIMULATED_ONLY | never run on the real board; chip erase is behind allow_chip_erase and a stronger token |
+  | flash program | REAL_HW_VERIFIED | page programs verified by read-back: acceptance image at 0x0, booted and debugged, then original restored |
+  | flash verify | REAL_HW_VERIFIED | read-back verify; a deliberately corrupted image was reported as differing |
+  | backup/restore | REAL_HW_VERIFIED | full 4 MiB backup (two identical reads, SHA-256 recorded) and restore with full read-back SHA equal to the backup; original firmware ran again |
+  | eFuse access | NOT_IMPLEMENTED | deliberately absent: no eFuse is read for writing or burned |
+  | OpenOCD cross-check | NOT_IMPLEMENTED | OpenOCD is not installed; no comparison was possible |
+
+- verified:
+  - USB discovery of 303a:1001 (Espressif USB JTAG/serial debug unit, serial = chip MAC), 3 interfaces: CDC 0/1 and the vendor JTAG interface 2 (bulk OUT 0x02, IN 0x83)
+  - claim of interface 2 only; cdc_acm stayed bound to interfaces 0/1 and /dev/ttyACM1 stayed openable; no kernel driver was detached
+  - nibble-command JTAG shifts; stable chain scan; RISC-V DTM and Debug Module (spec 0.13, 2 harts, progbuf 16, SBA 32-bit)
+  - halt, resume, registers, single-step, hardware breakpoints and SRAM writes on hart 0
+  - hart/system/SoC reset (the SoC reset drops and re-enumerates USB; found again by serial, identity verified)
+  - two physical unplug/replug cycles with the session open
+  - flash identity (Zbit JEDEC 5e4016, SFDP 1.6, 4 MiB, 4 KiB sector, 64 KiB block, 256 B page), full backup, sector erase, page program, verify and restore on a real board, with a 448-byte acceptance image booted and debugged in between
+  - 19 flash error paths rejected with the flash unchanged (invalid/odd address, outside flash, zero length, wrong token, no backup, truncated/corrupt/wrong-chip image, spans regions, raw without flag)
+  - repeated open/close and a second concurrent open is refused
+- unverified:
+  - hart 1: it is reported unavailable by the DM on this board; nothing about its role is claimed
+  - erase of an app partition and full-chip erase on hardware (never run)
+  - power loss or unplug during a flash write: deliberately not performed (could brick the only board); a partial write is detected by the verify but not repaired automatically
+  - the EPROTO/EILSEQ-as-unplug mapping added after a first failed round (both later rounds returned ENODEV, so that path is covered by code reading only)
+  - other Espressif chips (ESP32-S3/C3/H2/C5) and external USB-JTAG bridges: only one ESP32-C6 was attached
+  - comparison with OpenOCD/esptool (not installed)
+- known gaps:
+  - flash writes use the CPU-side SPI1 controller while the hart is held in debug mode; the cache/MSPI arbitration is handled by quiescing, but behaviour with a running flash-heavy firmware on the other hart is untested
+  - program speed is about 12 KB/s for a single sector including erase; reads are about 65 KB/s, bound by about 2.5 ms per DMI round trip
+  - the chip is named only from the IDCODE plus ROM evidence (inferred); other Espressif IDCODEs are not mapped
+  - no program-buffer fallback for memory access; system bus access (32-bit) is required
+  - Linux only (usbfs)
+
+### fake — Deterministic fake instruments (CI and demos)
+
+**in-process simulation**
+
+- implementation: complete; validation: synthetic; dependency: native
+- verified:
+  - every capability, used by hardware-independent CI
+- known gaps:
+  - not a model of any real device
+
+### ftdi — FTDI / MPSSE / JTAG probe (generic, with a Sipeed BL702 profile)
+
+**native Go usbfs FTDI protocol + MPSSE + JTAG**
+
+- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the device (udev rule in docs/hardware.md); OpenOCD, libusb and Python are not used)
+- verified:
+  - USB discovery of 0403:6010 SIPEED JTAG Debugger (a BL702 emulating an FT2232D), strings, endpoints, companion tty
+  - claim of interface 0 only; ftdi_sio detached from interface 0 only and re-bound on close; interface 1 stayed bound and openable as a UART
+  - FTDI reset, purge, latency, MPSSE mode and status-byte handling
+  - MPSSE sync (bad-command echo) and clocked TMS/TDI shifts; TAP reset; scan of an empty chain (TDO all ones, stable over 5 scans)
+  - close and re-open (4 cycles); a second open is refused without disturbing the first
+- unverified:
+  - JTAG target scan: no target was attached, so no IDCODE and no chain was ever read from real hardware (IMPLEMENTED_UNTESTED; verified only against a synthetic TAP model)
+  - IR/DR shifts against a real TAP
+  - unplug/replug while open on real hardware (only on the simulator)
+  - real FT2232 silicon and other adapters (no other profile exists)
+- known gaps:
+  - this firmware ignores MPSSE loopback and the clock divisor (fixed at about 6 MHz) and GPIO opcodes are unconfirmed
+  - nSRST/nTRST are not driven: the board wiring is unknown
+  - transport only: no RISC-V DM / ARM DP layer, so no memory, flash, halt or register access
+  - Linux only (usbfs); no OpenOCD cross-check was possible (not installed)
+  - the uart plugin still lists the companion tty as a separate device (linked by usb_device/usb_interface); the interface-0 tty disappears while a JTAG session is open
+
+### jlink — SEGGER J-Link (jlink-segger: drives SEGGER's JLinkExe; the independent native backend is the jlinknative entry)
+
+**J-Link Commander + RTT telnet (jlink-segger)**
+
+- implementation: complete; validation: real-hardware-partial; dependency: external-tool (SEGGER J-Link software (JLinkExe, proprietary, not redistributed))
+- verified:
+  - discovery of every attached probe (two real probes: model, nickname, firmware, hardware, serial)
+  - selecting a probe by serial (-USB); no serial with several probes is refused
+  - connect and target identification on two different targets (EFR32MG1P via a SAM-ICE, nRF52840 via a J-Link OB), identical to J-Link Commander
+  - memory read (flash, RAM, device-info registers)
+  - halt confirmed by IsHalted, resume, reset, reconnect
+  - registers
+  - RTT attach
+  - RTT data from firmware (EFR32MG1P)
+  - alternating calls and concurrent calls to two probes keep each answer tied to the requested serial
+  - session records the exact probe serial and target
+- unverified:
+  - memory write
+  - flash program and erase
+  - SAM-ICE authenticity (reports firmware "J-Link V9", hardware V9.70; a clone cannot be excluded)
+  - RTT on the nRF52840 DK (its firmware has no RTT block)
+- known gaps:
+  - RTT is up channel 0 terminal only
+  - SEGGER's DLL shares only one probe held by a long-running Commander session with other processes at a time: with two probes run RTT on one (`rtt: false` on the other)
+  - every call is a new Commander session, so a halt does not outlive the call (halt and register reads are one script in read_registers)
+
+### jlinknative — Native J-Link (jlink-native): pure-Go USB + SWD, no SEGGER software; real probe: one SAM-ICE class J-Link (V9, HW 9.70) on an EFR32MG1P
+
+**native Go J-Link over Linux usbfs + SWD bit sequences + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + target-memory RTT (internal/rtt) + JTAG chain scan (internal/jtag)**
+
+- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe (udev rule in docs/hardware.md); JLinkExe, libjlinkarm, the SEGGER SDK, libusb, OpenOCD and Python are not used; no fallback to jlink-segger)
+- capabilities:
+
+  | Capability | Status | Evidence |
+  |---|---|---|
+  | USB discovery | REAL_HW_VERIFIED | 1366:0105 "J-Link_jlinkv9", vendor interface 2 (bulk OUT 0x03, IN 0x83, 64 B, full speed); identity = USB serial, bus/device numbers (124 then 125 across a replug) are never identity |
+  | serial selection | REAL_HW_VERIFIED | opened by serial; the opened device's serial is compared with the requested one |
+  | probe info | REAL_HW_VERIFIED | firmware string, hardware version 9.70, capability words, interface mask 0x7B, speed base 12 MHz / max 12000 kHz; capability bit names are NOT established and are reported raw |
+  | target voltage | REAL_HW_VERIFIED | VTref about 3.32 V on the wired EFR32; a powered-down target is classified TARGET_POWER_OFF, not SWD_NO_ACK |
+  | SWD transport | REAL_HW_VERIFIED | bit sequences with ACK/parity checks, WAIT retry, FAULT recovery and resync; a wire recording of the whole stack replays without a probe (testdata/real-jlink-native) |
+  | SWD clock | REAL_HW_VERIFIED | 100k, 400k, 1M, 2M, 4M and 8 MHz programmed and byte-identical 16 KiB reads at each; 12 MHz (the probe's reported maximum) is rejected by the target (invalid ACK). Throughput is limited by full-speed USB above about 2 MHz; the programmed value is the probe's configuration, not a measured SWCLK |
+  | Cortex-M via SWD | REAL_HW_VERIFIED | EFR32MG1P Cortex-M4 r0p1: identify, ROM table, halt/resume/status, full register read, register write+restore, memory read, SRAM write 8/16/32 + restore, 100 single steps, 6 FPB comparators (5/5 breakpoint hits), 4 DWT comparators (actual write/access/read watchpoint hits through a core-executed SRAM stub), sysreset, sysreset+halt (DFSR.VCATCH accepted as proof), core reset, reconnect. Same shared acceptance harness as the other probes; no halt/step/breakpoint logic lives in the J-Link layer |
+  | RTT | REAL_HW_VERIFIED | target-memory RTT (control block search, up-channel read with wrap handling, bounds checks, back-off polling): the EFR32 boot lines were captured byte-identical (same digest) to jlink-segger. Down-channel write is simulator-tested only |
+  | reconnect | REAL_HW_VERIFIED | after sysreset/core reset and after a physical USB unplug/replug: the selected device and an active RTT capture ended with DEVICE_GONE, the same serial returned and DPIDR, CPUID and AP IDR were identical |
+  | JTAG transport | IMPLEMENTED_UNTESTED | TMS/TDI/TDO vectors on the probe's sequence command feed internal/jtag; run only against a modelled chain, never on a real JTAG target. The vector mapping in JTAG mode is not hardware-confirmed |
+  | reset pin (nRESET) | UNSUPPORTED_BY_ATTACHED_HW | the probe drives nRESET but the attached EFR32 board does not wire it to the target (no reset observed; JLinkExe agrees). Reported as UNSUPPORTED_BY_ATTACHED_HW; a pin reset is only claimed when the target is seen to reset |
+  | multi-probe isolation | IMPLEMENTED_UNTESTED | one probe attached for this phase (the other J-Link drives an nRF52840 sniffer and was deliberately not touched); per-device state is kept, no global first-probe state, but it was not run with two probes |
+  | nRF52840 target | IMPLEMENTED_UNTESTED | deferred: the nRF52840 is in use as a sniffer |
+  | trace/SWO | NOT_IMPLEMENTED | not implemented |
+  | flash programming | NOT_IMPLEMENTED | deliberately not part of the J-Link transport: it belongs to the target-family layers |
+
+- verified:
+  - native SWD debugger end to end on a real EFR32MG1P through a SAM-ICE class probe, with no SEGGER process or library
+  - the same stable values as jlink-segger (DPIDR, AP IDR, CPUID, memory bytes, RTT output)
+  - physical unplug/replug
+  - speed ladder 100 kHz-8 MHz
+- unverified:
+  - nRF52840 and any second probe
+  - multi-probe isolation
+  - JTAG on a real chain
+  - reset pin
+  - rtt_write on hardware
+  - probe generations other than V9/9.70 (their command set is not assumed)
+- known gaps:
+  - the probe's own commands outside the ones used (including the bootloader-trigger-prone ones) are not implemented; unknown values are kept in diagnostics
+  - default SWD clock is 1 MHz; a 64 KiB read takes 1.15 s there and 0.49 s at 4 MHz (full-speed USB bound)
+  - one single step costs about 6 ms (several USB round trips in the shared Cortex-M code): jlink-segger steps in about 0.3 ms inside one Commander session
+  - the SAM-ICE class identity is what the probe reports; no claim about its origin is made
+
+### modbus — Modbus RTU/TCP
+
+**native Modbus (RTU over serial, TCP)**
+
+- implementation: complete; validation: synthetic; dependency: native
+- verified:
+  - function codes, exceptions and CRC against an in-process simulator
+  - write operations are CONFIRM
+- unverified:
+  - any real Modbus device
+
+### nrf802154 — nRF 802.15.4 sniffer
+
+**nRF Sniffer for 802.15.4 over serial**
+
+- implementation: complete; validation: real-hardware-partial; dependency: native (sniffer firmware flashed on an nRF52840 (not provided by hwlab))
+- verified:
+  - channel capture, 10 s on ch15
+  - pcapng export and replay
+  - Zigbee decode via tshark
+- unverified:
+  - receiver timing accuracy
+  - channel hopping on real traffic of a known source
+- known gaps:
+  - tshark is an optional external decoder
+
+### picoscope — PicoScope
+
+**simulated device**
+
+- implementation: complete; validation: synthetic; dependency: native
+- verified:
+  - streaming block model, waveform export and plotting
+
+**PicoSDK (ps2000a/ps5000a/…)**
+
+- implementation: missing; validation: untested; dependency: vendor-sdk (PicoSDK shared libraries (proprietary))
+- known gaps:
+  - backend not written: no real PicoScope can be driven
+
+### ppk2 — Nordic Power Profiler Kit II
+
+**native serial protocol**
+
+- implementation: complete; validation: real-hardware-partial; dependency: native (OS serial driver (CDC-ACM))
+- verified:
+  - discovery and metadata
+  - ampere-meter capture, 100 ksps frames
+  - range handling
+  - source-meter mode with CONFIRM
+  - digital input D0: real edges of a 100 Hz wave, edge-for-edge against a Saleae (the logic-port VCC pin must be wired to the target I/O voltage)
+  - two-device clock calibration: sample clock runs 92.6-94 ppm off the Saleae clock (ADR 0027)
+- unverified:
+  - current calibration against a known reference load
+  - digital inputs D1-D7
+  - digital input in ampere mode with the logic port powered
+- known gaps:
+  - no absolute accuracy claim
+  - timestamps are sample count x 10 us from the host time of the start command: drift is measurable and a fixed offset is not enough
+  - occasional 4.6 ms instead of 5.0 ms intervals (lost or re-timed samples), cause not analysed
+
+### saleae — Saleae Logic (via Logic 2 Automation)
+
+**Logic 2 Automation gRPC**
+
+- implementation: complete; validation: real-hardware-partial; dependency: vendor-sdk (Saleae Logic 2 application with the automation server (127.0.0.1:10430))
+- verified:
+  - digital capture (8-channel original Logic)
+  - analyzer pipeline: UART and I2C analyzers ran and exported (on a floating line, so noise)
+  - digital capture of a real 100 Hz wave shared with a PPK2 in one session (calibrated multi-device experiment, ADR 0027)
+- unverified:
+  - UART/I2C/SPI decode correctness against a real bus
+  - analog capture: unsupported by the connected hardware (no analog channels)
+- known gaps:
+  - requires a desktop session for Logic 2 (Xvfb works)
+
+### scpi — SCPI instruments
+
+**generic SCPI over TCP/serial**
+
+- implementation: complete; validation: synthetic; dependency: native
+- verified:
+  - IEEE 488.2 framing against an in-process simulated instrument
+- unverified:
+  - any real instrument
+  - USBTMC transport (not written)
+
+**Rigol profile**
+
+- implementation: partial; validation: synthetic; dependency: native
+- verified:
+  - command set against the simulator
+- unverified:
+  - every model
+  - waveform transfer on real firmware
+
+**Siglent profile**
+
+- implementation: partial; validation: synthetic; dependency: native
+- verified:
+  - command set against the simulator
+- unverified:
+  - every model
+  - waveform transfer on real firmware
+
+### stlink — ST-LINK/V2 (V2J39S7) native SWD + generic Cortex-M + STM32 F1 flash (real) and F4 flash (simulated)
+
+**native Go usbfs ST-Link V2 protocol + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 (real silicon) and F4 (simulator only) flash layers**
+
+- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe (udev rule in docs/hardware.md); OpenOCD, STM32CubeProgrammer, st-flash, libusb and Python are not used. stlink-org is a BSD-3 protocol reference only)
+- capabilities:
+
+  | Capability | Status | Evidence |
+  |---|---|---|
+  | ST-Link USB transport | REAL_HW_VERIFIED | 0483:3748, interface 0 (OUT 0x02, IN 0x81 replies, IN 0x83 SWO); DFU exit, stall/ClearHalt recovery; found by USB serial |
+  | multi-probe selection by serial | SIMULATED_ONLY | only one ST-Link was attached; ambiguity refusal and selection are tested against the simulator and shared code paths |
+  | SWD transport | REAL_HW_VERIFIED | DP IDCODE 0x2BA01477 (nRF52840 DK) and 0x1BA01477 (STM32F1); 12 clocks listed; 100 kHz requested gives 100, 400 gives 480, 1000 gives 950 kHz |
+  | JTAG transport | SIMULATED_ONLY | code path exists; the attached target was wired for SWD only |
+  | target identify | REAL_HW_VERIFIED | two real targets: Cortex-M4 r0p1 (nRF52840, vendor word is only a hint) and Cortex-M3 r1p1 CPUID 0x411FC231 (STM32F1, DBGMCU 0x20036410); FPB 6+2, DWT 4 on both |
+  | halt/resume | REAL_HW_VERIFIED | 25 cycles, DCRSR cross-check |
+  | registers | REAL_HW_VERIFIED | r0..r12, sp, lr, pc, xpsr, msp/psp, control group |
+  | memory read | REAL_HW_VERIFIED | ROM/flash/SRAM/peripherals; 2 KiB in 19.6 ms, 64 KiB in 628 ms (~102 KB/s) |
+  | memory write | REAL_HW_VERIFIED | SRAM only: 8/16/32-bit and unaligned writes saved, verified and restored byte for byte; invalid addresses refused; default deny |
+  | single-step | REAL_HW_VERIFIED | 100 steps on each target; on the STM32 acceptance firmware every PC followed the program order, 16- and 32-bit (BL) instructions, SRAM counter matched the executed stores |
+  | breakpoints (FPB) | REAL_HW_VERIFIED | 5 real hits on each target (STM32: at work() of the hwlab acceptance firmware), halt reason and PC checked, FPB state restored |
+  | watchpoints (DWT) | REAL_HW_VERIFIED | a real write-watchpoint hit on each target (STM32: the acceptance firmware counter word); DEMCR and DWT state restored |
+  | reset (SYSRESETREQ and core) | REAL_HW_VERIFIED | system and core reset observed (reset_seen, PC at the reset vector after reset-halt; the vector is read after the reset because firmware may relocate VTOR) |
+  | reset (NRST pin) | IMPLEMENTED_UNTESTED | NRST was not observed on either target; no pin reset was observed and none is claimed |
+  | set-speed | REAL_HW_VERIFIED | reopened and used at 4000/1800/950/480/240 kHz |
+  | reconnect / rediscovery | REAL_HW_VERIFIED | 20 open/identify/halt/read/resume/close rounds on the STM32 plus reconnect, identity re-verified |
+  | unplug/replug | REAL_HW_VERIFIED | cable physically pulled and re-inserted twice with the session open, on both targets: DEVICE_GONE on every call (slowest 221-224 ms), no stale success, rediscovered by serial, identity unchanged, memory and halt/resume OK |
+  | concurrent open | REAL_HW_VERIFIED | a second plugin instance gets FailedPrecondition 'interface is busy' |
+  | flash info / read (STM32F1) | REAL_HW_VERIFIED | STM32F1 medium-density (DBGMCU 0x410 rev 0x2003): 128 KB probed (the size register is blank), 1 KB pages, RDP 0, no write protection; 64 KiB read in 629 ms (~102 KB/s) |
+  | flash erase (STM32F1) | REAL_HW_VERIFIED | page 0 erased and read back blank on silicon, behind allow_flash, allow_erase, the token and a verified backup; unaligned, tokenless and past-the-end requests refused on hardware |
+  | flash program / verify (STM32F1) | REAL_HW_VERIFIED | full cycle on silicon: backup x2 identical, erase, program a 128-byte hwlab image through the SRAM halfword loader, byte-for-byte verify, boot, debug it, restore the original, whole-flash hash equals the original; 8 KiB in 1126 ms (~7 KB/s with erase) |
+  | backup/restore (STM32F1) | REAL_HW_VERIFIED | two identical 128 KB reads (2.5 s), restore of 9 pages, whole-flash SHA-256 equal to the original afterwards |
+  | full-chip erase (STM32F1) | IMPLEMENTED_UNTESTED | implemented as per-page erase behind allow_chip_erase and the erase-entire-chip token; deliberately not run on the only (user-owned) board; the MER path is not implemented |
+  | flash (STM32 F4 and others) | SIMULATED_ONLY | F4 sector flash is implemented and tested on the simulator only; no F4 silicon was attached |
+  | option bytes / RDP | NOT_IMPLEMENTED | deliberately absent: never written |
+  | SWO trace | NOT_IMPLEMENTED | IN 0x83 is not read |
+  | ST-Link V1 / V3 / V2-1 mass-storage | NOT_IMPLEMENTED | only V2 protocol (0483:3748) was written and tested |
+
+- verified:
+  - USB discovery of 0483:3748, canonical serial recovered from the UTF-16 descriptor that sysfs garbles, firmware V2J39S7, target voltage ~3.25 V
+  - identify, halt/resume, registers, SRAM write/restore, 100-step single step, FPB breakpoints and a DWT watchpoint against a real nRF52840 (Cortex-M4) and a real STM32F1 (Cortex-M3)
+  - STM32F1 native flash on silicon: info/protection, two identical full backups, page erase, program, verify, boot of the programmed image, breakpoint, watchpoint, restore and hash comparison
+  - system and core reset with observation; reconnect with identity verification
+  - repeated open/close, second concurrent open refused
+  - two physical unplug/replug cycles with the session open
+  - flash access is refused on a non-STM32 target (nRF52840)
+- unverified:
+  - STM32 flash on any family other than the F1 that was attached; the F4 layer has only run on the simulator
+  - full-chip erase of the F1 and mass erase (MER) are not exercised or implemented
+  - JTAG transport, several ST-Link probes at once, V1/V3/V2-1 probes
+  - NRST pin reset (not wired)
+  - STM32 families other than the simulated F4 model
+- known gaps:
+  - the F1 flash-size register of the attached part reads 0xFFFF, so its 128 KB is a probed upper bound; the exact part number is not determined
+  - the F4 flash layer is derived from reference manuals and the simulator and has never touched real silicon
+  - SRAM block writes are about 32 KB/s (not optimized); reads about 102 KB/s
+  - the probe sends no reply to DEBUG_EXIT; close sends it without waiting (a 2 s stall was fixed on real hardware)
+  - genuine or counterfeit status of the probe is not determined
+  - Linux only (usbfs)
+
+### telink — Telink TLSR825x (SWire)
+
+**native SWS/SWire over UART**
+
+- implementation: complete; validation: real-hardware-partial; dependency: native (a pvvx-style SWire programmer (TB-03F/TB-04 programmer firmware) on a USB-UART bridge; TlsrPgm and probe-rs are not used)
+- verified:
+  - VID/PID candidate discovery (no bytes written)
+  - programmer info over a real CH340 link
+  - target presence and chip id 0x5562 (TLSR825x family) rev 0x02
+  - memory/peripheral read
+  - flash JEDEC id, unique id and flash read (CPU stalled), repeated reads identical
+  - halt and resume
+  - reconnect between invocations
+  - erase/program refused while the flash protection map is unverified (fail closed)
+- unverified:
+  - the exact TLSR825x variant (chip id 0x5562 does not distinguish them)
+  - flash erase/program/verify (disabled on the connected board: protection map not verified; never run)
+  - memory write
+  - single-step, breakpoints, soft reset and attach (RST pin) on the board
+  - PC register semantics (constant on this board)
+- known gaps:
+  - only the TLSR825x family driver exists (TLSR826x/8208 chip ids are recognised but have no target driver)
+  - the only board layout is tb04-512k, which the connected board does not match
+  - optional TlsrPgm/probe-rs fallbacks are not wired
+
+### uart — Serial port capture and TX
+
+**serial (go.bug.st/serial)**
+
+- implementation: complete; validation: real-hardware-partial; dependency: native (OS serial driver)
+- verified:
+  - open and TX on a real port
+  - RX on a real port (see docs/notes/milestone-hw-validation-results.md)
+  - RX over a pty
+- unverified:
+  - hardware flow control
+  - baud rates above 115200
+  - break and parity errors on a real line
+
+### usbcap — USB capture analysis
+
+**usbmon text input**
+
+- implementation: partial; validation: synthetic; dependency: native
+- verified:
+  - parsing usbmon text format files and URB timeline events
+- unverified:
+  - live usbmon (needs root or debugfs access, not available here)
+- known gaps:
+  - capture level: URB / host-controller observation, not a physical bus analyzer
+
+**physical USB bus analyzer**
+
+- implementation: missing; validation: untested; dependency: vendor-sdk
+- known gaps:
+  - no bus-level backend written (packets, NAK, SOF, electrical errors are invisible to usbmon)
+
+### xds110 — TI XDS110 probe: native SWD + JTAG chain scan + generic Cortex-M; real probe LP-XDS110ET with a user-owned CC2340 target; EnergyTrace range 0 (protocol partial)
+
+**native Go XDS110 vendor protocol over Linux usbfs (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only**
+
+- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe's debug interface (udev rule in docs/hardware.md); OpenOCD, Code Composer Studio, DSLite, xdsdfu, Python and libusb are not used)
+- capabilities:
+
+  | Capability | Status | Evidence |
+  |---|---|---|
+  | discovery | REAL_HW_VERIFIED | LP-XDS110ET 0451:bef3 (Texas Instruments, "XDS110 (03.00.00.22) Embed with CMSIS-DAP"), identity = USB serial (never bus/device numbers); 7 interfaces mapped |
+  | XDS110 protocol (connect, version, framing) | REAL_HW_VERIFIED | interface 2 (vendor, OUT 0x02 / IN 0x83, 512 B): firmware 3.0.0.22, hardware id 0x23; XDS_VERSION round trip median 80 us over 500 calls |
+  | JTAG chain scan transport | REAL_HW_VERIFIED | CJTAG_CONNECT + 320-bit scan ends in Idle; with nothing attached TDO reads all zeros and the scan reports stuck-low with no device. No TAP was ever found on hardware |
+  | JTAG TAP enumeration with a real chain | UNSUPPORTED_BY_ATTACHED_HW | no target attached; chain parsing is tested against a synthetic TAP model only |
+  | JTAG debugging of a core (JTAG-DP, ICEPick) | NOT_IMPLEMENTED | TAP enumeration only; no JTAG-DP link and no TI ICEPick routing |
+  | SWD attach / DPIDR / AP discovery | REAL_HW_VERIFIED | XDS110 command 0x0f against a user-owned CC2340 module powered with SET_SUPPLY 3300 mV: DPIDR 0x6BA02477, MEM-AP 0 IDR 0x84770001, Cortex-M0+ r0p1, CPUID 0x410CC601, identical to the CMSIS-DAP HID result. The earlier -615 was two swapped wires (SWDIO/SWCLK), not a probe bug |
+  | clock control | REAL_HW_VERIFIED | SET_TCK accepted at 100k, 400k, 1M, 2.5M, 5.5M, 8.5M, 10M, 12M and 14M; the reply carries no rate. Host-timed rates are 5-15 % below nominal (USB overhead in the burst); no precision is claimed |
+  | target identify | REAL_HW_VERIFIED | CC2340 module over the native XDS110 SWD path: Cortex-M0+ r0p1 (CPUID 0x410CC601) |
+  | halt/resume | REAL_HW_VERIFIED | on the CC2340 through the native XDS110 SWD path: halt, resume, status confirmed; same results as through the CMSIS-DAP HID interface |
+  | registers | REAL_HW_VERIFIED | 20 registers (r0-r12, sp, lr, pc, xpsr, msp, psp, special) read on the halted CC2340; the names and the stable values match the CMSIS-DAP result |
+  | memory read | REAL_HW_VERIFIED | CPUID, SRAM 0x20000000 and 0x00000000 read over the native XDS110 SWD path; byte-identical to the CMSIS-DAP HID reads |
+  | memory write | REAL_HW_VERIFIED | SRAM scratch window 0x20004780..0x20004880 on the CC2340: original bytes saved, 8/16/32-bit and aligned-boundary patterns written and verified, misaligned and out-of-range accesses refused, original bytes restored and verified exactly; no flash written. Same result as through CMSIS-DAP |
+  | register write | REAL_HW_VERIFIED | r0, r4, r8, r12 and lr written with a known value, read back, shown not to disturb any other register, and restored exactly (PC and SP not written); writes while running are refused |
+  | single-step | REAL_HW_VERIFIED | 100 single steps on the halted CC2340, each halt-confirmed, PC changed consistently (+2 x79, +4 x2, branches x19); 100 steps in one call took 0.39 s |
+  | breakpoint (FPB) | REAL_HW_VERIFIED | discovered from FP_CTRL: 4 code comparators, no literal comparators, FPB revision 0 (Cortex-M0+ BPU). 5/5 rounds hit at the requested PC; the 4-slot fill, a refused 5th slot and a refused address outside the Code region behave as the hardware dictates; FP_CTRL and FP_COMP0-3 restored bit-exact. Same through CMSIS-DAP |
+  | watchpoint (DWT) | UNSUPPORTED_BY_ATTACHED_HW | the CC2340 ROM table lists only the SCS and the BPU; DWT_CTRL reads 0 (NUMCOMP 0): no data watchpoint hardware exists on the attached core. Reported as UNSUPPORTED_BY_ATTACHED_HW, not NOT_IMPLEMENTED |
+  | reset (SYSRESETREQ) | REAL_HW_VERIFIED | issued while running, while halted and with halt requested: the CC2340 re-gates MEM-AP 0 at the reset request, so the plugin re-enters the debug state through SACI (CC23xx layer, internal/ti/cc23xx) and reads the result back: reset and reset-and-halt are confirmed (reset handler breakpoint, pc), DPIDR/CPUID identical afterwards, no power cycle needed. The SWD clock is capped to 400 kHz around the AIRCR write (empirical: 600 kHz and above leave the SACI mailbox stuck, cause not understood). Same through CMSIS-DAP |
+  | reset (VECTRESET core reset) | UNSUPPORTED_BY_ATTACHED_HW | Cortex-M0+ AIRCR is baseline-only: VECTRESET does not exist. Refused as UNSUPPORTED_BY_ATTACHED_HW |
+  | reset (nRESET / SRST pin) | REAL_HW_VERIFIED | SET_TRST drives nRESET (level true = released): kind=hardware on the CC2340 resets the target (the pin is wired and the polarity is right); debug access is recovered through SACI without a power cycle, reset-and-halt works |
+  | target_power_source (jumper P9) | REAL_HW_VERIFIED | the 20-pin 3V3 pin is the probe's own rail, selected by the manual jumper P9 (TGT VDD): XDS = 3.3 V, EXT = 0.1 V with nothing external attached. Measured with a multimeter in every state, see docs/notes/phase27-lp-xds110et-target-power.md. Not software-selectable |
+  | target_power_switch | UNSUPPORTED_BY_ATTACHED_HW | XDS_SET_SUPPLY (0x32) is acknowledged with success but changes nothing on the LP-XDS110ET (hardware id 0x23): 3V3 pin 3.3 V with it off, on at 3300 mV and on at 2500 mV; same with P9 on EXT (0.1 V). Only the stand-alone XDS110 (0x21) has a programmable supply. DebugProbe.target_power returns UNSUPPORTED_BY_ATTACHED_HW here; a hard power cycle needs an external PowerSwitch (ADR 0033) |
+  | target_power_switch (stand-alone XDS110, id 0x21) | IMPLEMENTED_UNTESTED | SET_SUPPLY layout (u32 millivolts + u8 enable) follows the public OpenOCD driver; no stand-alone XDS110 is attached, so it is not exercised |
+  | target_power_measure (EnergyTrace) | REAL_HW_VERIFIED | the EnergyTrace current path is real: 6.96 mA with the CC2340 running, 35 uA while nRESET holds it in reset (and back to 6.97 mA on release), about 3 uA with the 3V3 wire removed, 2.5 uA with P9 on EXT. Accuracy against a calibrated load is separate and untested |
+  | reconnect / rediscovery | REAL_HW_VERIFIED | one physical unplug/replug with the session open: DEVICE_GONE after 58 s of waiting for the user (no hang, no stale success), same serial rediscovered, firmware read after reopen |
+  | concurrent open | REAL_HW_VERIFIED | a second open of interface 2 gets BUSY; after release it succeeds; 25 open/info/close rounds |
+  | CDC / HID coexistence | REAL_HW_VERIFIED | only interface 2 is claimed; interfaces 0,1,3,4 stayed cdc_acm (ttyACM1, ttyACM2 opened while held), interface 5 stayed usbhid and the cmsisdap plugin used it at the same time |
+  | performance: XDS_VERSION round trip | REAL_HW_VERIFIED | min 75 us, median 80 us, p95 92 us over 500 calls |
+  | performance: target memory throughput | REAL_HW_VERIFIED | CC2340 over native XDS110 at 400 kHz, medians of 15: register block 18-19 ms, 16 B read 0.6-0.7 ms, 2 KiB read 28 ms, 256 B write 8.7 ms verified / 4.4 ms unverified, 100 steps 0.39 s. 2-3x faster than the CMSIS-DAP HID path on the same target |
+  | EnergyTrace: stream capture (range 0) | PROTOCOL_PARTIAL | native clean-room decoder of the 256 kSPS stream on interface 6 (bulk 0x05/0x87): sequence 0x28..0x1f replayed exactly as observed, current matches the TI tool CSV within 2 nA over 768 samples. 10 s, 5 min and 10 min live captures (2.56M / 76.8M / 153.6M samples), repeated start/stop, cancel, 0 lost packets. Gain and offset come from the oracle, not an independent load; unknown: commands 0x28/0x46/0x30/0x31, prelude value, other ranges. docs/xds110-energytrace-protocol.md |
+  | EnergyTrace: current accuracy against a calibrated load | IMPLEMENTED_UNTESTED | gain (15.135849 nA/count) comes from the TI oracle; no known load or PPK2 cross-check was available |
+  | EnergyTrace: zero offset and target presence | REAL_HW_VERIFIED | a user-owned CC2340 board is wired to the 20-pin debug connector (pin 1 GND, 5 3V3, 11 nRST, 13 TMS, 15 TCK). Pulling the 3V3 wire during a 70 s capture: 6.95 mA connected, +3.4 uA (noise/offset) open, a 115 mA inrush when reconnected. The pin is live (3.3 V) without any capture running when jumper P9 is on XDS, so the stream does not switch it (phase 27 corrects the earlier claim) |
+  | EnergyTrace: low current ranges (calibration 4 and 1) | HYPOTHESIS_ONLY | the probe reports calibrations for ranges 4 and 1, but the stream format at those ranges was never observed |
+  | EnergyTrace: voltage and energy | NOT_IMPLEMENTED | the TI tool computes both host-side; the stream carries neither |
+  | EnergyTrace: replay of the real stream | REPLAY_VERIFIED | sanitized fixture plugins/xds110/energytrace/testdata/real-lpxds110et: parser and command sequence tests run without the probe |
+  | EnergyTrace: unplug during capture | REAL_HW_VERIFIED | probe removed during a 30 min capture: the capture ended in under a second, no hang, the 7.08M samples already stored stayed readable, no stop commands were sent to the missing probe, same serial rediscovered after replug and a new capture ran |
+  | flash programming | REAL_HW_VERIFIED | FlashProgramming is served for TI CC23xx targets by the shared SACI layer (see the cc2340 entry; erase, program, verify and backup through this probe on the real chip); other targets are refused with a clear error, flash belongs to target-specific layers |
+
+- verified:
+  - USB discovery of the composite LP-XDS110ET by serial; only the debug interface 2 is claimed
+  - XDS110 framing, version/hardware id, SET_TCK acceptance, empty-chain JTAG scan, explicit no-target SWD error
+  - CDC and HID coexistence, BUSY on a second open, 25 open/close rounds, one physical unplug/replug
+  - bugs found while building it: slow-clock planning for old firmware rounded the period down (could exceed the requested clock; now rounds up); the stand-alone board was assumed to be a LaunchPad with a CC1352R1 (hardware id 0x23 is the standalone LP-XDS110ET)
+- unverified:
+  - the 3V3 pin voltage
+  - the mapping of status -617 to a no-ACK error
+  - EnergyTrace: absolute accuracy, ranges other than 0, voltage/energy, the voltage actually on the 3V3 pin
+- known gaps:
+  - the same physical probe is listed by both the xds110 and cmsisdap plugins (different USB interfaces); they can be open together
+  - no JTAG-DP link and no ICEPick routing, so no TI target can be debugged over JTAG yet
+  - EnergyTrace uses a synchronous bulk read per packet; no loss was seen at 256 kSPS, but there is no pending URB between reads
+  - the LP-XDS110ET cannot switch its 3V3 pin by software (measured, phase 27), so power-cycle recovery was NOT exercised; earlier notes that a 10 s supply-off recovered the target are superseded by SACI reset
+  - Linux only (usbfs)

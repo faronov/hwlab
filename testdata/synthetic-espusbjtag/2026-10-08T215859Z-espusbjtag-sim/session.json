@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "id": "2026-10-08T215859Z-espusbjtag-sim",
+  "name": "espusbjtag-sim",
+  "status": "complete",
+  "created_at": "2026-10-08T21:58:59.748686721Z",
+  "wall_epoch_unix_ns": 1791496739748686721,
+  "duration_ns": 2902073542,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# SYNTHETIC Espressif USB Serial/JTAG device: an in-process USB model with a\n# fabricated RISC-V target (IDCODE 0x0000dc25, 2 harts, SBA). Nothing here was\n# measured on hardware; it exercises the native transport, JTAG, RISC-V DM and\n# the replay path.\n#\n#   HWLAB_ESPJTAG_SIM=1 hwlab run --yes examples/espusbjtag-sim.yaml\nname: espusbjtag-sim\nduration: 10s\n\ndevices:\n  jtag:\n    plugin: espusbjtag\n    device: sim-espusbjtag\n\nsteps:\n  - {name: info, at: 100ms, device: jtag, call: JTAGTransport.info}\n  - {name: scan, at: 300ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}\n  - {name: identify, at: 600ms, device: jtag, call: TargetIdentify.identify}\n  - {name: chip-info, at: 900ms, device: jtag, call: DebugProbe.chip_info}\n  - {name: halt, at: 1200ms, device: jtag, call: DebugProbe.halt}\n  - {name: registers, at: 1500ms, device: jtag, call: DebugProbe.read_registers, args: {keep_halted: true}}\n  - {name: read-sram, at: 2000ms, device: jtag, call: MemoryAccess.read, args: {address: 0x40800000, length: 16}}\n  - {name: read-flash, at: 2300ms, device: jtag, call: MemoryAccess.read, args: {address: 0x42000000, length: 16}}\n  - {name: resume, at: 2600ms, device: jtag, call: DebugProbe.resume}\n  - {name: scan-again, at: 2900ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}\n",
+  "devices": [
+    {
+      "alias": "jtag",
+      "device_id": "sim-espusbjtag",
+      "plugin_id": "espusbjtag",
+      "name": "Simulated Espressif USB Serial/JTAG (SYNTHETIC)",
+      "capabilities": [
+        "DebugProbe",
+        "JTAGScan",
+        "JTAGTransport",
+        "MemoryAccess",
+        "TargetIdentify"
+      ],
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": []
+}

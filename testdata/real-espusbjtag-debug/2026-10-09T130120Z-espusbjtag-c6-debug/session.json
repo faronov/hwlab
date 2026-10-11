@@ -1,0 +1,33 @@
+{
+  "format_version": 1,
+  "id": "2026-10-09T130120Z-espusbjtag-c6-debug",
+  "name": "espusbjtag-c6-debug",
+  "status": "complete",
+  "created_at": "2026-10-09T13:01:20.548456973Z",
+  "wall_epoch_unix_ns": 1791550880548456973,
+  "duration_ns": 17009178947,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# Espressif native USB Serial/JTAG (ESP32-C6, 303a:1001): debug session through\n# the NATIVE Go stack: Linux usbfs -\u003e Espressif USB-JTAG transport -\u003e JTAG -\u003e\n# RISC-V Debug Module. No OpenOCD, no Python, no ESP-IDF, no libusb, no CGO.\n#\n# Recorded on a REAL ESP32-C6 (testdata/real-espusbjtag-debug). It exercises\n# halt, hart/system reset, single-step, a hardware breakpoint that really hits,\n# an SRAM write that is restored, flash geometry (read-only) and a SoC reset\n# that drops and re-enumerates the USB device. It never erases or programs\n# flash and writes no eFuse.\n#\n#   hwlab run --yes examples/espusbjtag-c6-debug.yaml\n#\n# The SRAM scratch address 0x4086d3b8 (16 bytes) was verified to read as zeros\n# before the run and is written back as zeros; adjust it for another firmware.\n# The breakpoint address 0x40001688 is on the ROM reset path that every\n# reset-halt executes, so it is hit deterministically.\nname: espusbjtag-c6-debug\nduration: 30s\n\ndevices:\n  jtag:\n    plugin: espusbjtag\n    allow_memory_write: true\n    allow_reset: true\n\nsteps:\n  - {name: info, at: 100ms, device: jtag, call: JTAGTransport.info}\n  - {name: scan, at: 500ms, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}\n  - {name: identify, at: 1s, device: jtag, call: TargetIdentify.identify}\n  - {name: chip-info, at: 1500ms, device: jtag, call: DebugProbe.chip_info}\n  - {name: harts, at: 2s, device: jtag, call: DebugProbe.harts}\n  - {name: reset-halt, at: 3s, device: jtag, call: DebugProbe.reset, args: {kind: system, halt: true}}\n  - {name: step, at: 4s, device: jtag, call: DebugProbe.step, args: {count: 4}}\n  - {name: reset-halt-again, at: 5s, device: jtag, call: DebugProbe.reset, args: {kind: system, halt: true}}\n  - {name: breakpoint-hit, at: 6s, device: jtag, call: DebugProbe.set_breakpoint, args: {address: 0x40001688, run_wait_ms: 1000}}\n  - {name: list-breakpoints, at: 7s, device: jtag, call: DebugProbe.list_breakpoints}\n  - {name: clear-breakpoints, at: 7500ms, device: jtag, call: DebugProbe.clear_breakpoint, args: {all: true}}\n  - {name: registers, at: 8s, device: jtag, call: DebugProbe.read_registers, args: {keep_halted: true}}\n  - {name: sram-before, at: 9s, device: jtag, call: MemoryAccess.read, args: {address: 0x4086d3b8, length: 16}}\n  - {name: sram-write, at: 9500ms, device: jtag, call: MemoryAccess.write, args: {address: 0x4086d3b8, data: a55a1234deadbeef0102030405060708}}\n  - {name: sram-after-write, at: 10s, device: jtag, call: MemoryAccess.read, args: {address: 0x4086d3b8, length: 16}}\n  - {name: sram-restore, at: 10500ms, device: jtag, call: MemoryAccess.write, args: {address: 0x4086d3b8, data: \"00000000000000000000000000000000\"}}\n  - {name: sram-final, at: 11s, device: jtag, call: MemoryAccess.read, args: {address: 0x4086d3b8, length: 16}}\n  - {name: flash-info, at: 12s, device: jtag, call: FlashProgramming.info}\n  - {name: soc-reset, at: 14s, device: jtag, call: DebugProbe.reset, args: {kind: soc, confirm: reset-soc}}\n  - {name: rom-after-soc-reset, at: 16s, device: jtag, call: MemoryAccess.read, args: {address: 0x40001000, length: 4}}\n  - {name: scan-after-reset, at: 17s, device: jtag, call: JTAGScan.scan, args: {measure_ir: true}}\n",
+  "devices": [
+    {
+      "alias": "jtag",
+      "device_id": "303a:1001:AA_BB_CC_DD_EE_FF",
+      "plugin_id": "espusbjtag",
+      "name": "Espressif USB JTAG/serial debug unit",
+      "capabilities": [
+        "DebugProbe",
+        "FlashProgramming",
+        "JTAGScan",
+        "JTAGTransport",
+        "MemoryAccess",
+        "TargetIdentify"
+      ],
+      "config": {
+        "allow_memory_write": true,
+        "allow_reset": true
+      },
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": []
+}

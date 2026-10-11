@@ -1,0 +1,14 @@
+# Real CC-Debugger + CC2530 target, read-only: records the probe and target
+# identification as timed steps. Nothing here erases, programs or resets.
+#
+#   make build && ./bin/hwlab run examples/ccdebugger-info.yaml
+name: ccdebugger-info
+duration: 3s
+
+devices:
+  dbg:
+    plugin: ccdebugger
+
+steps:
+  - {name: identify, at: 100ms, device: dbg, call: DebugProbe.info}
+  - {name: mac, at: 1500ms, device: dbg, call: DebugProbe.read_mac}

@@ -1,0 +1,82 @@
+# ST-Link V2 (0483:3748) + a REAL STM32F1 medium-density target (DBGMCU_IDCODE
+# 0x20036410, 128 KB readable flash, 20 KB SRAM) through the NATIVE Go stack:
+# Linux usbfs -> ST-Link protocol -> SWD -> Cortex-M3 -> STM32F1 flash driver
+# (a hwlab-owned halfword loader in SRAM). No OpenOCD, st-flash,
+# STM32CubeProgrammer, libusb, Python or CGO.
+#
+# DESTRUCTIVE and recorded on real hardware. The cycle is: identify and debug
+# the original firmware; back the whole flash up twice; erase page 0 only;
+# program the hwlab-owned 128-byte acceptance image
+# (examples/stlink-stm32f1-accept.bin); boot it; single-step, hit a hardware
+# breakpoint and a write watchpoint in it; restore the original from the
+# backup; read the whole flash again and compare the hashes. Option bytes, RDP
+# and write protection are never touched.
+#
+#   hwlab run --yes examples/stlink-stm32f1.yaml     (from the repository root)
+#
+# Backups go to /tmp (never into the repository). Adjust the SRAM scratch
+# bytes (0x20004b00, read twice while halted) for another target; the
+# acceptance image addresses are fixed by the image.
+name: stlink-stm32f1
+duration: 90s
+
+devices:
+  stlink:
+    plugin: stlink
+    allow_memory_write: true
+    allow_reset: true
+    allow_flash: true
+    allow_erase: true
+
+steps:
+  # --- identification and the original firmware ---
+  - {name: info, at: 100ms, device: stlink, call: DebugProbe.info}
+  - {name: identify, at: 500ms, device: stlink, call: TargetIdentify.identify}
+  - {name: chip-info, at: 1s, device: stlink, call: DebugProbe.chip_info}
+  - {name: halt, at: 1500ms, device: stlink, call: DebugProbe.halt}
+  - {name: registers, at: 2s, device: stlink, call: DebugProbe.read_registers, args: {keep_halted: true, crosscheck: true}}
+  - {name: sram-before, at: 2500ms, device: stlink, call: MemoryAccess.read, args: {address: 0x20004b00, length: 16}}
+  - {name: sram-write, at: 3s, device: stlink, call: MemoryAccess.write, args: {address: 0x20004b00, data: a55a1234deadbeef0102030405060708}}
+  - {name: sram-after-write, at: 3500ms, device: stlink, call: MemoryAccess.read, args: {address: 0x20004b00, length: 16}}
+  - {name: sram-restore, at: 4s, device: stlink, call: MemoryAccess.write, args: {address: 0x20004b00, data: abafaff2045fc79a45cc3969ade7ae58}}
+  - {name: sram-final, at: 4500ms, device: stlink, call: MemoryAccess.read, args: {address: 0x20004b00, length: 16}}
+  - {name: resume, at: 5s, device: stlink, call: DebugProbe.resume}
+  - {name: reset-halt, at: 5500ms, device: stlink, call: DebugProbe.reset, args: {kind: system, halt: true}}
+  - {name: step-original, at: 6s, device: stlink, call: DebugProbe.step, args: {count: 12}}
+  - {name: resume-original, at: 6500ms, device: stlink, call: DebugProbe.resume}
+  - {name: flash-info, at: 7s, device: stlink, call: FlashProgramming.info}
+
+  # --- backup twice (identical SHA-256), erase page 0, program, verify ---
+  - {name: backup, at: 8s, device: stlink, call: FlashProgramming.backup, args: {dir: /tmp/hwlab-stm32-fixture}}
+  - {name: erase-page0, at: 14s, device: stlink, call: FlashProgramming.erase, args: {mode: region, address: 0x08000000, length: 1024, confirm: erase-flash-region, backup: /tmp/hwlab-stm32-fixture/stm32-flash-410-128K-acba307bbb3f.bin}}
+  - {name: program, at: 16s, device: stlink, call: FlashProgramming.program, args: {path: examples/stlink-stm32f1-accept.bin, address: 0x08000000, confirm: program-flash, backup: /tmp/hwlab-stm32-fixture/stm32-flash-410-128K-acba307bbb3f.bin, reset: none}}
+  - {name: verify, at: 18s, device: stlink, call: FlashProgramming.verify, args: {path: examples/stlink-stm32f1-accept.bin, address: 0x08000000}}
+
+  # --- boot and debug the acceptance firmware ---
+  - {name: boot, at: 19s, device: stlink, call: DebugProbe.reset, args: {kind: system, halt: false}}
+  - {name: halt-boot-1, at: 19500ms, device: stlink, call: DebugProbe.halt}
+  - {name: counter-1, at: 20s, device: stlink, call: MemoryAccess.read, args: {address: 0x20000100, length: 4}}
+  - {name: resume-boot, at: 20500ms, device: stlink, call: DebugProbe.resume}
+  - {name: halt-boot-2, at: 21s, device: stlink, call: DebugProbe.halt}
+  - {name: counter-2, at: 21500ms, device: stlink, call: MemoryAccess.read, args: {address: 0x20000100, length: 4}}
+  - {name: reset-halt-accept, at: 22s, device: stlink, call: DebugProbe.reset, args: {kind: system, halt: true}}
+  - {name: steps-1, at: 22500ms, device: stlink, call: DebugProbe.step, args: {count: 25}}
+  - {name: steps-2, at: 23s, device: stlink, call: DebugProbe.step, args: {count: 25}}
+  - {name: steps-3, at: 23500ms, device: stlink, call: DebugProbe.step, args: {count: 25}}
+  - {name: steps-4, at: 24s, device: stlink, call: DebugProbe.step, args: {count: 25}}
+  - {name: breakpoint-hit, at: 24500ms, device: stlink, call: DebugProbe.set_breakpoint, args: {address: 0x08000060, run_wait_ms: 1500}}
+  - {name: clear-breakpoint, at: 25500ms, device: stlink, call: DebugProbe.clear_breakpoint, args: {all: true}}
+  - {name: watchpoint-set, at: 26s, device: stlink, call: DebugProbe.set_watchpoint, args: {address: 0x20000100, kind: write, mask_bits: 2}}
+  - {name: watch-resume, at: 26500ms, device: stlink, call: DebugProbe.resume}
+  - {name: watch-hit, at: 27s, device: stlink, call: DebugProbe.wait_halt, args: {wait_ms: 1500}}
+  - {name: watchpoint-clear, at: 28s, device: stlink, call: DebugProbe.clear_watchpoint, args: {all: true}}
+
+  # --- restore the original and prove it ---
+  - {name: restore, at: 29s, device: stlink, call: FlashProgramming.restore, args: {path: /tmp/hwlab-stm32-fixture/stm32-flash-410-128K-acba307bbb3f.bin, confirm: restore-flash, reset: none}}
+  - {name: backup-after-restore, at: 36s, device: stlink, call: FlashProgramming.backup, args: {dir: /tmp/hwlab-stm32-fixture-after}}
+  - {name: reset-original, at: 42s, device: stlink, call: DebugProbe.reset, args: {kind: system, halt: true}}
+  - {name: resume-restored, at: 42500ms, device: stlink, call: DebugProbe.resume}
+  - {name: halt-restored, at: 43s, device: stlink, call: DebugProbe.halt}
+  - {name: registers-restored, at: 43500ms, device: stlink, call: DebugProbe.read_registers, args: {keep_halted: true}}
+  - {name: resume-final, at: 44s, device: stlink, call: DebugProbe.resume}
+  - {name: identify-final, at: 44500ms, device: stlink, call: TargetIdentify.identify}

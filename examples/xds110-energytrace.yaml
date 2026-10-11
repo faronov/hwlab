@@ -1,0 +1,21 @@
+# LP-XDS110ET EnergyTrace capture with the native stream decoder.
+#
+# STATUS: PROTOCOL_PARTIAL. Range 0 only, no voltage, accuracy unverified
+# against a calibrated load. See docs/xds110-energytrace-protocol.md.
+#
+# Starting the stream may energize the probe's target connector, so the device
+# needs allow_target_power and `hwlab run --yes`. Nothing needs to be attached.
+#
+#   hwlab run --yes examples/xds110-energytrace.yaml
+name: xds110-energytrace
+duration: 10s
+
+devices:
+  et:
+    plugin: xds110
+    device: 0451:bef3:LS420BFZ
+    requires: [PowerMeasurement]
+    allow_target_power: true
+
+analysis:
+  nominal_voltage: 3.3

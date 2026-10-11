@@ -1,0 +1,55 @@
+{
+  "probe": "TI LP-XDS110ET (standalone XDS110 debug probe board, no onboard target)",
+  "target_attached": false,
+  "note": "Metadata only. The LP-XDS110ET has no target: P7 is a 10-pin ARM Cortex Debug connector, P10 a 20-pin LaunchPad connector, P9 selects the level-shifter voltage. Nothing was connected, so there is no DPIDR, AP, CPUID, memory or run-control evidence, and the all-zero JTAG scan and the SWD protocol error are the expected no-target behaviour.",
+  "usb": {
+    "vid_pid": "0451:bef3",
+    "manufacturer": "Texas Instruments",
+    "product": "XDS110 (03.00.00.22) Embed with CMSIS-DAP",
+    "serial": "sanitized (the real USB serial is not committed)",
+    "bcdDevice": "1.00",
+    "speed": "high (480 Mbit/s)",
+    "configurations": 1,
+    "interfaces": [
+      {"n": 0, "role": "CDC comm", "endpoints": ["IN 0x81 interrupt 16"], "driver": "cdc_acm", "tty": "ttyACM1"},
+      {"n": 1, "role": "CDC data", "endpoints": ["OUT 0x01 bulk 512", "IN 0x82 bulk 512"], "driver": "cdc_acm"},
+      {"n": 2, "role": "XDS110 debug protocol (vendor 0xff)", "endpoints": ["OUT 0x02 bulk 512", "IN 0x83 bulk 512"], "driver": "none (claimed by hwlab)"},
+      {"n": 3, "role": "CDC comm", "endpoints": ["IN 0x84 interrupt 16"], "driver": "cdc_acm", "tty": "ttyACM2"},
+      {"n": 4, "role": "CDC data", "endpoints": ["OUT 0x03 bulk 512", "IN 0x85 bulk 512"], "driver": "cdc_acm"},
+      {"n": 5, "role": "HID, CMSIS-DAP v1", "endpoints": ["OUT 0x04 interrupt 64", "IN 0x86 interrupt 64"], "driver": "usbhid"},
+      {"n": 6, "role": "vendor bulk, not the debug channel; candidate EnergyTrace channel (unverified)", "endpoints": ["OUT 0x05 bulk 512", "IN 0x87 bulk 512"], "driver": "none"}
+    ]
+  },
+  "xds110": {
+    "firmware": "3.0.0.22",
+    "firmware_raw": "0x03000022",
+    "hardware_id": "0x23",
+    "frame": "'*' + u16 LE length + command + arguments; reply = int32 LE status + data"
+  },
+  "clock": {
+    "accepted_hz": [100000, 400000, 1000000, 2500000, 5500000, 8500000, 10000000, 12000000, 14000000],
+    "reply_carries_rate": false,
+    "claim": "accepted only; host-timed rates are below nominal because the burst includes USB overhead. No precision is claimed"
+  },
+  "no_target_behaviour": {
+    "swd_attach": "XDS110 command 0x0f: SWD protocol error (-615), reported explicitly, probe stays usable",
+    "jtag_scan": "320 bits read all zeros, status stuck-low, no device"
+  },
+  "performance": {"xds_version_round_trips": 500, "min_us": 75, "median_us": 80, "p95_us": 92, "max_us": 181, "target_memory": "not measured: no target"},
+  "usb_behaviour": {
+    "open_close_rounds": 25,
+    "second_open": "BUSY",
+    "cdc_coexistence": "interfaces 0,1,3,4 stayed cdc_acm, ttyACM1 and ttyACM2 stayed present and were opened while hwlab held interface 2; interface 5 stayed usbhid",
+    "cmsisdap_face_coexistence": "the cmsisdap plugin opened the HID face at the same time and answered DAP_Info (CMSIS-DAP 1.2.0)"
+  },
+  "unplug_replug": {
+    "physically_performed_by_user": true,
+    "rounds": 1,
+    "device_gone": true,
+    "hang": false,
+    "stale_success": false,
+    "same_serial_rediscovered": true,
+    "info_after_reopen": true
+  },
+  "energytrace": "NOT_IMPLEMENTED: the protocol is not public and no oracle was available; interface 6 was probed only with one DAP_Info-shaped write (reply 01 00) and no further fuzzing"
+}

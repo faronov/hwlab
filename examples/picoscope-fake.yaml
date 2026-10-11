@@ -1,0 +1,36 @@
+# Block-mode oscilloscope capture through the picoscope plugin.
+#
+# This build has NO real PicoScope driver (see docs/adr/0024-picoscope.md): it
+# runs against the plugin's SYNTHETIC scope, so every waveform is generated, not
+# measured. Real PicoScope validation is PENDING.
+#
+#   HWLAB_PICOSCOPE_FAKE=1 hwlab run --yes examples/picoscope-fake.yaml
+#   hwlab waveform measure latest --source scope --channel A
+#
+# Signals on the synthetic scope: A 1 kHz square 0..3.3 V (rise 2 us, fall 4 us),
+# B 10 kHz sine +-1 V, C DC 1.2 V, D 50 Hz sine +-15 V (overflows ranges <= 10 V).
+name: picoscope-fake
+duration: 3s
+
+devices:
+  scope:
+    plugin: picoscope
+    device: fake-ps
+    channels: [A, B]
+    range_v: 5
+    sample_rate_hz: 2000000
+    samples: 8000
+    pre_trigger: 0.1
+    trigger_source: A
+    trigger_level_v: 1.65
+    trigger_slope: rising
+
+steps:
+  - {name: info,    at: 100ms, device: scope, call: Oscilloscope.info}
+  - {name: measure, at: 1s,    device: scope, call: Oscilloscope.measure, args: {channel: A}}
+  - {name: shape,   at: 1100ms, device: scope, call: Oscilloscope.waveform, args: {channel: B, points: 40}}
+
+plots:
+  - name: scope
+    title: Synthetic oscilloscope capture
+    format: svg

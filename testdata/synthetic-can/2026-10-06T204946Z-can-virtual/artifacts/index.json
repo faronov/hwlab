@@ -1,0 +1,28 @@
+[
+  {
+    "id": "a001",
+    "name": "can-virtual-can0.pcapng",
+    "kind": "pcap",
+    "mime_type": "application/vnd.tcpdump.pcapng",
+    "path": "artifacts/bus/can-virtual-can0.pcapng",
+    "size": 584,
+    "source": "bus",
+    "capture": "bus",
+    "created_at": "2026-10-06T20:49:49.185911601Z",
+    "metadata": {
+      "backend": "virtual",
+      "error_frames": "0",
+      "events_dropped_batches": "0",
+      "fd_enabled": "true",
+      "fd_frames": "1",
+      "frames": "6",
+      "interface": "virtual-can0",
+      "link_type": "227",
+      "rtr_frames": "1",
+      "rx": "5",
+      "synthetic": "true",
+      "timestamps": "hwlab session ns",
+      "tx": "1"
+    }
+  }
+]

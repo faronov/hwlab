@@ -1,0 +1,26 @@
+{
+  "format_version": 1,
+  "id": "2026-10-08T175642Z-telink-real",
+  "name": "telink-real",
+  "status": "complete",
+  "created_at": "2026-10-08T17:56:42.991773131Z",
+  "wall_epoch_unix_ns": 1791482202991773131,
+  "duration_ns": 4013372123,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# Telink SWire programmer + TLSR825x target, READ-ONLY, through the native Go\n# SWire stack (no Python, no probe-rs). Recorded on real hardware: a CH340\n# USB-UART programmer (TB-03F/TB-04 programmer firmware) wired to a TLSR825x\n# board; see docs/notes/phase14-telink-real-hardware-results.md.\n#\n#   HWLAB_TELINK_PORTS=pgm=/dev/ttyUSB0 hwlab devices      # or VID/PID discovery\n#   hwlab run --yes examples/telink-real.yaml\n#\n# Nothing here writes memory or flash. `halt` stalls the CPU (flash reads need\n# a captured CPU) and `resume` releases it. The write call asks for a\n# modification that must be REFUSED: no flash protection map is verified for\n# this board, so program and erase fail closed before any flash command reaches\n# the chip. (Selecting the tb04-512k layout does not help on this board: its\n# factory block reads blank, so that map is not confirmed either.)\nname: telink-real\nduration: 6s\n\ndevices:\n  pgm:\n    plugin: telink\n    device: ttyUSB0\n\nsteps:\n  - {name: programmer-info, at: 100ms, device: pgm, call: DebugProbe.info}\n  - {name: halt, at: 500ms, device: pgm, call: DebugProbe.halt}\n  - {name: connect, at: 1000ms, device: pgm, call: DebugProbe.connect}\n  - {name: status, at: 1500ms, device: pgm, call: DebugProbe.status}\n  - {name: peripheral-read, at: 2000ms, device: pgm, call: MemoryAccess.read, args: {address: \"0x800000\", length: 16}}\n  - {name: flash-head, at: 2500ms, device: pgm, call: FlashProgramming.read, args: {address: \"0x0\", length: 16}}\n  - {name: flash-factory-block, at: 3000ms, device: pgm, call: FlashProgramming.read, args: {address: \"0x76000\", length: 8}}\n  - {name: program-refused-unverified, at: 3500ms, device: pgm, call: FlashProgramming.program, args: {address: \"0x76000\", data: \"ff\"}}\n  - {name: resume, at: 4000ms, device: pgm, call: DebugProbe.resume}\n",
+  "devices": [
+    {
+      "alias": "pgm",
+      "device_id": "ttyUSB0",
+      "plugin_id": "telink",
+      "name": "USB-UART adapter, possible Telink SWire programmer (unprobed)",
+      "capabilities": [
+        "DebugProbe",
+        "FlashProgramming",
+        "MemoryAccess"
+      ],
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": []
+}

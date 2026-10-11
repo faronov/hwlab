@@ -1,0 +1,31 @@
+# TI XDS110 probe, REAL hardware: a standalone LP-XDS110ET (USB 0451:bef3),
+# through the native Go stack: Linux usbfs -> XDS110 vendor protocol (interface 2)
+# -> generic ADIv5 / JTAG scan. No OpenOCD, CCS, DSLite, xdsdfu, Python,
+# libusb or CGO.
+#
+# NO TARGET IS WIRED to the probe when this is recorded: the LP-XDS110ET has no
+# onboard target. The recording proves the probe itself (USB identity, firmware,
+# clock acceptance, JTAG chain scan of an empty chain) and that every target
+# operation fails explicitly instead of succeeding. It never enables target
+# power and never writes memory.
+#
+#   hwlab devices                                  # xds110/0451:bef3:<serial>
+#   hwlab run --yes examples/xds110-probe.yaml
+#
+# A target attaches to P7 (10-pin ARM Cortex Debug); P9 selects the level
+# shifter voltage.
+name: xds110-probe
+duration: 10s
+
+devices:
+  dbg:
+    plugin: xds110
+
+steps:
+  - {name: info,        at: 100ms, device: dbg, call: DebugProbe.info}
+  - {name: clock-probe, at: 1s,    device: dbg, call: DebugProbe.clock_probe, args: {rates_hz: [100000, 400000, 1000000, 2500000, 10000000]}}
+  - {name: jtag-scan,   at: 2s,    device: dbg, call: DebugProbe.jtag_scan}
+  - {name: connect,     at: 3s,    device: dbg, call: DebugProbe.connect, args: {clock_hz: 400000}}
+  - {name: read,        at: 4s,    device: dbg, call: MemoryAccess.read, args: {address: "0x20000000", length: 16}}
+  - {name: status,      at: 5s,    device: dbg, call: DebugProbe.status}
+  - {name: info-final,  at: 6s,    device: dbg, call: DebugProbe.info}

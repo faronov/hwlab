@@ -1,0 +1,46 @@
+[
+  {
+    "id": "a002",
+    "name": "digital.csv",
+    "kind": "csv",
+    "mime_type": "text/csv",
+    "path": "artifacts/logic/raw/digital.csv",
+    "size": 1056,
+    "source": "logic",
+    "capture": "logic",
+    "created_at": "2026-10-06T19:56:53.627772906Z",
+    "metadata": {
+      "channels": "[0 1 2 3]"
+    }
+  },
+  {
+    "id": "a003",
+    "name": "analyzer-0-uart-ch1.csv",
+    "kind": "csv",
+    "mime_type": "text/csv",
+    "path": "artifacts/logic/analyzer-0-uart-ch1.csv",
+    "size": 252,
+    "source": "logic",
+    "capture": "logic",
+    "created_at": "2026-10-06T19:56:53.628025479Z",
+    "metadata": {
+      "analyzer": "Async Serial",
+      "label": "uart-ch1"
+    }
+  },
+  {
+    "id": "a004",
+    "name": "analyzer-1-i2c-ch1-ch2.csv",
+    "kind": "csv",
+    "mime_type": "text/csv",
+    "path": "artifacts/logic/analyzer-1-i2c-ch1-ch2.csv",
+    "size": 118,
+    "source": "logic",
+    "capture": "logic",
+    "created_at": "2026-10-06T19:56:53.629760746Z",
+    "metadata": {
+      "analyzer": "I2C",
+      "label": "i2c-ch1-ch2"
+    }
+  }
+]

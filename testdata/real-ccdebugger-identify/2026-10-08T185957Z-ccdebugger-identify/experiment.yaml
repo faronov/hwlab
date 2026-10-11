@@ -1,0 +1,31 @@
+# Real CC-Debugger + CC2530 through the NATIVE USB backend: identify the target
+# from its hardware registers and read its lock bits and IEEE addresses.
+#
+# This RESETS the target into debug halt (access: reset-debug-session), reads
+# only, then re-enables DMA and resumes the firmware. It never writes memory,
+# erases or programs flash, MAC or lock bytes (no allow_memory_write and no
+# allow_flash_* keys).
+#
+#   make build && ./bin/hwlab run --yes examples/ccdebugger-identify.yaml
+name: ccdebugger-identify
+duration: 3s
+
+devices:
+  dbg:
+    plugin: ccdebugger
+    backend: native
+    access: reset-debug-session
+    allow_target_reset: true
+    allow_cpu_control: true
+    allow_memory_access: true
+    allow_dma_enable: true
+
+steps:
+  - {name: attach, at: 100ms, device: dbg, call: DebugProbe.attach}
+  - {name: dma, at: 200ms, device: dbg, call: DebugProbe.enable_dma}
+  - {name: chip, at: 300ms, device: dbg, call: DebugProbe.chip_info}
+  - {name: lock, at: 400ms, device: dbg, call: DebugProbe.read_lock}
+  - {name: ieee, at: 500ms, device: dbg, call: DebugProbe.read_ieee}
+  - {name: registers, at: 600ms, device: dbg, call: DebugProbe.read_registers}
+  - {name: xdata, at: 700ms, device: dbg, call: MemoryAccess.read, args: {space: xdata, address: 0x1C00, length: 16}}
+  - {name: run, at: 1s, device: dbg, call: DebugProbe.resume}

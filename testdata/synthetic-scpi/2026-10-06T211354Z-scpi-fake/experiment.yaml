@@ -1,0 +1,37 @@
+# Oscilloscope waveform capture through the SCPI plugin.
+#
+# The default run uses the plugin's in-process SYNTHETIC oscilloscope, so it
+# needs no instrument. Its 1 kHz sine is generated, not measured:
+#
+#   HWLAB_SCPI_FAKE=rigol hwlab run --yes examples/scpi-fake.yaml     # or siglent
+#
+# For a real instrument (UNVALIDATED: the Rigol and Siglent command sets were
+# written from public documentation and never run against hardware):
+#
+#   export HWLAB_SCPI_HOSTS="scope=tcp://192.168.1.50"     # or serial:/dev/ttyUSB0@115200
+#   hwlab devices                                           # scpi/scope
+#   hwlab invoke scpi/scope SCPI.identify
+#
+# and replace `device:` with scope. A capture is acquire-and-export, like
+# Saleae: it never streams. `trigger: single` arms the instrument and waits for
+# a real trigger; `none` reads whatever the instrument currently holds.
+name: scpi-fake
+duration: 4s
+
+devices:
+  scope:
+    plugin: scpi
+    device: fake-rigol
+    channels: [1, 2]
+    trigger: single
+    trigger_timeout_s: 5
+    screenshot: true
+
+steps:
+  - {name: identify, at: 100ms, device: scope, call: SCPI.identify}
+  - {name: vpp,      at: 200ms, device: scope, call: Oscilloscope.measure, args: {item: vpp, channel: 1}}
+
+plots:
+  - name: scope
+    title: Synthetic oscilloscope capture
+    format: svg

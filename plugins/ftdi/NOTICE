@@ -1,0 +1,17 @@
+hwlab FTDI / MPSSE / JTAG backend (plugins/ftdi)
+
+Implemented independently in Go. No third-party source code is included.
+
+References (specifications and hardware facts, not code):
+  * FTDI AN_108 "Command Processor for MPSSE and MCU Host Bus Emulation Modes"
+    and AN_135 "FTDI MPSSE Basics": public protocol documentation.
+  * IEEE 1149.1 TAP state machine (public standard).
+  * OpenOCD tcl/interface/ftdi/sipeed-rv-debugger.cfg (GPL-2.0): only the
+    configuration values (VID:PID 0403:6010, channel 0, layout_init
+    0x0008 0x001b, speed 6000 kHz) were read as hardware facts. No OpenOCD
+    source is copied or linked; OpenOCD is not run by hwlab.
+  * Sipeed RV-Debugger-BL702 firmware (Apache-2.0 headers): consulted as
+    behavioural evidence for the supported MPSSE command subset only.
+
+The Sipeed/BL702 adapter is a profile (plugins/ftdi/profiles); the rest of the
+code is adapter-agnostic.

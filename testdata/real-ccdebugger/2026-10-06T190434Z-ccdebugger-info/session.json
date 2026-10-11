@@ -1,0 +1,25 @@
+{
+  "format_version": 1,
+  "id": "2026-10-06T190434Z-ccdebugger-info",
+  "name": "ccdebugger-info",
+  "status": "complete",
+  "created_at": "2026-10-06T19:04:34.085257177Z",
+  "wall_epoch_unix_ns": 1791313474085257177,
+  "duration_ns": 1578702023,
+  "hwlab_version": "0.1.0-dev",
+  "experiment": "# Real CC-Debugger + CC2530 target, read-only: records the probe and target\n# identification as timed steps. Nothing here erases, programs or resets.\n#\n#   make build \u0026\u0026 ./bin/hwlab run examples/ccdebugger-info.yaml\nname: ccdebugger-info\nduration: 3s\n\ndevices:\n  dbg:\n    plugin: ccdebugger\n\nsteps:\n  - {name: identify, at: 100ms, device: dbg, call: DebugProbe.info}\n  - {name: mac, at: 1500ms, device: dbg, call: DebugProbe.read_mac}\n",
+  "devices": [
+    {
+      "alias": "dbg",
+      "device_id": "90000003",
+      "plugin_id": "ccdebugger",
+      "name": "CC Debugger",
+      "capabilities": [
+        "DebugProbe",
+        "FlashProgramming"
+      ],
+      "clock_offset_ns": 0
+    }
+  ],
+  "captures": []
+}

@@ -1,0 +1,48 @@
+# Two SEGGER J-Link probes in one session, selected by serial number.
+# Serials below are fictional placeholders; replace them with your own.
+# Nothing here writes, erases or programs a target; the halt/resume/reset
+# steps need `--yes`.
+#
+#   probe 90000001 (SAM-ICE)               -> EFR32MG1PxxxF256
+#   probe 900000002 (nRF52840 DK on-board) -> NRF52840_XXAA
+#
+#   HWLAB_JLINK_EXE=~/sdk/jlink/JLink_Linux_V982_x86_64/JLinkExe hwlab run --yes examples/jlink-multiprobe.yaml
+#
+# SEGGER's DLL lets other processes share only ONE probe that a long-running
+# Commander session holds, so RTT runs on the EFR32 probe only (`rtt: false`
+# on the other); calls to both probes work regardless.
+#
+# Replace the serials/targets with your own (`hwlab devices` lists the serials).
+name: jlink-multiprobe
+duration: 16s
+
+devices:
+  efr:
+    plugin: jlink
+    device: "90000001"
+    target: EFR32MG1PxxxF256
+  nrf:
+    plugin: jlink
+    device: "900000002"
+    target: NRF52840_XXAA
+    rtt: false
+
+steps:
+  - {name: efr-info,        at: 4s,    device: efr, call: DebugProbe.info}
+  - {name: nrf-info,        at: 4s,    device: nrf, call: DebugProbe.info}
+  - {name: efr-connect,     at: 5s,    device: efr, call: DebugProbe.connect}
+  - {name: nrf-connect,     at: 5s,    device: nrf, call: DebugProbe.connect}
+  - {name: efr-vectors,     at: 6s,    device: efr, call: MemoryAccess.read, args: {address: "0x0", length: 16}}
+  - {name: nrf-vectors,     at: 6s,    device: nrf, call: MemoryAccess.read, args: {address: "0x0", length: 16}}
+  - {name: efr-devinfo,     at: 7s,    device: efr, call: MemoryAccess.read, args: {address: "0x0FE081F8", length: 8}}
+  - {name: nrf-ficr-part,   at: 7s,    device: nrf, call: MemoryAccess.read, args: {address: "0x10000100", length: 4}}
+  - {name: efr-halt,        at: 8s,    device: efr, call: DebugProbe.halt}
+  - {name: nrf-halt,        at: 8s,    device: nrf, call: DebugProbe.halt}
+  - {name: efr-registers,   at: 9s,    device: efr, call: DebugProbe.read_registers}
+  - {name: nrf-registers,   at: 9s,    device: nrf, call: DebugProbe.read_registers}
+  - {name: efr-resume,      at: 10s,   device: efr, call: DebugProbe.resume}
+  - {name: nrf-resume,      at: 10s,   device: nrf, call: DebugProbe.resume}
+  - {name: efr-reset,       at: 11s,   device: efr, call: DebugProbe.reset}
+  - {name: nrf-reset,       at: 11s,   device: nrf, call: DebugProbe.reset}
+  - {name: efr-reconnect,   at: 12s,   device: efr, call: DebugProbe.connect}
+  - {name: nrf-reconnect,   at: 12s,   device: nrf, call: DebugProbe.connect}
