@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"strconv"
@@ -189,8 +190,7 @@ func (p *Plugin) nativeSession(id string) (*native.Debugger, error) {
 	}
 	d, err := native.New(tr, dc.native)
 	if err != nil {
-		tr.Close()
-		return nil, mapErr(err)
+		return nil, errors.Join(mapErr(err), tr.Close())
 	}
 	p.mu.Lock()
 	p.sess[id] = d
@@ -205,7 +205,9 @@ func (p *Plugin) dropSession(id string) {
 	delete(p.sess, id)
 	p.mu.Unlock()
 	if d != nil {
-		d.Close()
+		if err := d.Close(); err != nil {
+			slog.Warn("close native CC-Debugger session", "err", err)
+		}
 	}
 }
 

@@ -143,12 +143,20 @@ func TestAttachNeedsResetPolicy(t *testing.T) {
 func TestOnlyReviewedResetFormIsEverSent(t *testing.T) {
 	s := newSim()
 	d := mustNew(t, s, cfg(ResetDebugSession, allPerms()))
-	d.AttachReset()
-	d.ResetHalt()
-	d.EnableDMAAfterReset()
-	d.Resume()
+	if _, err := d.AttachReset(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ResetHalt(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.EnableDMAAfterReset(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Resume(); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range s.ctrlWrites {
-		if c.req == 0xC9 && !(c.reqType == 0x40 && c.value == 0 && c.index == 1 && len(c.data) == 0) {
+		if c.req == 0xC9 && (c.reqType != 0x40 || c.value != 0 || c.index != 1 || len(c.data) != 0) {
 			t.Fatalf("unreviewed reset request sent: %+v", c)
 		}
 	}
@@ -200,21 +208,27 @@ func TestEnableDMAThenResume(t *testing.T) {
 }
 
 func TestDMAEligibilityLostByExecutionOrReads(t *testing.T) {
-	for name, op := range map[string]func(*Debugger){
-		"step":   func(d *Debugger) { d.Step() },
-		"resume": func(d *Debugger) { d.Resume() },
+	for name, op := range map[string]func(*Debugger) error{
+		"step":   func(d *Debugger) error { _, err := d.Step(); return err },
+		"resume": func(d *Debugger) error { _, err := d.Resume(); return err },
 	} {
 		s := newSim()
 		d := mustNew(t, s, cfg(ResetDebugSession, allPerms()))
-		d.AttachReset()
-		op(d)
+		if _, err := d.AttachReset(); err != nil {
+			t.Fatal(err)
+		}
+		if err := op(d); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := d.EnableDMAAfterReset(); !errors.Is(err, ErrPolicy) {
 			t.Errorf("%s: DMA enable after execution: %v", name, err)
 		}
 	}
 	s := newSim()
 	d := mustNew(t, s, cfg(ResetDebugSession, allPerms()))
-	d.AttachReset()
+	if _, err := d.AttachReset(); err != nil {
+		t.Fatal(err)
+	}
 	s.config = 0x02 // someone changed the debug configuration
 	if _, err := d.ReadDebugConfig(); err != nil {
 		t.Fatal(err)
@@ -227,7 +241,9 @@ func TestDMAEligibilityLostByExecutionOrReads(t *testing.T) {
 func TestDMAEnableOnlyForNormalResetState(t *testing.T) {
 	s := newSim()
 	d := mustNew(t, s, cfg(ResetDebugSession, allPerms()))
-	d.AttachReset()
+	if _, err := d.AttachReset(); err != nil {
+		t.Fatal(err)
+	}
 	s.config = 0x06
 	if _, err := d.EnableDMAAfterReset(); !errors.Is(err, ErrTransport) {
 		t.Fatalf("unexpected config accepted: %v", err)

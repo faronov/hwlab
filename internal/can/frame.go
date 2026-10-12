@@ -295,7 +295,7 @@ func ParseFilter(s string) (Filter, error) {
 	}
 	id, err := strconv.ParseUint(idStr, 16, 32)
 	if err != nil {
-		return Filter{}, fmt.Errorf("filter %q: bad identifier: %v", s, err)
+		return Filter{}, fmt.Errorf("filter %q: bad identifier: %w", s, err)
 	}
 	f.Extended = len(idStr) == 8
 	f.ID = uint32(id)

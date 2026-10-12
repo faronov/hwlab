@@ -3,6 +3,7 @@ package picoscopeplugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"strings"
 	"time"
@@ -360,7 +361,7 @@ func (d *device) acquire(ctx context.Context, a map[string]any) (map[string]any,
 	defer cancel()
 	blk, err := d.b.Acquire(actx, s.request())
 	if err != nil {
-		if err == backend.ErrNoTrigger {
+		if errors.Is(err, backend.ErrNoTrigger) {
 			return nil, errf(codes.DeadlineExceeded, "%v (source %s, level %g V, %s): check the signal, the level and the slope, or set trigger_auto", err, s.trig.Source, s.trig.LevelV, s.trig.Slope)
 		}
 		return nil, err

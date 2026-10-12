@@ -1,8 +1,6 @@
 package telinkplugin
 
 import (
-	"fmt"
-
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -92,20 +90,4 @@ func (d *device) sramWindow() (lo, hi uint32, err error) {
 		return 0, 0, status.Error(codes.PermissionDenied, "target chip family unknown: SRAM window not known, memory writes are disabled")
 	}
 	return f.SRAMStart, f.SRAMEnd, nil
-}
-
-func describeIdentity(id target.Identity) map[string]any {
-	res := map[string]any{
-		"chip_id":  fmt.Sprintf("0x%04x", id.ChipID),
-		"revision": fmt.Sprintf("0x%02x", id.Revision),
-		"family":   id.Family,
-		"variant":  id.Variant,
-	}
-	if id.FlashJEDEC != 0 {
-		res["flash_jedec"] = fmt.Sprintf("0x%06x", id.FlashJEDEC)
-	}
-	if id.FlashBytes != 0 {
-		res["flash_kib"] = float64(id.FlashBytes >> 10)
-	}
-	return res
 }

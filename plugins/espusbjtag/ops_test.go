@@ -305,7 +305,7 @@ func TestDeviceGoneWhenSerialDoesNotReturn(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 	r.mu.Lock()
-	r.Plugin.list = func() []Entry { return nil }
+	r.list = func() []Entry { return nil }
 	r.mu.Unlock()
 	_, err := r.call("DebugProbe", "chip_info", nil)
 	if err == nil || !IsDeviceGone(err) || !strings.Contains(err.Error(), "did not") {

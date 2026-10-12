@@ -75,6 +75,10 @@ refused and reads continue.
 The instrument supplies no wall time. Event times are the host clock when the
 block was returned plus the block's own time axis (zero at the trigger point),
 and the clock note says the acquisition happened earlier by an unknown latency.
+Pre-trigger samples can have negative session-relative timestamps when this
+estimated time axis extends before the session epoch. Those timestamps are
+preserved, not clamped per chunk: clamping would distort the spacing between
+chunks. The CSV still uses trigger-relative time, with zero at the trigger.
 No accuracy is claimed.
 
 ## Consequences

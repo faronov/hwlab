@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -139,8 +140,11 @@ func (a *App) Doctor(ctx context.Context) DoctorReport {
 		addr = "127.0.0.1:10430"
 	}
 	if c, err := net.DialTimeout("tcp", addr, 500*time.Millisecond); err == nil {
-		c.Close()
-		add("Saleae Logic 2 automation", CheckOK, addr+" reachable")
+		if err := c.Close(); err != nil {
+			add("Saleae Logic 2 automation", CheckWarn, addr+" reachable, but connection cleanup failed: "+err.Error())
+		} else {
+			add("Saleae Logic 2 automation", CheckOK, addr+" reachable")
+		}
 	} else {
 		add("Saleae Logic 2 automation", CheckWarn, addr+" not reachable (Logic 2 not running with automation)")
 	}
@@ -162,8 +166,8 @@ func writable(dir string) error {
 		return err
 	}
 	name := f.Name()
-	f.Close()
-	return os.Remove(name)
+	closeErr := f.Close()
+	return errors.Join(closeErr, os.Remove(name))
 }
 
 func findTool(name, env string, extra ...string) string {
@@ -218,7 +222,10 @@ func ccDebuggerNativeChecks(installed bool) []DoctorCheck {
 			denied = append(denied, node+": "+err.Error())
 			continue
 		}
-		f.Close()
+		if err := f.Close(); err != nil {
+			denied = append(denied, node+": close failed: "+err.Error())
+			continue
+		}
 		found = append(found, node)
 	}
 	switch {
@@ -280,7 +287,10 @@ func ftdiNativeChecks(installed bool, openocd string) []DoctorCheck {
 			checks = append(checks, DoctorCheck{"FTDI/MPSSE: access", CheckWarn, node + " not accessible (add a udev rule, see docs/hardware.md): " + err.Error()})
 			continue
 		}
-		f.Close()
+		if err := f.Close(); err != nil {
+			checks = append(checks, DoctorCheck{"FTDI/MPSSE: access", CheckWarn, node + " close failed: " + err.Error()})
+			continue
+		}
 		checks = append(checks, DoctorCheck{"FTDI/MPSSE: access", CheckOK, node + " opens read-write; only the JTAG interface is claimed, the UART stays with ftdi_sio"})
 	}
 	if found == 0 {
@@ -360,7 +370,10 @@ func espUSBJTAGChecks(installed bool, openocd string) []DoctorCheck {
 			checks = append(checks, DoctorCheck{"ESP USB Serial/JTAG: access", CheckWarn, node + " not accessible (add a udev rule, see docs/hardware.md): " + err.Error()})
 			continue
 		}
-		f.Close()
+		if err := f.Close(); err != nil {
+			checks = append(checks, DoctorCheck{"ESP USB Serial/JTAG: access", CheckWarn, node + " close failed: " + err.Error()})
+			continue
+		}
 		checks = append(checks, DoctorCheck{"ESP USB Serial/JTAG: access", CheckOK, node + " opens read-write; only interface 2 is claimed, cdc_acm keeps the serial port"})
 	}
 	if found == 0 {
@@ -403,7 +416,10 @@ func stlinkChecks(installed bool) []DoctorCheck {
 			checks = append(checks, DoctorCheck{"ST-Link: access", CheckWarn, node + " not accessible (add a udev rule, see docs/hardware.md): " + err.Error()})
 			continue
 		}
-		f.Close()
+		if err := f.Close(); err != nil {
+			checks = append(checks, DoctorCheck{"ST-Link: access", CheckWarn, node + " close failed: " + err.Error()})
+			continue
+		}
 		checks = append(checks, DoctorCheck{"ST-Link: access", CheckOK, node + " opens read-write"})
 	}
 	if found == 0 {
@@ -485,7 +501,10 @@ func cmsisdapChecks(installed bool) []DoctorCheck {
 			checks = append(checks, DoctorCheck{"CMSIS-DAP: access", CheckWarn, node + " not accessible (add a udev rule, see docs/hardware.md): " + err.Error()})
 			continue
 		}
-		f.Close()
+		if err := f.Close(); err != nil {
+			checks = append(checks, DoctorCheck{"CMSIS-DAP: access", CheckWarn, node + " close failed: " + err.Error()})
+			continue
+		}
 		checks = append(checks, DoctorCheck{"CMSIS-DAP: access", CheckOK, node + " opens read-write"})
 	}
 	if found == 0 {
@@ -543,7 +562,10 @@ func jlinkNativeChecks(installed bool) []DoctorCheck {
 			checks = append(checks, DoctorCheck{"J-Link: access", CheckWarn, node + " not accessible (add a udev rule, see docs/hardware.md): " + err.Error()})
 			continue
 		}
-		f.Close()
+		if err := f.Close(); err != nil {
+			checks = append(checks, DoctorCheck{"J-Link: access", CheckWarn, node + " close failed: " + err.Error()})
+			continue
+		}
 		checks = append(checks, DoctorCheck{"J-Link: access", CheckOK, node + " opens read-write"})
 	}
 	if found == 0 {

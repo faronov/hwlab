@@ -90,7 +90,7 @@ func TestEraseProgramVerify(t *testing.T) {
 		t.Fatalf("erases %d programs %d", s.Erases, s.Programs)
 	}
 	// The controller is locked again.
-	cr, _ := s.Sim.Read32(ctx, 0x40023C10)
+	cr, _ := s.Read32(ctx, 0x40023C10)
 	if cr&(1<<31) == 0 {
 		t.Fatal("controller left unlocked")
 	}

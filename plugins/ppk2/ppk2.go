@@ -163,8 +163,7 @@ func (p *Plugin) connect(id string, cfg map[string]any) (*device, error) {
 		}
 		dev, err := newDevice(port, name, cfg)
 		if err != nil {
-			port.Close()
-			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+			errs = append(errs, fmt.Errorf("%s: %w", name, errors.Join(err, port.Close())))
 			continue
 		}
 		return dev, nil
@@ -223,7 +222,7 @@ func (p *Plugin) StartCapture(ctx context.Context, req pluginsdk.CaptureRequest,
 
 // Invoke implements pluginsdk.Plugin. Methods work on an open device, or open
 // the port transiently when the device is not open.
-func (p *Plugin) Invoke(_ context.Context, req *pluginv1.InvokeRequest) (*pluginv1.InvokeResponse, error) {
+func (p *Plugin) Invoke(_ context.Context, req *pluginv1.InvokeRequest) (_ *pluginv1.InvokeResponse, retErr error) {
 	args := req.GetArgs().AsMap()
 	dev, err := p.device(req.GetDeviceId())
 	if err != nil {
@@ -231,7 +230,7 @@ func (p *Plugin) Invoke(_ context.Context, req *pluginv1.InvokeRequest) (*plugin
 		if cerr != nil {
 			return nil, cerr
 		}
-		defer tmp.close()
+		defer func() { retErr = errors.Join(retErr, tmp.close()) }()
 		dev = tmp
 	}
 	res := map[string]any{}

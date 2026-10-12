@@ -83,8 +83,7 @@ func (s *DirStore) Put(a Artifact, r io.Reader) (Artifact, error) {
 		return a, err
 	}
 	if _, err := io.Copy(f, r); err != nil {
-		f.Close()
-		return a, err
+		return a, errors.Join(err, f.Close())
 	}
 	if err := f.Close(); err != nil {
 		return a, err

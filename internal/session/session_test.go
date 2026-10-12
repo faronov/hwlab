@@ -48,7 +48,11 @@ func TestSessionLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	t.Cleanup(func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	evs := r.Timeline().All()
 	if len(evs) != 3 || evs[0].TimestampNs != 100 || evs[2].TimestampNs != 300 {
 		t.Fatalf("events = %+v", evs)
@@ -69,22 +73,39 @@ func TestSessionLifecycle(t *testing.T) {
 
 func TestTornTimelineLineIsTolerated(t *testing.T) {
 	root := t.TempDir()
-	s, _ := Create(root, "torn", "test")
-	s.AppendEvent(timeline.Event{TimestampNs: 1, SourceID: "a", Type: "marker"})
-	s.Flush()
-	s.Close()
+	s, err := Create(root, "torn", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendEvent(timeline.Event{TimestampNs: 1, SourceID: "a", Type: "marker"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
 	// Simulate a crash mid-write: a truncated final JSON line.
 	f, err := os.OpenFile(filepath.Join(s.Dir, "timeline.jsonl"), os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.WriteString(`{"t_ns":2,"source":"a","ty`)
-	f.Close()
+	if _, err := f.WriteString(`{"t_ns":2,"source":"a","ty`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	r, err := Open(s.Dir)
 	if err != nil {
 		t.Fatalf("a torn last line must not make the session unreadable: %v", err)
 	}
-	defer r.Close()
+	t.Cleanup(func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	if n := r.Timeline().Len(); n != 1 {
 		t.Errorf("events = %d, want 1", n)
 	}

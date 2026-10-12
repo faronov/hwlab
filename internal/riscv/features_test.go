@@ -246,7 +246,9 @@ func TestBreakpointSlotExhaustion(t *testing.T) {
 	cfg := fullCfg()
 	cfg.Triggers = 2
 	dm, _ := setup(t, cfg)
-	dm.Halt(ctx)
+	if _, err := dm.Halt(ctx); err != nil {
+		t.Fatal(err)
+	}
 	var bps []riscv.Breakpoint
 	for i := 0; i < 2; i++ {
 		bp, err := dm.SetBreakpoint(ctx, codeBase+uint32(2*i))
@@ -272,7 +274,9 @@ func TestNoTriggerModule(t *testing.T) {
 	cfg := fullCfg()
 	cfg.Triggers = -1
 	dm, _ := setup(t, cfg)
-	dm.Halt(ctx)
+	if _, err := dm.Halt(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := dm.Triggers(ctx); !errors.Is(err, riscv.ErrTrigger) {
 		t.Fatalf("%v", err)
 	}
@@ -379,7 +383,9 @@ func TestResetKinds(t *testing.T) {
 
 func TestPipelineMatchesSerial(t *testing.T) {
 	dm, _ := setup(t, fullCfg())
-	dm.Halt(ctx)
+	if _, err := dm.Halt(ctx); err != nil {
+		t.Fatal(err)
+	}
 	regs := []riscv.RegNum{riscv.GPR(1), riscv.GPR(2), riscv.CSRMISA, riscv.CSRDPC, riscv.CSRDCSR}
 	got, err := dm.ReadRegs(ctx, regs)
 	if err != nil {
@@ -437,7 +443,9 @@ func TestBatchedPortAndRoundTrips(t *testing.T) {
 	if n := bp.Calls - before; n != 1 {
 		t.Fatalf("%d batches for a 256 B read", n)
 	}
-	dm.Halt(ctx)
+	if _, err := dm.Halt(ctx); err != nil {
+		t.Fatal(err)
+	}
 	before = bp.Calls
 	if _, err := dm.ReadRegs(ctx, []riscv.RegNum{riscv.GPR(1), riscv.GPR(2), riscv.GPR(3)}); err != nil {
 		t.Fatal(err)

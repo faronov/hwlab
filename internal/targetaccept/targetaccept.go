@@ -214,8 +214,11 @@ func (r *runner) read(addr uint32, n int) ([]byte, error) {
 		}
 		h, _ := res["hex"].(string)
 		b, err := hex.DecodeString(h)
-		if err != nil || len(b) != c {
-			return nil, fmt.Errorf("read 0x%08x+%d: got %d bytes (%v)", addr, c, len(b), err)
+		if err != nil {
+			return nil, fmt.Errorf("read 0x%08x+%d: got %d bytes (%w)", addr, c, len(b), err)
+		}
+		if len(b) != c {
+			return nil, fmt.Errorf("read 0x%08x+%d: got %d bytes", addr, c, len(b))
 		}
 		out = append(out, b...)
 		addr += uint32(c)
@@ -570,12 +573,12 @@ func (r *runner) stepping() {
 			cont++
 		}
 		prev, havePrev = after, true
-		switch d := int64(after) - int64(first); {
-		case d == 2:
+		switch int64(after) - int64(first) {
+		case 2:
 			deltas["+2"]++
-		case d == 4:
+		case 4:
 			deltas["+4"]++
-		case d == 0:
+		case 0:
 			deltas["same"]++
 		default:
 			deltas["branch"]++

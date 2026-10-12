@@ -4,6 +4,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -39,7 +40,9 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 	root := NewRoot(stdout, stderr)
 	root.SetArgs(args)
 	if err := root.ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(stderr, "hwlab:", err)
+		if _, writeErr := fmt.Fprintln(stderr, "hwlab:", err); writeErr != nil {
+			return 1 // The command already failed; stderr cannot report another error.
+		}
 		return 1
 	}
 	return 0
@@ -69,7 +72,9 @@ func NewRoot(stdout, stderr io.Writer) *cobra.Command {
 			return nil
 		}
 		if g.home != "" {
-			os.Setenv("HWLAB_HOME", g.home)
+			if err := os.Setenv("HWLAB_HOME", g.home); err != nil {
+				return fmt.Errorf("set HWLAB_HOME: %w", err)
+			}
 		}
 		cfg, err := config.Load()
 		if err != nil {
@@ -113,6 +118,34 @@ func (g *globals) printJSON(v any) error {
 }
 
 func (g *globals) table() *tabwriter.Writer { return tabwriter.NewWriter(g.out, 0, 4, 2, ' ', 0) }
+
+// printer retains the first output failure and attaches it to the command's
+// result. Subsequent writes stop after a broken pipe or other output error.
+type printer struct{ err error }
+
+func (p *printer) printf(w io.Writer, format string, args ...any) {
+	if p.err == nil {
+		_, p.err = fmt.Fprintf(w, format, args...)
+	}
+}
+
+func (p *printer) println(w io.Writer, args ...any) {
+	if p.err == nil {
+		_, p.err = fmt.Fprintln(w, args...)
+	}
+}
+
+func (p *printer) print(w io.Writer, args ...any) {
+	if p.err == nil {
+		_, p.err = fmt.Fprint(w, args...)
+	}
+}
+
+func (p *printer) finish(err *error) {
+	if p.err != nil {
+		*err = errors.Join(*err, p.err)
+	}
+}
 
 func orDash(s string) string {
 	if s == "" {

@@ -72,7 +72,6 @@ type Sim struct {
 	cmds       []byte
 	seqs       int
 	linkResets int
-	resetPulse int
 }
 
 // New returns a simulator with a Cortex-M4 target at 3.3 V.
@@ -285,7 +284,7 @@ func (s *Sim) sequence(cmd []byte) ([]byte, error) {
 		reg := r[3]<<2 | r[4]<<3
 		ack := s.gate(ap, rd, reg)
 		for i := 0; i < 3; i++ { // ACK occupies cycles c+9..c+11
-			tout[c+9+i] = byte(ack>>i) & 1
+			tout[c+9+i] = (ack >> i) & 1
 		}
 		consumed := 8
 		if ack == 0b001 {

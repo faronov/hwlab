@@ -15,6 +15,7 @@ import (
 
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
+	"github.com/faronov/hwlab/plugins/picoscope/backend"
 )
 
 func fakePlugin(t *testing.T) *Plugin {
@@ -420,6 +421,54 @@ func TestCaptureEventsAndArtifact(t *testing.T) {
 		if open {
 			must(t, p, "measure", map[string]any{"channel": "B"})
 		}
+	}
+}
+
+func TestCaptureChunkTimestampsPreservePreTriggerSpacing(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		ref       int64
+		triggered bool
+	}{
+		{"pretrigger before session epoch", 1_000_000, true},
+		{"pretrigger after session epoch", 100_000_000, true},
+		{"untriggered", 1_000_000, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const frames = 120_000
+			const trigger = 60_000
+			const period = int64(1000)
+			acq := &acquisition{blk: &backend.Block{
+				SampleIntervalS: 1e-6, Samples: frames,
+				Triggered: tc.triggered, TriggerIndex: trigger,
+				Channels: []backend.ChannelData{{Name: "A", ADC: make([]int16, frames), MaxADC: 32767, RangeV: 5}},
+			}}
+			sink := pluginsdk.NewTestSink(3)
+			c := &capture{sink: sink}
+			if err := c.emit(context.Background(), acq, tc.ref); err != nil {
+				t.Fatal(err)
+			}
+			evs := sink.Drain()
+			if len(evs) != 3 || c.samples != frames || c.events != 3 {
+				t.Fatalf("events=%d stats=%d/%d", len(evs), c.samples, c.events)
+			}
+			first := tc.ref
+			if tc.triggered {
+				first -= trigger * period
+			}
+			var seen int
+			for i, ev := range evs {
+				want := first + int64(seen)*period
+				if ev.TimestampNs != want || ev.GetAnalog().SamplePeriodNs != period {
+					t.Errorf("chunk %d: timestamp=%d period=%d, want %d/%d",
+						i, ev.TimestampNs, ev.GetAnalog().SamplePeriodNs, want, period)
+				}
+				seen += len(ev.GetAnalog().Samples)
+			}
+			if seen != frames {
+				t.Errorf("sample count=%d, want %d", seen, frames)
+			}
+		})
 	}
 }
 

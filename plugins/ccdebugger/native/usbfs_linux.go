@@ -62,7 +62,7 @@ type usbfsTransport struct {
 // Open opens the CC-Debugger at addr through usbfs and claims interface 0. It
 // verifies the device identity and that configuration 1 is already active; it
 // never changes the configuration or detaches a kernel driver.
-func Open(addr Address) (Transport, error) {
+func Open(addr Address) (_ Transport, openErr error) {
 	if !addr.Valid() {
 		return nil, invalidf("invalid USB address %d:%d", addr.Bus, addr.Address)
 	}
@@ -77,7 +77,9 @@ func Open(addr Address) (Transport, error) {
 	ok := false
 	defer func() {
 		if !ok {
-			t.Close()
+			if err := t.Close(); err != nil {
+				openErr = errors.Join(openErr, fmt.Errorf("close USB transport after failed open: %w", err))
+			}
 		}
 	}()
 	// Reading the usbfs node returns the device descriptor first.
@@ -206,12 +208,15 @@ func (t *usbfsTransport) Close() error {
 	if t.f == nil {
 		return nil
 	}
+	var releaseErr error
 	if t.claimed {
 		iface := uint32(0)
-		t.ioctl(ioctlRelease, unsafe.Pointer(&iface))
+		if err := t.ioctl(ioctlRelease, unsafe.Pointer(&iface)); err != nil {
+			releaseErr = fmt.Errorf("release USB interface: %w", err)
+		}
 		t.claimed = false
 	}
 	err := t.f.Close()
 	t.f = nil
-	return err
+	return errors.Join(releaseErr, err)
 }

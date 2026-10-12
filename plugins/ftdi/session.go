@@ -18,16 +18,13 @@ import (
 
 // options are the device-level settings.
 type options struct {
-	profile      string // "" selects automatically
-	iface        int    // -1 selects the profile's JTAG interface
-	clockHz      uint32 // 0 selects the profile's nominal clock
-	detach       bool
-	latencyMs    int
-	timeout      time.Duration
-	maxDevices   int
-	irLengths    []int
-	measureIR    bool
-	measureIRSet bool
+	profile    string // "" selects automatically
+	iface      int    // -1 selects the profile's JTAG interface
+	clockHz    uint32 // 0 selects the profile's nominal clock
+	detach     bool
+	latencyMs  int
+	timeout    time.Duration
+	maxDevices int
 }
 
 func defaultOptions() options {
@@ -203,7 +200,7 @@ func (s *session) configureClockAndPins(ctx context.Context) error {
 	if !s.prof.Quirks.FixedClock {
 		div, a, err := mpsse.Divisor(chipInfo.BaseClockHz, req)
 		if err != nil {
-			return fmt.Errorf("%w: %v", errInvalid, err)
+			return fmt.Errorf("%w: %w", errInvalid, err)
 		}
 		actual = a
 		b.SetDivisor(div)

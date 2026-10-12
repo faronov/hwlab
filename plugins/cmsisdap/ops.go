@@ -18,10 +18,8 @@ import (
 
 func (d *device) info() (map[string]any, error) {
 	i := d.probe.Info()
-	caps := i.Caps
-	if c, err := d.probe.Caps(); err == nil {
-		caps = c // a fresh DAP_Info round trip, not the cached open-time copy
-	} else {
+	caps, err := d.probe.Caps() // A fresh DAP_Info round trip, not the cached open-time copy.
+	if err != nil {
 		return nil, err
 	}
 	capMap := toMap(caps)

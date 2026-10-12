@@ -3,6 +3,7 @@ package picoscopeplugin
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -162,9 +163,6 @@ func (c *capture) emit(ctx context.Context, acq *acquisition, ref int64) error {
 			}
 		}
 		first := ref + (int64(off)-trig)*periodNs
-		if first < 0 {
-			first = 0
-		}
 		ev := &pluginv1.Event{TimestampNs: first, StreamId: StreamAnalog,
 			Payload: &pluginv1.Event_Analog{Analog: &pluginv1.AnalogBatch{SamplePeriodNs: periodNs, Channels: names, Unit: "V", Samples: buf}}}
 		ectx, cancel := context.WithTimeout(ctx, emitTimeout)
@@ -193,7 +191,7 @@ func (c *capture) csv(acq *acquisition) error {
 	for _, n := range acq.channelNames() {
 		hdr += "," + n
 	}
-	_, _ = w.WriteString(hdr + "\n")
+	_, err = w.WriteString(hdr + "\n")
 	vols := make([][]float32, len(blk.Channels))
 	for i, ch := range blk.Channels {
 		vols[i] = ch.Volts()
@@ -203,21 +201,20 @@ func (c *capture) csv(acq *acquisition) error {
 		trig = blk.TriggerIndex
 	}
 	var line []byte
-	for i := 0; i < blk.Samples; i++ {
+	for i := 0; err == nil && i < blk.Samples; i++ {
 		line = strconv.AppendFloat(line[:0], float64(i-trig)*blk.SampleIntervalS, 'g', 10, 64)
 		for _, v := range vols {
 			line = append(line, ',')
 			line = strconv.AppendFloat(line, float64(v[i]), 'g', 7, 32)
 		}
 		line = append(line, '\n')
-		_, _ = w.Write(line)
+		_, err = w.Write(line)
 	}
-	if err := w.Flush(); err != nil {
-		_ = f.Close()
-		return err
+	if err == nil {
+		err = w.Flush()
 	}
-	if err := f.Close(); err != nil {
-		return err
+	if err = errors.Join(err, f.Close()); err != nil {
+		return fmt.Errorf("write waveform.csv: %w", err)
 	}
 	meta := map[string]string{"samples": fmt.Sprint(blk.Samples), "dt_s": fmt.Sprint(blk.SampleIntervalS), "channels": fmt.Sprint(acq.channelNames()),
 		"triggered": fmt.Sprint(blk.Triggered), "unit": "V", "time_zero": "trigger point (first sample when untriggered)"}

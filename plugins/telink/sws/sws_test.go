@@ -382,7 +382,7 @@ func TestCancelStopsFlashReadAtBlockBoundary(t *testing.T) {
 	if len(s.FlashOps) != n {
 		t.Fatal("a cancelled call must not reach the programmer")
 	}
-	p.SetContext(nil)
+	p.SetContext(context.Background())
 	if _, err := p.FlashRead(0, 64); err != nil {
 		t.Fatalf("works again once the context is cleared: %v", err)
 	}

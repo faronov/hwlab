@@ -449,7 +449,7 @@ func (d *device) observedReset(ctx context.Context, halt bool, drive func() erro
 		time.Sleep(10 * time.Millisecond)
 	}
 	obs["reset_seen"], obs["debug_enable_lost"], obs["core_registers_changed"] = seen, lost, gone
-	if !seen && !lost && !gone && !(halt && after.Halted) {
+	if !seen && !lost && !gone && (!halt || !after.Halted) {
 		restore()
 		return obs, status.Error(codes.FailedPrecondition, UnsupportedByHW+": the probe drove nRESET but no reset was observed on the target (S_RESET_ST stayed clear, debug stayed enabled, CPUID unchanged): the nRESET line is probably not connected to the target. This reset is NOT claimed")
 	}

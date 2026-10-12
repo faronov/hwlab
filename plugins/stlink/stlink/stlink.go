@@ -544,7 +544,7 @@ func (c *Conn) Connect(ctx context.Context, cfg ConnectConfig) (ConnectInfo, err
 		var se *StatusError
 		if errors.As(err, &se) && (se.Code == StatusIDCodeErr || se.Code == StatusUnknownChain) {
 			c.recover(ctx)
-			return info, fmt.Errorf("%w: %v (check SWDIO, SWCLK, GND and target power)", ErrNoTarget, err)
+			return info, fmt.Errorf("%w: %w (check SWDIO, SWCLK, GND and target power)", ErrNoTarget, err)
 		}
 		_ = r
 		return info, err

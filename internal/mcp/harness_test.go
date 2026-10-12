@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -39,7 +38,7 @@ func goBin() string {
 	if p, err := exec.LookPath("go"); err == nil {
 		return p
 	}
-	return filepath.Join(runtime.GOROOT(), "bin", "go")
+	return "go" // Let exec report a missing tool instead of relying on the build-time GOROOT.
 }
 
 // binDir returns a directory holding bin/hwlab and the named plugins.

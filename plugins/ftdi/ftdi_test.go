@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/faronov/hwlab/internal/testutil"
 	"github.com/faronov/hwlab/internal/usb"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
@@ -161,7 +162,7 @@ func TestScanStableAcrossRepeats(t *testing.T) {
 	if err := r.OpenDevice(ctx, r.id(t), nil); err != nil {
 		t.Fatal(err)
 	}
-	defer r.CloseDevice(ctx, r.id(t))
+	defer func() { testutil.CheckError(t, r.CloseDevice(ctx, r.id(t))) }()
 	first := r.must(t, "JTAGScan", "scan", nil)
 	for i := 0; i < 4; i++ {
 		again := r.must(t, "JTAGScan", "scan", nil)
@@ -302,7 +303,7 @@ func TestSettingsCannotChangeWhileOpen(t *testing.T) {
 	if err := r.OpenDevice(ctx, r.id(t), nil); err != nil {
 		t.Fatal(err)
 	}
-	defer r.CloseDevice(ctx, r.id(t))
+	defer func() { testutil.CheckError(t, r.CloseDevice(ctx, r.id(t))) }()
 	if _, err := r.call(t, "JTAGScan", "scan", map[string]any{"clock_hz": 1000000}); status.Code(err) != codes.InvalidArgument {
 		t.Errorf("%v", err)
 	}

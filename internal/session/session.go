@@ -271,7 +271,6 @@ func readEvents(path string) ([]timeline.Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 	var out []timeline.Event
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
@@ -282,7 +281,7 @@ func readEvents(path string) ([]timeline.Event, error) {
 		}
 		out = append(out, e)
 	}
-	return out, sc.Err()
+	return out, errors.Join(sc.Err(), f.Close())
 }
 
 // ID returns the session id.

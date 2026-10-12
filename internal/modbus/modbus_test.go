@@ -271,7 +271,16 @@ func newRTUPair(t *testing.T, s *Slave) (*Client, *RTU) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { s.ServeRTU(ctx, sl); close(done) }()
-	t.Cleanup(func() { cancel(); m.Close(); sl.Close(); <-done })
+	t.Cleanup(func() {
+		cancel()
+		if err := m.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := sl.Close(); err != nil {
+			t.Error(err)
+		}
+		<-done
+	})
 	tr := NewRTU(m, 115200, "link")
 	tr.Timeout = 300 * time.Millisecond
 	return &Client{T: tr}, tr
@@ -404,7 +413,9 @@ func TestRTUSilenceAndSerialErrors(t *testing.T) {
 		t.Error("high baud silence is the fixed 1.75 ms")
 	}
 	m, sl := NewLink()
-	sl.Close()
+	if err := sl.Close(); err != nil {
+		t.Fatal(err)
+	}
 	tr := NewRTU(m, 9600, "dead")
 	if _, err := tr.RoundTrip(context.Background(), 1, mustHex(t, "0300000001")); err == nil {
 		t.Error("writing to a closed link succeeded")
@@ -417,13 +428,21 @@ func TestTCPClientAgainstSlave(t *testing.T) {
 	if err != nil {
 		t.Skip("no loopback networking:", err)
 	}
-	defer l.Close()
+	t.Cleanup(func() {
+		if err := l.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	go s.ServeTCP(l)
 	tr, err := DialTCP(l.Addr().String(), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tr.Close()
+	t.Cleanup(func() {
+		if err := tr.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	exercise(t, &Client{T: tr}, s)
 
 	res, err := (&Client{T: tr}).Do(context.Background(), &Request{Unit: 1, Function: FCReadHoldingRegisters, Address: 63, Quantity: 2})
@@ -451,7 +470,11 @@ func TestTCPTimeoutAndClosedPeer(t *testing.T) {
 	if err != nil {
 		t.Skip("no loopback networking:", err)
 	}
-	defer l.Close()
+	t.Cleanup(func() {
+		if err := l.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	conns := make(chan net.Conn, 1)
 	go func() {
 		c, _ := l.Accept()
@@ -461,12 +484,18 @@ func TestTCPTimeoutAndClosedPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tr.Close()
+	t.Cleanup(func() {
+		if err := tr.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	c := &Client{T: tr}
 	if _, err := c.Do(context.Background(), &Request{Unit: 1, Function: FCReadCoils, Quantity: 1}); !errors.Is(err, ErrTimeout) {
 		t.Errorf("silent slave: %v", err)
 	}
-	(<-conns).Close()
+	if err := (<-conns).Close(); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := c.Do(context.Background(), &Request{Unit: 1, Function: FCReadCoils, Quantity: 1}); err == nil || errors.Is(err, ErrTimeout) {
 		t.Errorf("closed peer: %v", err)
 	}

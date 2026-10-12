@@ -47,20 +47,23 @@ func call(t *testing.T, cs *sdk.ClientSession, name string, args map[string]any)
 	}
 	var out map[string]any
 	if res.StructuredContent != nil {
-		b, _ := json.Marshal(res.StructuredContent)
-		_ = json.Unmarshal(b, &out)
+		b, err := json.Marshal(res.StructuredContent)
+		if err != nil {
+			t.Fatalf("%s: encode structured result: %v", name, err)
+		}
+		if err := json.Unmarshal(b, &out); err != nil {
+			t.Fatalf("%s: decode structured result: %v", name, err)
+		}
 	}
 	return res, out
 }
 
 func fakeDevices() []any {
-	rt := map[string]any{"realtime": false}
 	mk := func(alias, dev string, extra map[string]any) map[string]any {
 		cfg := map[string]any{"realtime": false}
 		for k, v := range extra {
 			cfg[k] = v
 		}
-		_ = rt
 		return map[string]any{"alias": alias, "plugin": "fake", "device": dev, "config": cfg}
 	}
 	return []any{
@@ -102,6 +105,36 @@ func TestCaptureWorkflow(t *testing.T) {
 	sid, _ := start["session_id"].(string)
 	if sid == "" {
 		t.Fatalf("no session id: %v", start)
+	}
+
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		res, packets := call(t, cs, "timeline_query", map[string]any{"session": sid, "types": []string{"packet"}, "limit": 1})
+		if res.IsError {
+			t.Fatalf("live timeline_query failed: %+v", res.Content)
+		}
+		res, progress := call(t, cs, "capture_status", nil)
+		if res.IsError {
+			t.Fatalf("capture_status failed: %+v", res.Content)
+		}
+		haveSamples := false
+		for _, v := range progress["captures"].([]any) {
+			c := v.(map[string]any)
+			if c["session_id"] == sid && c["samples"].(float64) > 0 {
+				haveSamples = true
+			}
+		}
+		if evs, _ := packets["events"].([]any); len(evs) > 0 && haveSamples {
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("capture produced no packet/power data: packets=%v progress=%v", packets, progress)
+		case <-poll.C:
+		}
 	}
 
 	res, _ = call(t, cs, "capture_stop", map[string]any{"session": sid})

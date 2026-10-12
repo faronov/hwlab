@@ -194,8 +194,11 @@ func (p *Plugin) OpenDevice(_ context.Context, id string, cfg map[string]any) er
 		if running {
 			return status.Errorf(codes.FailedPrecondition, "%s has a running capture", id)
 		}
-		old.port.Close()
+		closeErr := old.port.Close()
 		delete(p.devs, id)
+		if closeErr != nil {
+			return openErr(path, fmt.Errorf("close previous serial port: %w", closeErr))
+		}
 	}
 	port, err := p.open(path, mode)
 	if err != nil {
@@ -272,7 +275,13 @@ func (p *Plugin) StartCapture(ctx context.Context, req pluginsdk.CaptureRequest,
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		c.dev, c.port, c.path, c.mode = d, port, path, mode
-		c.closePort = func() { port.Close() }
+		c.closePort = func() {
+			if err := port.Close(); err != nil {
+				c.mu.Lock()
+				c.err = errors.Join(c.err, fmt.Errorf("close capture serial port: %w", err))
+				c.mu.Unlock()
+			}
+		}
 	}
 	if flush {
 		_ = c.port.ResetInput()
@@ -382,9 +391,9 @@ func (p *Plugin) configure(id string, args map[string]any) (map[string]any, erro
 }
 
 // transient opens the port for one call when the device is not open.
-func (p *Plugin) transient(id string, args map[string]any) (*device, func(), error) {
+func (p *Plugin) transient(id string, args map[string]any) (*device, func() error, error) {
 	if d := p.device(id); d != nil {
-		return d, func() {}, nil
+		return d, func() error { return nil }, nil
 	}
 	mode, err := parseMode(Mode{}, args)
 	if err != nil {
@@ -398,7 +407,7 @@ func (p *Plugin) transient(id string, args map[string]any) (*device, func(), err
 	if err != nil {
 		return nil, nil, openErr(path, err)
 	}
-	return &device{id: id, path: path, port: port, mode: mode}, func() { port.Close() }, nil
+	return &device{id: id, path: path, port: port, mode: mode}, port.Close, nil
 }
 
 func intArg(args map[string]any, key string, def, min, max int) (int, error) {
@@ -413,7 +422,7 @@ func intArg(args map[string]any, key string, def, min, max int) (int, error) {
 	return n, nil
 }
 
-func (p *Plugin) read(ctx context.Context, id string, args map[string]any) (map[string]any, []byte, error) {
+func (p *Plugin) read(ctx context.Context, id string, args map[string]any) (_ map[string]any, _ []byte, retErr error) {
 	maxBytes, err := intArg(args, "max_bytes", 256, 1, maxReadBytes)
 	if err != nil {
 		return nil, nil, err
@@ -430,7 +439,7 @@ func (p *Plugin) read(ctx context.Context, id string, args map[string]any) (map[
 	if err != nil {
 		return nil, nil, err
 	}
-	defer release()
+	defer func() { retErr = errors.Join(retErr, release()) }()
 	d.mu.Lock()
 	capturing := d.cap != nil
 	port := d.port
@@ -491,7 +500,7 @@ func decodeWrite(args map[string]any, binary []byte) ([]byte, error) {
 		s, _ := v.(string)
 		b, err := hex.DecodeString(strings.Join(strings.Fields(s), ""))
 		if err != nil {
-			return nil, argErr(fmt.Errorf("hex: %v", err))
+			return nil, argErr(fmt.Errorf("hex: %w", err))
 		}
 		data = b
 	}
@@ -519,7 +528,7 @@ func decodeWrite(args map[string]any, binary []byte) ([]byte, error) {
 	return data, nil
 }
 
-func (p *Plugin) write(id string, args map[string]any, binary []byte) (map[string]any, error) {
+func (p *Plugin) write(id string, args map[string]any, binary []byte) (_ map[string]any, retErr error) {
 	data, err := decodeWrite(args, binary)
 	if err != nil {
 		return nil, err
@@ -528,7 +537,7 @@ func (p *Plugin) write(id string, args map[string]any, binary []byte) (map[strin
 	if err != nil {
 		return nil, err
 	}
-	defer release()
+	defer func() { retErr = errors.Join(retErr, release()) }()
 	d.wmu.Lock()
 	defer d.wmu.Unlock()
 	d.mu.Lock()

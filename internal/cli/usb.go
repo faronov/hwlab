@@ -27,7 +27,9 @@ Latencies are differences of kernel URB timestamps, not bus times.`,
 		Example: `  hwlab usb analyze latest
   hwlab usb analyze latest --device 1:5 --errors`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			q := app.USBQuery{Session: args[0], Source: source, Device: device, OnlyErrors: onlyErrors, Limit: limit}
 			var err error
 			if from != "" {
@@ -49,34 +51,34 @@ Latencies are differences of kernel URB timestamps, not bus times.`,
 			}
 			for _, s := range rep.Streams {
 				st := s.Stats
-				fmt.Fprintf(g.out, "source %s: %d packets, %d transactions (%d errors, %d unpaired completions, %d still pending), %d bytes over %s\n",
+				out.printf(g.out, "source %s: %d packets, %d transactions (%d errors, %d unpaired completions, %d still pending), %d bytes over %s\n",
 					s.Source, st.Packets, st.Transactions, st.Errors, st.UnpairedComplete, st.StillPending, st.Bytes, timeline.FormatNs(st.DurationNs))
 				for _, d := range s.Devices {
 					id := ""
 					if d.VID != "" {
 						id = fmt.Sprintf(" %s:%s", d.VID, d.PID)
 					}
-					fmt.Fprintf(g.out, "  device %s%s  %d URBs, %d errors  %v\n", d.Device, id, d.URBs, d.Errors, d.Interfaces)
+					out.printf(g.out, "  device %s%s  %d URBs, %d errors  %v\n", d.Device, id, d.URBs, d.Errors, d.Interfaces)
 				}
 				for _, e := range s.Endpoints {
-					fmt.Fprintf(g.out, "  %-4s %-7s %-11s %-12s %5d URBs %7d bytes %3d errors  latency mean %.0f µs max %.0f µs\n",
+					out.printf(g.out, "  %-4s %-7s %-11s %-12s %5d URBs %7d bytes %3d errors  latency mean %.0f µs max %.0f µs\n",
 						e.Device, e.Endpoint, e.Transfer, e.Class, e.URBs, e.Bytes, e.Errors, e.MeanLatUs, e.MaxLatUs)
 				}
 				for _, ec := range s.ErrorCounts {
-					fmt.Fprintf(g.out, "  error %s: %d\n", ec.Name, ec.Count)
+					out.printf(g.out, "  error %s: %d\n", ec.Name, ec.Count)
 				}
 				for _, t := range s.Transactions {
 					extra := t.Detail
 					if extra != "" {
 						extra = "  " + extra
 					}
-					fmt.Fprintf(g.out, "  %s  %-4s %-7s %-34s%s\n", timeline.FormatNs(t.StartNs), t.Device, t.Endpoint, t.Name, extra)
+					out.printf(g.out, "  %s  %-4s %-7s %-34s%s\n", timeline.FormatNs(t.StartNs), t.Device, t.Endpoint, t.Name, extra)
 				}
 				if s.Truncated {
-					fmt.Fprintf(g.out, "  ... %d of %d transactions listed; raise --limit\n", len(s.Transactions), s.Matching)
+					out.printf(g.out, "  ... %d of %d transactions listed; raise --limit\n", len(s.Transactions), s.Matching)
 				}
 			}
-			fmt.Fprintln(g.out, rep.Note)
+			out.println(g.out, rep.Note)
 			return nil
 		},
 	}

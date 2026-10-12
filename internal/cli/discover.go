@@ -23,20 +23,22 @@ says how far it has been exercised (untested, synthetic, replay,
 real-hardware-partial, real-hardware). Code and passing tests are not hardware
 validation. Use --details for what is verified, unverified and known gaps.`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			ps := g.app.ListPlugins(cmd.Context())
 			if g.json {
 				return g.printJSON(ps)
 			}
 			if len(ps) == 0 {
-				fmt.Fprintf(g.out, "no plugins found; searched: %s\n", strings.Join(g.app.Plugins.SearchPaths(), ", "))
+				out.printf(g.out, "no plugins found; searched: %s\n", strings.Join(g.app.Plugins.SearchPaths(), ", "))
 				return nil
 			}
 			w := g.table()
-			fmt.Fprintln(w, "ID\tVERSION\tIMPL\tVALIDATION\tDEPENDENCY\tMISSING BACKENDS\tCAPABILITIES\tPATH")
+			out.println(w, "ID\tVERSION\tIMPL\tVALIDATION\tDEPENDENCY\tMISSING BACKENDS\tCAPABILITIES\tPATH")
 			for _, p := range ps {
 				if p.Error != "" {
-					fmt.Fprintf(w, "%s\t-\t-\t-\t-\t-\tERROR: %s\t%s\n", p.ID, p.Error, p.Path)
+					out.printf(w, "%s\t-\t-\t-\t-\t-\tERROR: %s\t%s\n", p.ID, p.Error, p.Path)
 					continue
 				}
 				impl, val, dep, miss := "unclassified", "unknown", "-", "-"
@@ -44,7 +46,7 @@ validation. Use --details for what is verified, unverified and known gaps.`,
 					impl, val, dep = string(p.Support.Implementation), string(p.Support.Validation), string(p.Support.Dependency)
 					miss = orDash(strings.Join(p.Support.Missing, "; "))
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", p.ID, orDash(p.Version), impl, val, dep, miss, join(p.Capabilities), orDash(p.Path))
+				out.printf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", p.ID, orDash(p.Version), impl, val, dep, miss, join(p.Capabilities), orDash(p.Path))
 			}
 			if err := w.Flush(); err != nil {
 				return err
@@ -54,22 +56,22 @@ validation. Use --details for what is verified, unverified and known gaps.`,
 					if p.Support == nil {
 						continue
 					}
-					fmt.Fprintf(g.out, "\n%s\n", p.ID)
+					out.printf(g.out, "\n%s\n", p.ID)
 					for _, b := range p.Support.Backends {
-						fmt.Fprintf(g.out, "  backend: %s\n    implementation: %s\n    validation: %s\n    dependency: %s", b.Name, b.Implementation, b.Validation, b.Dependency)
+						out.printf(g.out, "  backend: %s\n    implementation: %s\n    validation: %s\n    dependency: %s", b.Name, b.Implementation, b.Validation, b.Dependency)
 						if b.Dependencies != "" {
-							fmt.Fprintf(g.out, " (%s)", b.Dependencies)
+							out.printf(g.out, " (%s)", b.Dependencies)
 						}
-						fmt.Fprintf(g.out, "\n    cgo: %s\n", b.Cgo)
+						out.printf(g.out, "\n    cgo: %s\n", b.Cgo)
 						for _, l := range []struct {
 							label string
 							items []string
 						}{{"verified", b.Verified}, {"unverified", b.Unverified}, {"known gaps", b.Gaps}} {
 							for i, it := range l.items {
 								if i == 0 {
-									fmt.Fprintf(g.out, "    %s:\n", l.label)
+									out.printf(g.out, "    %s:\n", l.label)
 								}
-								fmt.Fprintf(g.out, "      - %s\n", it)
+								out.printf(g.out, "      - %s\n", it)
 							}
 						}
 					}
@@ -91,7 +93,9 @@ J-Link, cc-tool), the Saleae Logic 2 automation endpoint and usbmon access, and
 list every plugin with its implementation and validation status. A missing
 optional tool is a warning; the command fails only on hard errors.`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			r := g.app.Doctor(cmd.Context())
 			if g.json {
 				if err := g.printJSON(r); err != nil {
@@ -99,27 +103,27 @@ optional tool is a warning; the command fails only on hard errors.`,
 				}
 			} else {
 				w := g.table()
-				fmt.Fprintln(w, "CHECK\tRESULT\tDETAIL")
+				out.println(w, "CHECK\tRESULT\tDETAIL")
 				for _, c := range r.Checks {
-					fmt.Fprintf(w, "%s\t%s\t%s\n", c.Name, c.Level, c.Detail)
+					out.printf(w, "%s\t%s\t%s\n", c.Name, c.Level, c.Detail)
 				}
 				if err := w.Flush(); err != nil {
 					return err
 				}
-				fmt.Fprintln(g.out)
+				out.println(g.out)
 				w = g.table()
-				fmt.Fprintln(w, "PLUGIN\tINSTALLED\tIMPL\tVALIDATION\tDEPENDENCY\tMISSING BACKENDS")
+				out.println(w, "PLUGIN\tINSTALLED\tIMPL\tVALIDATION\tDEPENDENCY\tMISSING BACKENDS")
 				for _, p := range r.Plugins {
 					inst := "yes"
 					if !p.Installed {
 						inst = "no"
 					}
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", p.ID, inst, orDash(string(p.Implementation)), orDash(string(p.Validation)), orDash(string(p.Dependency)), orDash(strings.Join(p.Missing, "; ")))
+					out.printf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", p.ID, inst, orDash(string(p.Implementation)), orDash(string(p.Validation)), orDash(string(p.Dependency)), orDash(strings.Join(p.Missing, "; ")))
 				}
 				if err := w.Flush(); err != nil {
 					return err
 				}
-				fmt.Fprintln(g.out, "\nvalidation is the highest evidence level; see `hwlab plugins --details` and docs/support-matrix.md")
+				out.println(g.out, "\nvalidation is the highest evidence level; see `hwlab plugins --details` and docs/support-matrix.md")
 			}
 			if r.Failed() {
 				return fmt.Errorf("doctor found hard failures")
@@ -134,24 +138,26 @@ func devicesCmd(g *globals) *cobra.Command {
 		Use:   "devices",
 		Short: "List devices reported by all plugins",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			devs, errs := g.app.ListDevices(cmd.Context())
 			if g.json {
 				return g.printJSON(map[string]any{"devices": devs, "errors": errs})
 			}
 			w := g.table()
-			fmt.Fprintln(w, "DEVICE\tNAME\tTRANSPORT\tCAPABILITIES")
+			out.println(w, "DEVICE\tNAME\tTRANSPORT\tCAPABILITIES")
 			for _, d := range devs {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", d.ID, d.Name, orDash(d.Transport), join(d.Capabilities))
+				out.printf(w, "%s\t%s\t%s\t%s\n", d.ID, d.Name, orDash(d.Transport), join(d.Capabilities))
 			}
 			if err := w.Flush(); err != nil {
 				return err
 			}
 			for _, e := range errs {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: plugin %s: %s\n", e.Plugin, e.Error)
+				out.printf(cmd.ErrOrStderr(), "warning: plugin %s: %s\n", e.Plugin, e.Error)
 			}
 			if len(devs) == 0 && len(errs) == 0 {
-				fmt.Fprintln(g.out, "(no devices)")
+				out.println(g.out, "(no devices)")
 			}
 			return nil
 		},
@@ -163,7 +169,9 @@ func statusCmd(g *globals) *cobra.Command {
 		Use:   "status",
 		Short: "Lab overview: plugins, devices, captures in progress and latest session",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			ctx := cmd.Context()
 			plugins := g.app.ListPlugins(ctx)
 			devs, derrs := g.app.ListDevices(ctx)
@@ -177,18 +185,18 @@ func statusCmd(g *globals) *cobra.Command {
 			if g.json {
 				return g.printJSON(st)
 			}
-			fmt.Fprintf(g.out, "hwlab %s\nsessions dir:   %s\nplugins:        %d\ndevices:        %d\nsessions:       %d\n",
+			out.printf(g.out, "hwlab %s\nsessions dir:   %s\nplugins:        %d\ndevices:        %d\nsessions:       %d\n",
 				versionString(), g.app.Cfg.SessionsDir, len(plugins), len(devs), len(sessions))
 			if len(sessions) > 0 {
-				fmt.Fprintf(g.out, "latest session: %s (%s)\n", sessions[0].ID, sessions[0].Status)
+				out.printf(g.out, "latest session: %s (%s)\n", sessions[0].ID, sessions[0].Status)
 			}
 			for _, p := range plugins {
 				if p.Error != "" {
-					fmt.Fprintf(g.out, "  plugin %s: ERROR %s\n", p.ID, p.Error)
+					out.printf(g.out, "  plugin %s: ERROR %s\n", p.ID, p.Error)
 				}
 			}
 			for _, e := range derrs {
-				fmt.Fprintf(g.out, "  plugin %s: cannot list devices: %s\n", e.Plugin, e.Error)
+				out.printf(g.out, "  plugin %s: cannot list devices: %s\n", e.Plugin, e.Error)
 			}
 			return nil
 		},

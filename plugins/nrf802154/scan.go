@@ -2,6 +2,7 @@ package nrf802154
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -72,7 +73,7 @@ type chanStats struct {
 
 // scan dwells on each channel and reports activity. It listens only; no
 // frames are transmitted.
-func (p *Plugin) scan(ctx context.Context, deviceID string, args map[string]any) (map[string]any, error) {
+func (p *Plugin) scan(ctx context.Context, deviceID string, args map[string]any) (_ map[string]any, retErr error) {
 	spec, _ := args["channels"].(string)
 	if f, ok := args["channels"].(float64); ok {
 		spec = strconv.Itoa(int(f))
@@ -105,7 +106,7 @@ func (p *Plugin) scan(ctx context.Context, deviceID string, args map[string]any)
 	if err != nil {
 		return nil, err
 	}
-	defer dev.Close()
+	defer func() { retErr = errors.Join(retErr, dev.Close()) }()
 
 	started := time.Now()
 	results := make([]any, 0, len(chans))

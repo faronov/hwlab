@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/faronov/hwlab/internal/testutil"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
 )
@@ -389,14 +390,14 @@ func rttServer(t *testing.T, chunks []string, gap time.Duration) (port int, clos
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { l.Close() })
+	t.Cleanup(func() { testutil.CheckError(t, l.Close()) })
 	done := make(chan struct{})
 	go func() {
 		c, err := l.Accept()
 		if err != nil {
 			return
 		}
-		defer c.Close()
+		defer func() { testutil.CheckError(t, c.Close()) }()
 		for _, ch := range chunks {
 			time.Sleep(gap)
 			_, _ = c.Write([]byte(ch))
@@ -511,7 +512,7 @@ func TestRTTAttachWithoutLaunch(t *testing.T) {
 func TestRTTNotReachable(t *testing.T) {
 	l, _ := net.Listen("tcp", "127.0.0.1:0")
 	port := l.Addr().(*net.TCPAddr).Port
-	l.Close()
+	testutil.CheckError(t, l.Close())
 	f := &fakeCmd{}
 	p := NewWith(t.TempDir(), f)
 	_, _, err := p.StartCapture(context.Background(), pluginsdk.CaptureRequest{DeviceID: "1", Clock: pluginsdk.NewClock(0),

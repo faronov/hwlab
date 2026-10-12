@@ -158,7 +158,7 @@ func Render(ctx context.Context, sess *session.Session, spec Spec) (*Result, err
 	for t := first; t <= float64(end); t += step {
 		xx := tx(int64(t))
 		cv.Line(xx, marginT, xx, y-trackGap, colGrid, 1, false)
-		cv.Text(xx, y+12, fmt.Sprintf("%s", trimFloat(t/div)), colText, anchorMiddle)
+		cv.Text(xx, y+12, trimFloat(t/div), colText, anchorMiddle)
 	}
 	cv.Text(x1, y+26, "time ("+unit+")", colText, anchorEnd)
 	cv.Line(x0, y-trackGap, x1, y-trackGap, colAxis, 1, false)
@@ -244,7 +244,9 @@ func sessionBounds(sess *session.Session) (int64, int64, error) {
 				return 0, 0, err
 			}
 			s, e := rd.Bounds()
-			rd.Close()
+			if err := rd.Close(); err != nil {
+				return 0, 0, fmt.Errorf("close stream %s: %w", sm.ID, err)
+			}
 			upd(s, e)
 		}
 	}
@@ -316,9 +318,12 @@ func drawPower(ctx context.Context, cv canvas, sess *session.Session, lt layoutT
 	if err != nil {
 		return err
 	}
-	defer rd.Close()
 	n := int(x1 - x0)
 	bs, err := analysis.Envelope(ctx, rd, start, end, n)
+	// Envelope owns its output, so release the read-only stream before drawing.
+	if closeErr := rd.Close(); closeErr != nil {
+		err = errors.Join(err, fmt.Errorf("close power stream: %w", closeErr))
+	}
 	if err != nil {
 		return err
 	}
@@ -398,7 +403,6 @@ func drawAnalog(ctx context.Context, cv canvas, sess *session.Session, lt layout
 	if err != nil {
 		return err
 	}
-	defer rd.Close()
 	nch := len(sm.Channels)
 	if nch == 0 {
 		nch = 1
@@ -433,6 +437,7 @@ func drawAnalog(ctx context.Context, cv canvas, sess *session.Session, lt layout
 		}
 		return nil
 	})
+	err = errors.Join(err, rd.Close())
 	if err != nil {
 		return err
 	}

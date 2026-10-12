@@ -3,7 +3,9 @@ package modbus
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -227,7 +229,11 @@ func (s *Slave) ServeTCP(l net.Listener) {
 }
 
 func (s *Slave) serveConn(c net.Conn) {
-	defer c.Close()
+	defer func() {
+		if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			slog.Warn("close simulated Modbus connection", "err", err)
+		}
+	}()
 	for {
 		hdr := make([]byte, mbapLen)
 		if _, err := io.ReadFull(c, hdr); err != nil {

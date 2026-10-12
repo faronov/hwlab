@@ -38,9 +38,15 @@ func TestSerialCaptureThroughCore(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 		time.Sleep(50 * time.Millisecond)
-		master.WriteString("boot ok\r\n")
+		if _, err := master.WriteString("boot ok\r\n"); err != nil {
+			t.Error(err)
+			return
+		}
 		time.Sleep(100 * time.Millisecond)
-		master.WriteString("temp=21.5\r\n")
+		if _, err := master.WriteString("temp=21.5\r\n"); err != nil {
+			t.Error(err)
+			return
+		}
 		buf := make([]byte, 64)
 		for {
 			n, err := master.Read(buf)
@@ -48,7 +54,10 @@ func TestSerialCaptureThroughCore(t *testing.T) {
 				return
 			}
 			if strings.Contains(string(buf[:n]), "AT") {
-				master.WriteString("OK\r\n")
+				if _, err := master.WriteString("OK\r\n"); err != nil {
+					t.Error(err)
+					return
+				}
 			}
 		}
 	}()

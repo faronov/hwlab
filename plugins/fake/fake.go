@@ -6,6 +6,7 @@ package fake
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -200,8 +201,7 @@ func (c *capture) openPCAP() error {
 	}
 	w, err := pcap.NewWriter(f, pcap.LinkIEEE802154WithFCS)
 	if err != nil {
-		f.Close()
-		return err
+		return errors.Join(err, f.Close())
 	}
 	c.pcapFile, c.pcapW = f, w
 	return nil

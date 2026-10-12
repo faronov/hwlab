@@ -67,7 +67,7 @@ func (m *DM) Triggers(ctx context.Context) ([]Trigger, error) {
 	}
 	orig, err := m.ReadReg(ctx, CSRTSelect)
 	if err != nil {
-		return nil, fmt.Errorf("%w: tselect not readable (no trigger module?): %v", ErrTrigger, err)
+		return nil, fmt.Errorf("%w: tselect not readable (no trigger module?): %w", ErrTrigger, err)
 	}
 	defer func() { _ = m.WriteReg(ctx, CSRTSelect, orig) }()
 	var out []Trigger

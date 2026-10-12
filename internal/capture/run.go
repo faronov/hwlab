@@ -480,7 +480,9 @@ func (r *Run) stop(ctx context.Context) error {
 				if _, e := rd.Bounds(); e > stopNs {
 					stopNs = e
 				}
-				rd.Close()
+				if err := rd.Close(); err != nil {
+					addErr(fmt.Errorf("close stream bounds reader: %w", err))
+				}
 			}
 		}
 	}
@@ -550,8 +552,7 @@ func (r *Run) registerArtifact(t *runTarget, a *pluginv1.ArtifactRef) error {
 	if err != nil {
 		return fmt.Errorf("artifact %s from %s: %w", a.GetName(), t.Alias, err)
 	}
-	defer f.Close()
 	art.Path = "artifacts/" + t.Alias + "/" + filepath.Base(a.GetPath())
 	_, err = r.Session.Artifacts.Put(art, f)
-	return err
+	return errors.Join(err, f.Close())
 }

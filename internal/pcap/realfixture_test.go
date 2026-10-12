@@ -15,7 +15,11 @@ func TestReadRealCaptureFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	t.Cleanup(func() {
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	ng, err := ReadNG(f)
 	if err != nil {
 		t.Fatal(err)

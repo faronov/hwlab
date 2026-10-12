@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"errors"
 	"math"
 	"testing"
 )
@@ -39,7 +40,7 @@ func TestParseMode(t *testing.T) {
 }
 
 func TestParseMetadata(t *testing.T) {
-	if _, err := ParseMetadata("Calibrated: 0\nR0: 1000\n"); err != ErrIncomplete {
+	if _, err := ParseMetadata("Calibrated: 0\nR0: 1000\n"); !errors.Is(err, ErrIncomplete) {
 		t.Fatalf("want ErrIncomplete, got %v", err)
 	}
 	md, err := ParseMetadata("Calibrated: 1\nR0: 1000.5\nR1: 0\nO2: 12\nUG4: 0.5\nHW: 1234\nEND\n")

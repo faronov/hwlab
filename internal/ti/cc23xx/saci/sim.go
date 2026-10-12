@@ -26,7 +26,6 @@ type Sim struct {
 	cmdStart bool
 	words    []uint32
 	rx       []uint32
-	txFull   bool
 	Log      []CmdID
 }
 
@@ -128,7 +127,7 @@ func (s *Sim) exec(w []uint32) {
 	w0 := w[0]
 	id := CmdID(w0)
 	s.Log = append(s.Log, id)
-	ok := Result(ResSuccess)
+	ok := ResSuccess
 	switch id {
 	case CmdNop:
 		s.respond(w0, ok)

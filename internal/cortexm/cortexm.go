@@ -582,7 +582,7 @@ func (c *Core) Reset(ctx context.Context, kind ResetKind, haltAfter bool) (Reset
 		// Some devices reset the debug port together with the core, so the
 		// write itself is the last thing the link carries.
 		res.DebugLost = true
-		return res, fmt.Errorf("%w: the link went down at the AIRCR write (%v)", ErrDebugLost, err)
+		return res, fmt.Errorf("%w: the link went down at the AIRCR write (%w)", ErrDebugLost, err)
 	}
 	deadline := time.Now().Add(c.Timeout)
 	debugAnswered := false // C_DEBUGEN read back as set at least once after the request

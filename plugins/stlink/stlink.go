@@ -358,12 +358,6 @@ func (p *Plugin) CloseDevice(_ context.Context, id string) error {
 	return nil
 }
 
-func (p *Plugin) isCurrent(id string, s *session) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.devs[id] == s
-}
-
 // drop forgets a session whose transport died, so the next call reopens.
 func (p *Plugin) drop(id string, s *session) {
 	p.mu.Lock()

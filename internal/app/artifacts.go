@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -152,7 +153,7 @@ func (a *App) resolveArtifact(ref string) (ArtifactRef, error) {
 }
 
 // ArtifactInfo describes one artifact including its SHA-256.
-func (a *App) ArtifactInfo(ref string) (ArtifactRef, error) {
+func (a *App) ArtifactInfo(ref string) (_ ArtifactRef, retErr error) {
 	r, err := a.resolveArtifact(ref)
 	if err != nil {
 		return r, err
@@ -161,7 +162,7 @@ func (a *App) ArtifactInfo(ref string) (ArtifactRef, error) {
 	if err != nil {
 		return r, apperr.Newf(apperr.NotFound, "artifact %q: %v", ref, err)
 	}
-	defer f.Close()
+	defer func() { retErr = errors.Join(retErr, f.Close()) }()
 	h := sha256.New()
 	n, err := io.Copy(h, f)
 	if err != nil {
@@ -173,7 +174,7 @@ func (a *App) ArtifactInfo(ref string) (ArtifactRef, error) {
 
 // ReadArtifact returns at most MaxArtifactRead bytes starting at offset,
 // encoded "hex" (default) or "text".
-func (a *App) ReadArtifact(ref string, offset int64, length int, encoding string) (*ArtifactChunk, error) {
+func (a *App) ReadArtifact(ref string, offset int64, length int, encoding string) (_ *ArtifactChunk, retErr error) {
 	if offset < 0 {
 		return nil, apperr.Newf(apperr.InvalidArgument, "offset must be >= 0")
 	}
@@ -197,7 +198,7 @@ func (a *App) ReadArtifact(ref string, offset int64, length int, encoding string
 	if err != nil {
 		return nil, apperr.Newf(apperr.NotFound, "artifact %q: %v", ref, err)
 	}
-	defer f.Close()
+	defer func() { retErr = errors.Join(retErr, f.Close()) }()
 	fi, err := f.Stat()
 	if err != nil {
 		return nil, err
@@ -207,7 +208,7 @@ func (a *App) ReadArtifact(ref string, offset int64, length int, encoding string
 	}
 	buf := make([]byte, length)
 	n, err := f.ReadAt(buf, offset)
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
 	buf = buf[:n]

@@ -50,7 +50,7 @@ func classify(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, syscall.ENODEV), errors.Is(err, syscall.ESHUTDOWN), errors.Is(err, syscall.ENOENT):
-		return fmt.Errorf("%w: %w: %v", ErrTransport, ErrDisconnected, err)
+		return fmt.Errorf("%w: %w: %w", ErrTransport, ErrDisconnected, err)
 	}
 	return err
 }

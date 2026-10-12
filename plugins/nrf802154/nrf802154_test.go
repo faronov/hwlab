@@ -14,6 +14,7 @@ import (
 
 	"github.com/faronov/hwlab/internal/decode"
 	"github.com/faronov/hwlab/internal/pcap"
+	"github.com/faronov/hwlab/internal/testutil"
 	"github.com/faronov/hwlab/internal/usbserial"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
@@ -171,7 +172,7 @@ func TestCaptureProducesTimelineEventsAndPcapng(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { testutil.CheckError(t, f.Close()) }()
 	ng, err := pcap.ReadNG(f)
 	if err != nil {
 		t.Fatal(err)

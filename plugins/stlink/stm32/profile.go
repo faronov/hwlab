@@ -150,7 +150,7 @@ func f1Layout(kb int, page uint32) []Sector {
 func Detect(ctx context.Context, c *cortexm.Core) (*Profile, error) {
 	idc, err := c.Bus.Read32(ctx, AddrDBGMCUIDCode)
 	if err != nil {
-		return nil, fmt.Errorf("%w: DBGMCU_IDCODE is not readable (%v)", ErrNotSTM32, err)
+		return nil, fmt.Errorf("%w: DBGMCU_IDCODE is not readable (%w)", ErrNotSTM32, err)
 	}
 	dev := uint16(idc & 0xFFF)
 	if why, ok := unsupported[dev]; ok {
@@ -166,7 +166,7 @@ func Detect(ctx context.Context, c *cortexm.Core) (*Profile, error) {
 	}
 	w, err := c.Bus.Read32(ctx, sizeAddr&^3)
 	if err != nil {
-		return nil, fmt.Errorf("%w: DBGMCU_IDCODE 0x%08x matches %s but the flash-size register is unreadable: %v", ErrNotSTM32, idc, e.name, err)
+		return nil, fmt.Errorf("%w: DBGMCU_IDCODE 0x%08x matches %s but the flash-size register is unreadable: %w", ErrNotSTM32, idc, e.name, err)
 	}
 	kb := int(w >> (8 * (sizeAddr & 3)) & 0xFFFF)
 	source := "register"

@@ -3,10 +3,12 @@ package scpi
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"log/slog"
 	"math"
 	"net"
 	"strconv"
@@ -128,7 +130,11 @@ func (f *Fake) Close() {
 }
 
 func (f *Fake) serve(c net.Conn) {
-	defer c.Close()
+	defer func() {
+		if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			slog.Warn("close fake SCPI connection", "err", err)
+		}
+	}()
 	r := bufio.NewReader(c)
 	for {
 		line, err := r.ReadString('\n')
@@ -255,12 +261,13 @@ func (f *Fake) num(node string) float64 {
 
 // status walks WAIT -> TD -> STOP after a single trigger.
 func (f *Fake) status(rigol bool) string {
-	if f.state == "WAIT" {
+	switch f.state {
+	case "WAIT":
 		f.polls++
 		if f.polls >= 2 && !f.never {
 			f.state = "TD"
 		}
-	} else if f.state == "TD" {
+	case "TD":
 		f.polls++
 		if f.polls >= 4 {
 			f.state = "STOP"

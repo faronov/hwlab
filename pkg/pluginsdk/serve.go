@@ -2,6 +2,7 @@ package pluginsdk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -34,22 +35,36 @@ func Main(p Plugin) {
 }
 
 // Serve runs the plugin until the core disconnects, Shutdown is called, the
-// context ends or a termination signal arrives.
-func Serve(ctx context.Context, p Plugin, log *slog.Logger) error {
+// context ends or a termination signal arrives. Startup and socket cleanup
+// failures are returned without discarding the original serving error.
+func Serve(ctx context.Context, p Plugin, log *slog.Logger) (serveErr error) {
 	sockPath := os.Getenv(pluginv1.EnvSocket)
 	if sockPath == "" {
 		dir, err := os.MkdirTemp("", "hwl")
 		if err != nil {
 			return fmt.Errorf("create socket dir: %w", err)
 		}
-		defer os.RemoveAll(dir)
+		defer func() {
+			if err := os.RemoveAll(dir); err != nil {
+				serveErr = errors.Join(serveErr, fmt.Errorf("remove plugin socket directory: %w", err))
+			}
+		}()
 		sockPath = filepath.Join(dir, "p.sock")
 	}
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", sockPath, err)
 	}
-	defer os.Remove(sockPath)
+	defer func() {
+		if err := os.Remove(sockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			serveErr = errors.Join(serveErr, fmt.Errorf("remove plugin socket: %w", err))
+		}
+	}()
+	defer func() {
+		if err := lis.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			serveErr = errors.Join(serveErr, fmt.Errorf("close plugin listener: %w", err))
+		}
+	}()
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -85,7 +100,9 @@ func Serve(ctx context.Context, p Plugin, log *slog.Logger) error {
 	}()
 
 	// The core waits for exactly this line.
-	fmt.Fprintf(os.Stdout, "%s|%d|unix|%s\n", pluginv1.HandshakePrefix, pluginv1.ProtocolVersion, sockPath)
+	if _, err := fmt.Fprintf(os.Stdout, "%s|%d|unix|%s\n", pluginv1.HandshakePrefix, pluginv1.ProtocolVersion, sockPath); err != nil {
+		return fmt.Errorf("write plugin handshake: %w", err)
+	}
 	if err := gs.Serve(lis); err != nil && ctx.Err() == nil {
 		return err
 	}

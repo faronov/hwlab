@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 
 	"github.com/faronov/hwlab/internal/app"
@@ -26,7 +24,9 @@ Latencies are differences of host timestamps, not wire times.`,
 		Example: `  hwlab modbus decode latest
   hwlab modbus decode latest --source bus --mode sniff --limit 20`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			q := app.ModbusQuery{Session: args[0], Source: source, Mode: mode, Limit: limit}
 			var err error
 			if gap != "" {
@@ -53,20 +53,20 @@ Latencies are differences of host timestamps, not wire times.`,
 			}
 			for _, s := range rep.Streams {
 				st := s.Stats
-				fmt.Fprintf(g.out, "source %s (%s): %d chunks, %d frames, %d transactions: %d ok, %d exceptions, %d no response, %d orphan, %d crc errors, %d bad frames, %d junk bytes\n",
+				out.printf(g.out, "source %s (%s): %d chunks, %d frames, %d transactions: %d ok, %d exceptions, %d no response, %d orphan, %d crc errors, %d bad frames, %d junk bytes\n",
 					s.Source, s.Mode, s.Chunks, st.Frames, st.Transactions, st.OK, st.Exceptions, st.NoResponse, st.Orphans, st.CRCErrors, st.BadFrames, st.JunkBytes)
 				for _, t := range s.Transactions {
 					lat := ""
 					if t.LatencyNs > 0 {
 						lat = "  +" + timeline.FormatNs(t.LatencyNs)
 					}
-					fmt.Fprintf(g.out, "  %s  %-15s %s%s\n", timeline.FormatNs(t.StartNs), t.Status, t.Summary, lat)
+					out.printf(g.out, "  %s  %-15s %s%s\n", timeline.FormatNs(t.StartNs), t.Status, t.Summary, lat)
 				}
 				if s.Truncated {
-					fmt.Fprintf(g.out, "  ... more transactions; raise --limit\n")
+					out.printf(g.out, "  ... more transactions; raise --limit\n")
 				}
 			}
-			fmt.Fprintln(g.out, rep.Note)
+			out.println(g.out, rep.Note)
 			return nil
 		},
 	}

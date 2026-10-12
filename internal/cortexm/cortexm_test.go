@@ -4,10 +4,28 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 )
 
 var ctx = context.Background()
+
+func TestPrimaryErrorWithWrappedCleanup(t *testing.T) {
+	cleanup := errors.New("cleanup transport failed")
+	primary := fmt.Errorf("discover: %w", ErrAbsent)
+	combined := fmt.Errorf("attach: %w", WithCleanupError(WithCleanupError(primary, cleanup), cleanup))
+	got, separated := PrimaryError(combined)
+	if !separated || !errors.Is(got, ErrAbsent) || errors.Is(got, cleanup) {
+		t.Fatalf("primary %v, separated %v", got, separated)
+	}
+	if !errors.Is(combined, ErrAbsent) || !errors.Is(combined, cleanup) {
+		t.Fatalf("combined error lost a cause: %v", combined)
+	}
+	got, separated = PrimaryError(primary)
+	if separated || !errors.Is(got, ErrAbsent) {
+		t.Fatalf("ordinary primary %v, separated %v", got, separated)
+	}
+}
 
 func buses() map[string]func() (*Sim, Bus) {
 	return map[string]func() (*Sim, Bus){
@@ -34,7 +52,7 @@ func TestHaltResumeRegsStep(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			_, b := mk()
 			c := New(b)
-			if _, err := c.ReadAll(ctx); err != ErrNotHalted {
+			if _, err := c.ReadAll(ctx); !errors.Is(err, ErrNotHalted) {
 				t.Fatalf("regs while running: %v", err)
 			}
 			st, err := c.Halt(ctx)
@@ -73,7 +91,7 @@ func TestHaltResumeRegsStep(t *testing.T) {
 			if st, err := c.Resume(ctx); err != nil || st.Halted {
 				t.Fatal(st, err)
 			}
-			if _, err := c.Step(ctx, false); err != ErrNotHalted {
+			if _, err := c.Step(ctx, false); !errors.Is(err, ErrNotHalted) {
 				t.Fatalf("step while running: %v", err)
 			}
 		})
@@ -211,7 +229,9 @@ func TestReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 5; i++ {
-		c.Step(ctx, true)
+		if _, err := c.Step(ctx, true); err != nil {
+			t.Fatal(err)
+		}
 	}
 	res, err := c.Reset(ctx, ResetSystem, true)
 	if err != nil || !res.Halted || !res.AtVector || res.PC != 0x100 {

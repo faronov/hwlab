@@ -15,6 +15,7 @@ import (
 
 	"github.com/faronov/hwlab/internal/can"
 	"github.com/faronov/hwlab/internal/pcap"
+	"github.com/faronov/hwlab/internal/testutil"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
 )
@@ -51,8 +52,8 @@ func TestHubLoopback(t *testing.T) {
 	hub := NewHub()
 	a, _ := hub.Open(VirtualName, Options{FD: true, Own: true})
 	b, _ := hub.Open(VirtualName, Options{FD: false})
-	defer a.Close()
-	defer b.Close()
+	defer func() { testutil.CheckError(t, a.Close()) }()
+	defer func() { testutil.CheckError(t, b.Close()) }()
 
 	if err := a.Send(can.Frame{ID: 0x123, Data: []byte{1, 2}}); err != nil {
 		t.Fatal(err)
@@ -69,7 +70,7 @@ func TestHubLoopback(t *testing.T) {
 	if err := a.Send(can.Frame{ID: 1, FD: true, Data: make([]byte, 12)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Recv(30 * time.Millisecond); err != ErrTimeout {
+	if _, err := b.Recv(30 * time.Millisecond); !errors.Is(err, ErrTimeout) {
 		t.Errorf("classic handle received an FD frame: %v", err)
 	}
 	if err := b.Send(can.Frame{ID: 1, FD: true, Data: []byte{1}}); err == nil {
@@ -90,12 +91,12 @@ func TestHubFiltersAndClose(t *testing.T) {
 	if err != nil || rx.Frame.ID != 0x105 {
 		t.Fatalf("filter: %+v err=%v", rx, err)
 	}
-	if _, err := r.Recv(20 * time.Millisecond); err != ErrTimeout {
+	if _, err := r.Recv(20 * time.Millisecond); !errors.Is(err, ErrTimeout) {
 		t.Errorf("0x200 passed the filter: %v", err)
 	}
-	r.Close()
-	r.Close() // idempotent
-	if _, err := r.Recv(time.Millisecond); err != ErrClosed {
+	testutil.CheckError(t, r.Close())
+	testutil.CheckError(t, r.Close()) // idempotent
+	if _, err := r.Recv(time.Millisecond); !errors.Is(err, ErrClosed) {
 		t.Errorf("after close: %v", err)
 	}
 }
@@ -225,7 +226,7 @@ func TestSendAndRecv(t *testing.T) {
 	if err := p.OpenDevice(context.Background(), VirtualName, map[string]any{"own": false}); err != nil {
 		t.Fatal(err)
 	}
-	defer p.CloseDevice(context.Background(), VirtualName)
+	defer func() { testutil.CheckError(t, p.CloseDevice(context.Background(), VirtualName)) }()
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		hub.Inject(can.Frame{ID: 0x321, Data: []byte{9, 8}})

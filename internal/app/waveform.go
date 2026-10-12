@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -107,12 +108,12 @@ func (a *App) MeasureWaveform(ctx context.Context, q WaveformQuery) (*WaveformRe
 	return rep, nil
 }
 
-func (a *App) measureStream(ctx context.Context, s *session.Session, sm session.StreamMeta, idx int, q WaveformQuery) (*WaveformStream, error) {
+func (a *App) measureStream(ctx context.Context, s *session.Session, sm session.StreamMeta, idx int, q WaveformQuery) (_ *WaveformStream, retErr error) {
 	rd, err := s.OpenStream(sm)
 	if err != nil {
 		return nil, err
 	}
-	defer rd.Close()
+	defer func() { retErr = errors.Join(retErr, rd.Close()) }()
 	from, to := q.FromNs, q.ToNs
 	start, end := rd.Bounds()
 	if to <= from {
@@ -166,7 +167,7 @@ func (a *App) measureStream(ctx context.Context, s *session.Session, sm session.
 		}
 		return nil
 	})
-	if err != nil && err != errStopWaveform {
+	if err != nil && !errors.Is(err, errStopWaveform) {
 		return nil, err
 	}
 	for _, sg := range segs {

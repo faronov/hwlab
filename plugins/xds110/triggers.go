@@ -444,7 +444,7 @@ func (d *device) observedReset(ctx context.Context, halt bool, drive func() erro
 		time.Sleep(10 * time.Millisecond)
 	}
 	obs["reset_seen"], obs["debug_enable_lost"], obs["core_registers_changed"] = seen, lost, gone
-	if !seen && !lost && !gone && !(halt && after.Halted) {
+	if !seen && !lost && !gone && (!halt || !after.Halted) {
 		restore()
 		return obs, errors.New("the reset was driven but no reset was observed (S_RESET_ST stayed clear and debug stayed enabled): the nRESET line is probably not connected to the target; this reset is NOT claimed")
 	}

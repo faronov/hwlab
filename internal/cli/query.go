@@ -19,24 +19,26 @@ func plotSpec(format string, from, to int64) plot.Spec {
 	return plot.Spec{Format: format, StartNs: from, EndNs: to}
 }
 
-func printInfo(g *globals, info *app.SessionInfo) error {
+func printInfo(g *globals, info *app.SessionInfo) (retErr error) {
+	var out printer
+	defer out.finish(&retErr)
 	if g.json {
 		return g.printJSON(info)
 	}
 	m := info.Meta
-	fmt.Fprintf(g.out, "session:   %s\nname:      %s\nstatus:    %s\ncreated:   %s\nduration:  %s\ndir:       %s\n",
+	out.printf(g.out, "session:   %s\nname:      %s\nstatus:    %s\ncreated:   %s\nduration:  %s\ndir:       %s\n",
 		m.ID, m.Name, m.Status, m.CreatedAt.Format("2006-01-02 15:04:05Z07:00"), fmtDur(m.DurationNs), info.Dir)
 	if m.Error != "" {
-		fmt.Fprintf(g.out, "error:     %s\n", m.Error)
+		out.printf(g.out, "error:     %s\n", m.Error)
 	}
-	fmt.Fprintln(g.out, "devices:")
+	out.println(g.out, "devices:")
 	for _, d := range m.Devices {
-		fmt.Fprintf(g.out, "  %-10s %s/%s  [%s]\n", d.Alias, d.PluginID, d.DeviceID, strings.Join(d.Capabilities, ","))
+		out.printf(g.out, "  %-10s %s/%s  [%s]\n", d.Alias, d.PluginID, d.DeviceID, strings.Join(d.Capabilities, ","))
 	}
 	if len(info.Streams) > 0 {
-		fmt.Fprintln(g.out, "sample streams:")
+		out.println(g.out, "sample streams:")
 		for _, s := range info.Streams {
-			fmt.Fprintf(g.out, "  %-10s %-8s %-10s %d samples  %s .. %s\n", s.Alias, s.Kind, s.ID, s.Samples, fmtDur(s.StartNs), fmtDur(s.EndNs))
+			out.printf(g.out, "  %-10s %-8s %-10s %d samples  %s .. %s\n", s.Alias, s.Kind, s.ID, s.Samples, fmtDur(s.StartNs), fmtDur(s.EndNs))
 		}
 	}
 	var evs []string
@@ -44,28 +46,28 @@ func printInfo(g *globals, info *app.SessionInfo) error {
 		evs = append(evs, fmt.Sprintf("%s=%d", t, n))
 	}
 	sort.Strings(evs)
-	fmt.Fprintf(g.out, "timeline:  %s\n", orDash(strings.Join(evs, " ")))
+	out.printf(g.out, "timeline:  %s\n", orDash(strings.Join(evs, " ")))
 	for _, c := range m.Captures {
 		if c.Clock == nil {
 			continue
 		}
 		k := c.Clock
-		fmt.Fprintf(g.out, "clock:     %-10s stamped-true in [%s, %s], resolution %s", c.Alias,
+		out.printf(g.out, "clock:     %-10s stamped-true in [%s, %s], resolution %s", c.Alias,
 			bound(k.ErrorMinNs, k.ErrorMinBounded, "-inf"), bound(k.ErrorMaxNs, k.ErrorMaxBounded, "+inf"), fmtDur(k.ResolutionNs))
 		if k.OffsetAppliedNs != 0 {
-			fmt.Fprintf(g.out, ", offset %s applied", fmtDur(k.OffsetAppliedNs))
+			out.printf(g.out, ", offset %s applied", fmtDur(k.OffsetAppliedNs))
 		}
-		fmt.Fprintln(g.out)
+		out.println(g.out)
 	}
 	for _, c := range m.ClockCalibrations {
-		fmt.Fprintf(g.out, "calibrated: %-9s -> %s: %d edges over %s, drift %.2f ppm, residual p95 %s, uncertainty +/- %s (%s)\n",
+		out.printf(g.out, "calibrated: %-9s -> %s: %d edges over %s, drift %.2f ppm, residual p95 %s, uncertainty +/- %s (%s)\n",
 			c.Alias, c.Reference, c.Pairs, fmtDur(c.SpanNs), c.DriftPPM, fmtDur(c.ResidualP95Ns), fmtDur(c.UncertaintyNs), c.Method)
 	}
 	for _, a := range info.Artifacts {
-		fmt.Fprintf(g.out, "artifact:  %s\n", a)
+		out.printf(g.out, "artifact:  %s\n", a)
 	}
 	for _, p := range info.Plots {
-		fmt.Fprintf(g.out, "plot:      %s\n", p)
+		out.printf(g.out, "plot:      %s\n", p)
 	}
 	return nil
 }
@@ -74,7 +76,9 @@ func sessionCmd(g *globals) *cobra.Command {
 	root := &cobra.Command{Use: "session", Short: "Inspect stored sessions"}
 	root.AddCommand(&cobra.Command{
 		Use: "list", Short: "List sessions, newest first", Args: cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
+		RunE: func(*cobra.Command, []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			ms, err := g.app.ListSessions()
 			if err != nil {
 				return err
@@ -83,13 +87,13 @@ func sessionCmd(g *globals) *cobra.Command {
 				return g.printJSON(ms)
 			}
 			w := g.table()
-			fmt.Fprintln(w, "SESSION\tSTATUS\tDURATION\tDEVICES")
+			out.println(w, "SESSION\tSTATUS\tDURATION\tDEVICES")
 			for _, m := range ms {
 				var names []string
 				for _, d := range m.Devices {
 					names = append(names, d.Alias)
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", m.ID, m.Status, fmtDur(m.DurationNs), join(names))
+				out.printf(w, "%s\t%s\t%s\t%s\n", m.ID, m.Status, fmtDur(m.DurationNs), join(names))
 			}
 			return w.Flush()
 		},
@@ -114,7 +118,9 @@ func timelineCmd(g *globals) *cobra.Command {
 		Use:   "timeline SESSION",
 		Short: "Print the unified timeline of a session",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			f, err := app.ParseTime(from)
 			if err != nil {
 				return err
@@ -132,10 +138,10 @@ func timelineCmd(g *globals) *cobra.Command {
 				return g.printJSON(evs)
 			}
 			for _, e := range evs {
-				fmt.Fprintln(g.out, e.String())
+				out.println(g.out, e.String())
 			}
 			if len(evs) == limit || (limit == 0 && len(evs) == 200) {
-				fmt.Fprintln(g.out, "... (limit reached; narrow with --from/--to/--type or raise --limit)")
+				out.println(g.out, "... (limit reached; narrow with --from/--to/--type or raise --limit)")
 			}
 			return nil
 		},
@@ -158,7 +164,9 @@ func correlateCmd(g *globals) *cobra.Command {
 		Short:   "Find events related to anchor events (e.g. packets around power rises)",
 		Example: `  hwlab correlate latest --anchor analysis.power_rise --related packet --window 5ms`,
 		Args:    cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			w, err := app.ParseTime(window)
 			if err != nil {
 				return err
@@ -172,16 +180,16 @@ func correlateCmd(g *globals) *cobra.Command {
 			if g.json {
 				return g.printJSON(res)
 			}
-			fmt.Fprintf(g.out, "%d anchors, %d with related events", res.Anchors, res.Matched)
+			out.printf(g.out, "%d anchors, %d with related events", res.Anchors, res.Matched)
 			if s := res.FollowDelay; s.Count > 0 {
-				fmt.Fprintf(g.out, "; first following event after %s..%s (mean %s, n=%d)",
+				out.printf(g.out, "; first following event after %s..%s (mean %s, n=%d)",
 					fmtDur(s.MinNs), fmtDur(s.MaxNs), fmtDur(s.MeanNs), s.Count)
 			}
-			fmt.Fprintln(g.out)
+			out.println(g.out)
 			for _, c := range res.Correlations {
-				fmt.Fprintf(g.out, "\n%s\n", c.Anchor.String())
+				out.printf(g.out, "\n%s\n", c.Anchor.String())
 				for _, h := range c.Related {
-					fmt.Fprintf(g.out, "   %+10.3f ms  %s\n", float64(h.DeltaNs)/1e6, h.Event.String())
+					out.printf(g.out, "   %+10.3f ms  %s\n", float64(h.DeltaNs)/1e6, h.Event.String())
 				}
 			}
 			return nil
@@ -209,7 +217,9 @@ clock_offset key of the experiment; it is NOT valid for events that merely
 follow each other (a packet after a current spike has a real delay).`,
 		Example: `  hwlab calibrate latest --a-source power --a-type digital.edge --b-source radio --b-type marker`,
 		Args:    cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			w, err := app.ParseTime(window)
 			if err != nil {
 				return err
@@ -223,13 +233,13 @@ follow each other (a packet after a current spike has a real delay).`,
 			if g.json {
 				return g.printJSON(res)
 			}
-			fmt.Fprintf(g.out, "%d pairs (%d ambiguous, %d unmatched); B - A: median %s, range %s .. %s, MAD %s\n", res.Pairs,
+			out.printf(g.out, "%d pairs (%d ambiguous, %d unmatched); B - A: median %s, range %s .. %s, MAD %s\n", res.Pairs,
 				res.Ambiguous, res.Unmatched, fmtDur(res.MedianNs), fmtDur(res.MinNs), fmtDur(res.MaxNs), fmtDur(res.MADNs))
 			for _, w := range res.Warnings {
-				fmt.Fprintf(g.out, "warning: %s\n", w)
+				out.printf(g.out, "warning: %s\n", w)
 			}
 			if res.Pairs > 0 {
-				fmt.Fprintf(g.out, "suggested for the B device:  clock_offset: %dns\n", res.SuggestedOffsetNs)
+				out.printf(g.out, "suggested for the B device:  clock_offset: %dns\n", res.SuggestedOffsetNs)
 			}
 			return nil
 		},
@@ -258,12 +268,14 @@ edges can be paired; a perfectly periodic signal is rejected as ambiguous.
 The timeline is not modified; --save stores the mapping in the session metadata.`,
 		Example: `  hwlab calibrate-clocks latest --ref logic --dev ppk2 --ref-channel SHARED --dev-channel D0 --save`,
 		Args:    cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			res, err := g.app.CalibrateClocks(app.ClockCalibrationQuery{Session: args[0], Ref: ref, Dev: dev,
 				RefChan: refCh, DevChan: devCh, TolNs: tol, Save: save})
 			if err != nil {
 				if res != nil && !g.json {
-					fmt.Fprintf(g.out, "edges: %d (ref) / %d (dev); best alignment %d matching intervals, runner-up %d\n",
+					out.printf(g.out, "edges: %d (ref) / %d (dev); best alignment %d matching intervals, runner-up %d\n",
 						res.RefEdges, res.DevEdges, res.MatchScore, res.MatchRunner)
 				}
 				return err
@@ -272,18 +284,18 @@ The timeline is not modified; --save stores the mapping in the session metadata.
 				return g.printJSON(res)
 			}
 			c, f := res.Calibration, res.Fit
-			fmt.Fprintf(g.out, "reference %s, device %s\n", c.Reference, c.Alias)
-			fmt.Fprintf(g.out, "matched edges:           %d (of %d / %d; %d rejected as outliers), span %s\n", c.Pairs, res.RefEdges, res.DevEdges, c.Rejected, fmtDur(c.SpanNs))
-			fmt.Fprintf(g.out, "initial offset:          %s (reference - device at the first edge)\n", fmtDur(c.InitialOffsetNs))
-			fmt.Fprintf(g.out, "residual median/p95/max: %s / %s / %s\n", fmtDur(c.ResidualMedianNs), fmtDur(c.ResidualP95Ns), fmtDur(c.ResidualMaxNs))
-			fmt.Fprintf(g.out, "drift:                   %.2f ppm (+/- %.2f, 1 sigma)\n", c.DriftPPM, c.DriftStdErrPPM)
-			fmt.Fprintf(g.out, "fixed offset only:       p95 residual %s, max %s\n", fmtDur(f.OffsetOnlyP95Ns), fmtDur(f.OffsetOnlyMaxNs))
-			fmt.Fprintf(g.out, "uncertainty:             +/- %s\n", fmtDur(c.UncertaintyNs))
+			out.printf(g.out, "reference %s, device %s\n", c.Reference, c.Alias)
+			out.printf(g.out, "matched edges:           %d (of %d / %d; %d rejected as outliers), span %s\n", c.Pairs, res.RefEdges, res.DevEdges, c.Rejected, fmtDur(c.SpanNs))
+			out.printf(g.out, "initial offset:          %s (reference - device at the first edge)\n", fmtDur(c.InitialOffsetNs))
+			out.printf(g.out, "residual median/p95/max: %s / %s / %s\n", fmtDur(c.ResidualMedianNs), fmtDur(c.ResidualP95Ns), fmtDur(c.ResidualMaxNs))
+			out.printf(g.out, "drift:                   %.2f ppm (+/- %.2f, 1 sigma)\n", c.DriftPPM, c.DriftStdErrPPM)
+			out.printf(g.out, "fixed offset only:       p95 residual %s, max %s\n", fmtDur(f.OffsetOnlyP95Ns), fmtDur(f.OffsetOnlyMaxNs))
+			out.printf(g.out, "uncertainty:             +/- %s\n", fmtDur(c.UncertaintyNs))
 			for _, w := range res.Warnings {
-				fmt.Fprintf(g.out, "warning: %s\n", w)
+				out.printf(g.out, "warning: %s\n", w)
 			}
 			if res.Saved {
-				fmt.Fprintln(g.out, "saved to the session metadata")
+				out.println(g.out, "saved to the session metadata")
 			}
 			return nil
 		},
@@ -306,7 +318,9 @@ func analyzeCmd(g *globals) *cobra.Command {
 		Use:   "analyze SESSION",
 		Short: "Power statistics and current spikes of a recorded session",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			f, err := app.ParseTime(from)
 			if err != nil {
 				return err
@@ -325,16 +339,16 @@ func analyzeCmd(g *globals) *cobra.Command {
 			}
 			for _, pa := range res {
 				st := pa.Stats
-				fmt.Fprintf(g.out, "%s/%s  %s .. %s  samples=%d\n", pa.Source, pa.Stream, fmtDur(st.StartNs), fmtDur(st.EndNs), st.Samples)
-				fmt.Fprintf(g.out, "  mean %s  min %s  max %s (at %s)\n", analysis.FormatCurrent(st.MeanNA),
+				out.printf(g.out, "%s/%s  %s .. %s  samples=%d\n", pa.Source, pa.Stream, fmtDur(st.StartNs), fmtDur(st.EndNs), st.Samples)
+				out.printf(g.out, "  mean %s  min %s  max %s (at %s)\n", analysis.FormatCurrent(st.MeanNA),
 					analysis.FormatCurrent(st.MinNA), analysis.FormatCurrent(st.MaxNA), fmtDur(st.PeakAtNs))
-				fmt.Fprintf(g.out, "  charge %.3f µC", st.ChargeUC)
+				out.printf(g.out, "  charge %.3f µC", st.ChargeUC)
 				if st.HasEnergy {
-					fmt.Fprintf(g.out, "  energy %.3f µJ", st.EnergyUJ)
+					out.printf(g.out, "  energy %.3f µJ", st.EnergyUJ)
 				}
-				fmt.Fprintln(g.out)
+				out.println(g.out)
 				for i, sp := range pa.Spikes {
-					fmt.Fprintf(g.out, "  spike %2d  %s  dur %.1f µs  peak %s  baseline %s  %.3f µC\n", i+1, fmtDur(sp.StartNs),
+					out.printf(g.out, "  spike %2d  %s  dur %.1f µs  peak %s  baseline %s  %.3f µC\n", i+1, fmtDur(sp.StartNs),
 						float64(sp.DurationNs())/1e3, analysis.FormatCurrent(sp.PeakNA), analysis.FormatCurrent(sp.BaselineNA), sp.ChargeUC)
 				}
 			}
@@ -358,7 +372,9 @@ func plotCmd(g *globals) *cobra.Command {
 		Use:   "plot SESSION",
 		Short: "Render a timeline plot (SVG or PNG) of a session range",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			var output printer
+			defer output.finish(&retErr)
 			f, err := app.ParseTime(from)
 			if err != nil {
 				return err
@@ -378,7 +394,7 @@ func plotCmd(g *globals) *cobra.Command {
 			if g.json {
 				return g.printJSON(res)
 			}
-			fmt.Fprintf(g.out, "%s  (%dx%d, %d tracks, %s .. %s)\n", res.Path, res.Width, res.Height, res.Tracks, fmtDur(res.StartNs), fmtDur(res.EndNs))
+			output.printf(g.out, "%s  (%dx%d, %d tracks, %s .. %s)\n", res.Path, res.Width, res.Height, res.Tracks, fmtDur(res.StartNs), fmtDur(res.EndNs))
 			return nil
 		},
 	}

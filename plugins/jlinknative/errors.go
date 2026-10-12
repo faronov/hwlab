@@ -41,7 +41,7 @@ func IsUnsupportedByHW(err error) bool {
 // classify turns a transport, protocol, SWD, ADIv5 or Cortex-M error into a
 // gRPC status whose message starts with the failure class.
 func classify(err error) error {
-	if primary := cortexm.PrimaryError(err); primary != err {
+	if primary, cleanup := cortexm.PrimaryError(err); cleanup {
 		st := status.Convert(classify(primary))
 		return status.Error(st.Code(), st.Message()+strings.TrimPrefix(err.Error(), primary.Error()))
 	}

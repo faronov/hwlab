@@ -78,9 +78,10 @@ func (d *Device) step() int {
 			return d.bad(op)
 		}
 		if d.cfg.HighSpeed {
-			if op == 0x8B {
+			switch op {
+			case 0x8B:
 				d.div5 = true
-			} else if op == 0x8A {
+			case 0x8A:
 				d.div5 = false
 			}
 		}

@@ -49,7 +49,7 @@ func (m *DM) WaitHalt(ctx context.Context, timeout time.Duration) (HaltInfo, err
 	_, err := m.poll(ctx, "halt", func(s Status) bool { return s.State == HartHalted })
 	m.Timeout = saved
 	if err != nil {
-		return HaltInfo{}, fmt.Errorf("%w: %v", ErrHaltTimeout, err)
+		return HaltInfo{}, fmt.Errorf("%w: %w", ErrHaltTimeout, err)
 	}
 	return m.HaltedInfo(ctx)
 }

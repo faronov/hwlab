@@ -186,11 +186,6 @@ func (g *generator) power(c *capture, from, to time.Duration) []*pluginv1.Event 
 	}}
 }
 
-type edge struct {
-	t     time.Duration
-	state uint32
-}
-
 // logicState returns the IRQ (bit0) / SPI_CS (bit1, idle high) word at t.
 func (g *generator) logicState(t time.Duration) uint32 {
 	state := uint32(0b10)

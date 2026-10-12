@@ -1,6 +1,7 @@
 package uart
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -101,8 +102,7 @@ func OpenPort(path string, m Mode) (Port, error) {
 	rp := &realPort{Port: p, path: path}
 	if m.Flow != FlowNone {
 		if err := applyFlow(p, m.Flow); err != nil {
-			p.Close()
-			return nil, err
+			return nil, errors.Join(err, p.Close())
 		}
 	}
 	return rp, nil
@@ -125,7 +125,7 @@ func (p *realPort) SetMode(m Mode) error {
 	return nil
 }
 
-func (p *realPort) ResetInput() error { return p.Port.ResetInputBuffer() }
+func (p *realPort) ResetInput() error { return p.ResetInputBuffer() }
 
 func toSerialMode(m Mode) (*serial.Mode, error) {
 	sm := &serial.Mode{BaudRate: m.Baud, DataBits: m.DataBits}

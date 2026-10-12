@@ -99,9 +99,9 @@ func (p *Plugin) StartCapture(ctx context.Context, req pluginsdk.CaptureRequest,
 	cancel()
 	t1 := time.Now()
 	if err != nil {
-		conn.Close()
+		closeErr := conn.Close()
 		unlock()
-		return nil, nil, fmt.Errorf("Logic 2 StartCapture on %s: %w", p.addr, err)
+		return nil, nil, errors.Join(fmt.Errorf("logic 2 StartCapture on %s: %w", p.addr, err), closeErr)
 	}
 	c.capID = reply.GetCaptureInfo().GetCaptureId()
 	c.started, c.latency = t1, t1.Sub(t0)
@@ -187,7 +187,13 @@ func (c *capture) Result() *pluginv1.StopCaptureResponse {
 func (c *capture) run(ctx context.Context) {
 	defer close(c.done)
 	defer c.unlock()
-	defer c.conn.Close()
+	defer func() {
+		if err := c.conn.Close(); err != nil {
+			c.mu.Lock()
+			c.err = errors.Join(c.err, fmt.Errorf("close Logic 2 connection: %w", err))
+			c.mu.Unlock()
+		}
+	}()
 	bg := context.WithoutCancel(ctx)
 
 	if err := c.waitEnd(ctx, bg); err != nil {
@@ -234,7 +240,7 @@ func wrapRPC(what string, err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("Logic 2 %s: %w", what, err)
+	return fmt.Errorf("logic 2 %s: %w", what, err)
 }
 
 func (p *Plugin) stopTimeout() time.Duration {
@@ -327,7 +333,7 @@ func (c *capture) export(bg context.Context) {
 		}
 	}
 	if failures > 0 && c.events == 0 && len(c.artifacts) == 0 {
-		c.setErr(fmt.Errorf("Logic 2 export produced nothing: %s", c.firstWarning()))
+		c.setErr(fmt.Errorf("logic 2 export produced nothing: %s", c.firstWarning()))
 	}
 }
 
@@ -346,12 +352,12 @@ func (c *capture) logWarn(ctx context.Context, msg string) {
 		Payload: &pluginv1.Event_Log{Log: &pluginv1.Log{Level: "warn", Source: "saleae", Message: msg}}})
 }
 
-func (c *capture) ingestDigital(ctx context.Context, path string) error {
+func (c *capture) ingestDigital(ctx context.Context, path string) (retErr error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { retErr = errors.Join(retErr, f.Close()) }()
 	names := make([]string, len(c.cfg.Digital))
 	for i, ch := range c.cfg.Digital {
 		names[i] = c.cfg.channelName(ch)
@@ -366,12 +372,12 @@ func (c *capture) ingestDigital(ctx context.Context, path string) error {
 	})
 }
 
-func (c *capture) ingestAnalog(ctx context.Context, path string) error {
+func (c *capture) ingestAnalog(ctx context.Context, path string) (retErr error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { retErr = errors.Join(retErr, f.Close()) }()
 	names := make([]string, len(c.cfg.Analog))
 	for i, ch := range c.cfg.Analog {
 		names[i] = fmt.Sprintf("A%d", ch)
@@ -393,7 +399,7 @@ func (c *capture) ingestAnalog(ctx context.Context, path string) error {
 	})
 }
 
-func (c *capture) ingestAnalyzer(ctx context.Context, i int, a analyzerSpec) error {
+func (c *capture) ingestAnalyzer(ctx context.Context, i int, a analyzerSpec) (retErr error) {
 	actx, cancel := context.WithTimeout(ctx, exportTimeout)
 	defer cancel()
 	added, err := c.mgr.AddAnalyzer(actx, &saleaepb.AddAnalyzerRequest{
@@ -414,7 +420,7 @@ func (c *capture) ingestAnalyzer(ctx context.Context, i int, a analyzerSpec) err
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { retErr = errors.Join(retErr, f.Close()) }()
 	c.addArtifact(filepath.Base(path), "csv", "text/csv", path, map[string]string{"analyzer": a.Name, "label": a.Label})
 	proto := a.Kind
 	if proto == "" {
@@ -445,7 +451,7 @@ func (c *capture) ingestAnalyzer(ctx context.Context, i int, a analyzerSpec) err
 func sanitize(s string) string {
 	out := []rune(s)
 	for i, r := range out {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_' {
 			out[i] = '_'
 		}
 	}

@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -208,7 +209,10 @@ func AnnotatePower(ctx context.Context, sess *session.Session, nominalV float64,
 			return total, err
 		}
 		spikes, err := DetectSpikes(ctx, rd, 0, 0, nominalV, o)
-		rd.Close()
+		// Even a read-only stream must release its descriptor successfully.
+		if closeErr := rd.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close power stream: %w", closeErr))
+		}
 		if err != nil {
 			return total, fmt.Errorf("analyze %s: %w", sm.ID, err)
 		}

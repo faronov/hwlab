@@ -134,7 +134,9 @@ func TestNativeProgramVerifyEndToEnd(t *testing.T) {
 func TestNativeProgramNeedsPermission(t *testing.T) {
 	p := attached(t, sessionCfg)
 	path := filepath.Join(t.TempDir(), "fw.bin")
-	os.WriteFile(path, []byte{1, 2, 3, 4}, 0o644)
+	if err := os.WriteFile(path, []byte{1, 2, 3, 4}, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	_, err := invoke(t, p, pluginv1.CapFlashProgramming, "program", "90000003", map[string]any{"path": path, "confirm": "program-flash"})
 	wantCode(t, err, codes.PermissionDenied)
 	_, err = invoke(t, p, pluginv1.CapFlashProgramming, "erase", "90000003", map[string]any{"confirm": "erase-entire-chip"})

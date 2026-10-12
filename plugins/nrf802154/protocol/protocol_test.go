@@ -196,7 +196,11 @@ func TestDeviceStartAndRun(t *testing.T) {
 func TestDeviceRejectsBadChannel(t *testing.T) {
 	sim := NewSim()
 	d, _ := Open(sim.Opener(), "sim")
-	defer d.Close()
+	t.Cleanup(func() {
+		if err := d.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	if err := d.Start(context.Background(), 10); err == nil {
 		t.Fatal("expected error for channel 10")
 	}
@@ -207,7 +211,11 @@ func TestDeviceReportsPortFailure(t *testing.T) {
 	sim.FailAfter = 5
 	d, _ := Open(sim.Opener(), "sim")
 	d.Quiet = 20 * time.Millisecond
-	defer d.Close()
+	t.Cleanup(func() {
+		if err := d.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	if err := d.Start(context.Background(), 20); err != nil {
 		t.Fatal(err)
 	}

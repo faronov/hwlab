@@ -159,7 +159,7 @@ func (b *Backend) StreamEvents(ctx context.Context, alias string, fn func(*plugi
 				return err
 			}
 			err = replayStream(ctx, st, rd, fn)
-			rd.Close()
+			err = errors.Join(err, rd.Close())
 			if err != nil {
 				return err
 			}

@@ -14,14 +14,13 @@ import (
 // fakePort is a scripted usb.Port: each BulkOut is recorded, each BulkIn pops
 // the next scripted answer.
 type fakePort struct {
-	mu      sync.Mutex
-	outs    [][]byte
-	ins     []inAnswer
-	inLens  []int
-	halts   []uint8
-	outErr  error
-	closed  bool
-	pending int // stale responses a drain must remove
+	mu     sync.Mutex
+	outs   [][]byte
+	ins    []inAnswer
+	inLens []int
+	halts  []uint8
+	outErr error
+	closed bool
 }
 
 type inAnswer struct {
@@ -264,7 +263,7 @@ func TestAckDecoding(t *testing.T) {
 		{AckOK, nil}, {AckWait, ErrWait}, {AckFault, ErrFault}, {AckNone, ErrNoACK}, {0, ErrNoACK},
 		{AckOK | 0x08, ErrProtocol}, {AckOK | 0x10, ErrMismatch},
 	} {
-		if got := ackError(c.resp); !errors.Is(got, c.want) && got != c.want {
+		if got := ackError(c.resp); !errors.Is(got, c.want) {
 			t.Errorf("ack %#x: got %v want %v", c.resp, got, c.want)
 		}
 	}

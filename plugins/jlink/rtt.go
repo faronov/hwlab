@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -113,7 +114,12 @@ func (c *rttCapture) emit(ctx context.Context, evs []*pluginv1.Event) {
 func (c *rttCapture) read(ctx context.Context, conn net.Conn) {
 	defer c.wg.Done()
 	defer c.shutdown()
-	go func() { <-ctx.Done(); conn.Close() }()
+	go func() {
+		<-ctx.Done()
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			slog.Warn("close RTT connection", "err", err)
+		}
+	}()
 
 	var (
 		pending []byte
@@ -158,7 +164,8 @@ func (c *rttCapture) read(ctx context.Context, conn net.Conn) {
 			flush()
 		}
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
 				if ctx.Err() != nil {
 					return
 				}

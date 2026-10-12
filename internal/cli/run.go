@@ -14,11 +14,13 @@ import (
 	"github.com/faronov/hwlab/internal/replay"
 )
 
-func printRun(g *globals, res *app.RunResult) error {
+func printRun(g *globals, res *app.RunResult) (retErr error) {
+	var out printer
+	defer out.finish(&retErr)
 	if g.json {
 		return g.printJSON(res)
 	}
-	fmt.Fprintf(g.out, "session:   %s\nstatus:    %s\ndir:       %s\nduration:  %s\ndevices:   %s\nsamples:   %d\n",
+	out.printf(g.out, "session:   %s\nstatus:    %s\ndir:       %s\nduration:  %s\ndevices:   %s\nsamples:   %d\n",
 		res.SessionID, res.Status, res.Dir, fmtDur(res.DurationNs), join(res.Devices), res.Samples)
 	if len(res.Events) > 0 {
 		var parts []string
@@ -26,22 +28,22 @@ func printRun(g *globals, res *app.RunResult) error {
 			parts = append(parts, fmt.Sprintf("%s=%d", t, n))
 		}
 		sortStrings(parts)
-		fmt.Fprintf(g.out, "timeline:  %s\n", strings.Join(parts, " "))
+		out.printf(g.out, "timeline:  %s\n", strings.Join(parts, " "))
 	}
 	if res.Spikes > 0 {
-		fmt.Fprintf(g.out, "power spikes annotated: %d\n", res.Spikes)
+		out.printf(g.out, "power spikes annotated: %d\n", res.Spikes)
 	}
 	for _, a := range res.Artifacts {
-		fmt.Fprintf(g.out, "artifact:  %s\n", a)
+		out.printf(g.out, "artifact:  %s\n", a)
 	}
 	for _, p := range res.Plots {
-		fmt.Fprintf(g.out, "plot:      %s\n", p)
+		out.printf(g.out, "plot:      %s\n", p)
 	}
 	for _, w := range res.Warnings {
-		fmt.Fprintf(g.out, "warning:   %s\n", w)
+		out.printf(g.out, "warning:   %s\n", w)
 	}
 	if res.Error != "" {
-		fmt.Fprintf(g.out, "error:     %s\n", res.Error)
+		out.printf(g.out, "error:     %s\n", res.Error)
 	}
 	return nil
 }
@@ -179,13 +181,15 @@ func labCmd(g *globals) *cobra.Command {
 	return lab
 }
 
-func runAdhoc(ctx context.Context, g *globals, spec app.RunSpec) error {
+func runAdhoc(ctx context.Context, g *globals, spec app.RunSpec) (retErr error) {
+	var out printer
+	defer out.finish(&retErr)
 	r, err := g.app.StartCapture(ctx, spec)
 	if err != nil {
 		return confirmHint(err)
 	}
 	if !g.json {
-		fmt.Fprintf(g.out, "capturing %s into session %s (Ctrl-C to stop early)\n", spec.Duration, r.Session.ID())
+		out.printf(g.out, "capturing %s into session %s (Ctrl-C to stop early)\n", spec.Duration, r.Session.ID())
 	}
 	select {
 	case <-r.Finished():
@@ -294,9 +298,11 @@ it does not identify networks.`,
 	return root
 }
 
-func printScan(g *globals, res map[string]any) error {
+func printScan(g *globals, res map[string]any) (retErr error) {
+	var out printer
+	defer out.finish(&retErr)
 	tw := g.table()
-	fmt.Fprintln(tw, "CHANNEL\tPACKETS\tPKT/S\tRSSI MIN\tRSSI MEAN\tRSSI MAX\tLQI\tACTIVE")
+	out.println(tw, "CHANNEL\tPACKETS\tPKT/S\tRSSI MIN\tRSSI MEAN\tRSSI MAX\tLQI\tACTIVE")
 	rows, _ := res["channels"].([]any)
 	num := func(m map[string]any, k string) string {
 		v, ok := m[k].(float64)
@@ -311,7 +317,7 @@ func printScan(g *globals, res map[string]any) error {
 		if b, _ := m["likely_active"].(bool); b {
 			active = "*"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", num(m, "channel"), num(m, "packets"), num(m, "packets_per_s"),
+		out.printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", num(m, "channel"), num(m, "packets"), num(m, "packets_per_s"),
 			num(m, "rssi_min_dbm"), num(m, "rssi_mean_dbm"), num(m, "rssi_max_dbm"), num(m, "lqi_mean"), active)
 	}
 	if err := tw.Flush(); err != nil {
@@ -321,6 +327,6 @@ func printScan(g *globals, res map[string]any) error {
 	for _, a := range res["likely_active"].([]any) {
 		act = append(act, strconv.FormatFloat(a.(float64), 'f', -1, 64))
 	}
-	fmt.Fprintf(g.out, "likely active channels: %s\n", join(act))
+	out.printf(g.out, "likely active channels: %s\n", join(act))
 	return nil
 }

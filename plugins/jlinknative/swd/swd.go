@@ -239,7 +239,6 @@ type failure struct {
 	idx    int
 	ack    uint32
 	parity bool
-	err    error
 }
 
 // exec runs txns in as many probe commands as the bit budget needs. It

@@ -8,7 +8,7 @@ import (
 
 func TestCancellationIsNotProtocolError(t *testing.T) {
 	for _, err := range []error{context.Canceled, context.DeadlineExceeded} {
-		if got := mapUSB("bulk in", err); !errors.Is(got, err) || got != err {
+		if got := mapUSB("bulk in", err); !errors.Is(got, err) || errors.Unwrap(got) != nil {
 			t.Fatalf("cancellation reclassified: %v", got)
 		}
 		c := &Conn{}

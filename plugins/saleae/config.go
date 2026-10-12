@@ -232,7 +232,7 @@ func parseAnalyzer(e any) (analyzerSpec, error) {
 		chanKeys = k.channels
 	}
 	if a.Name == "" {
-		return a, fmt.Errorf("needs type: (spi, i2c, uart) or name:")
+		return a, fmt.Errorf("needs type (spi, i2c, uart) or name")
 	}
 	if a.Label == "" {
 		if a.Kind != "" {

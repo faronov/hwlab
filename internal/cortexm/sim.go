@@ -66,9 +66,10 @@ func NewSim() *Sim {
 	binary.LittleEndian.PutUint32(flash[4:], 0x101)
 	for off := 0x100; off+4 <= len(flash); off += 2 {
 		hw := uint16(0xBF00) // NOP
-		if (off/2)%5 == 1 {  // first half of a 32-bit BL
+		switch (off / 2) % 5 {
+		case 1: // first half of a 32-bit BL
 			hw = 0xF000
-		} else if (off/2)%5 == 2 {
+		case 2:
 			hw = 0xF800
 		}
 		binary.LittleEndian.PutUint16(flash[off:], hw)

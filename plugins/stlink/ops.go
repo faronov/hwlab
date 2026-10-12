@@ -18,7 +18,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/faronov/hwlab/internal/cortexm"
-	"github.com/faronov/hwlab/plugins/stlink/stlink"
 	"github.com/faronov/hwlab/plugins/stlink/stm32"
 )
 
@@ -650,7 +649,7 @@ func (s *session) pinReset(ctx context.Context, halt bool) (map[string]any, erro
 		time.Sleep(10 * time.Millisecond)
 	}
 	obs["reset_seen"], obs["debug_enable_lost"] = seen, lost
-	if !seen && !lost && !(halt && after.Halted) {
+	if !seen && !lost && (!halt || !after.Halted) {
 		restore()
 		return obs, errors.New("NRST was driven low and released but no reset was observed (S_RESET_ST stayed clear and debug stayed enabled): NRST is probably not connected to the target; the pin reset is NOT claimed")
 	}
@@ -1143,9 +1142,10 @@ func (s *session) setSpeed(ctx context.Context, args map[string]any) (map[string
 	// The new clock is proven by a read; if it fails the old clock is restored.
 	if _, rerr := s.core.ReadIdentity(ctx); rerr != nil {
 		if _, e := s.conn.SetSWDClock(ctx, prev); e != nil {
-			return nil, fmt.Errorf("SWD at %d kHz does not work (%v) and restoring %d kHz failed too: %w", got, rerr, prev, e)
+			return nil, cortexm.WithCleanupError(fmt.Errorf("SWD at %d kHz does not work: %w", got, rerr),
+				fmt.Errorf("restore previous %d kHz: %w", prev, e))
 		}
-		return nil, fmt.Errorf("SWD at %d kHz does not work (%v); the previous %d kHz was restored", got, rerr, prev)
+		return nil, fmt.Errorf("SWD at %d kHz does not work (%w); the previous %d kHz was restored", got, rerr, prev)
 	}
 	s.actualKHz = got
 	return s.mark(map[string]any{"requested_khz": float64(khz), "actual_khz": float64(got), "previous_khz": float64(prev),
@@ -1170,11 +1170,6 @@ func (s *session) facts() map[string]any {
 		res["serial_note"] = s.serialChecked
 	}
 	return res
-}
-
-func isStatusErr(err error) bool {
-	var se *stlink.StatusError
-	return errors.As(err, &se)
 }
 
 func khzList(v []int) []any {

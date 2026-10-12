@@ -111,7 +111,7 @@ func Find(ctx context.Context, m Memory, ranges []Range, chunk int) (uint32, err
 		}
 	}
 	if lastCorrupt != nil {
-		return 0, fmt.Errorf("%w (identifier found but rejected: %v)", ErrNotFound, lastCorrupt)
+		return 0, fmt.Errorf("%w (identifier found but rejected: %w)", ErrNotFound, lastCorrupt)
 	}
 	return 0, ErrNotFound
 }

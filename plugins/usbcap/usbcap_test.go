@@ -16,6 +16,7 @@ import (
 
 	"github.com/faronov/hwlab/internal/decode"
 	"github.com/faronov/hwlab/internal/pcap"
+	"github.com/faronov/hwlab/internal/testutil"
 	"github.com/faronov/hwlab/internal/usbcap"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
@@ -140,7 +141,7 @@ func TestSyntheticCaptureEventsAndPcapng(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { testutil.CheckError(t, f.Close()) }()
 	ng, err := pcap.ReadNG(f)
 	if err != nil {
 		t.Fatal(err)
@@ -301,7 +302,7 @@ func TestFifoSourceCancelsCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer w.Close()
+	defer func() { testutil.CheckError(t, w.Close()) }()
 	pk := usbcap.Synthetic(2)[:4]
 	p := NewWith(func() []Source { return []Source{{ID: "live", Backend: "usbmon", Path: path, Live: true}} })
 	var evs []*pluginv1.Event

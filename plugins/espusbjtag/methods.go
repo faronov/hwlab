@@ -321,10 +321,10 @@ func usbFacts(e Entry) map[string]any {
 			eps = append(eps, fmt.Sprintf("0x%02x %s %dB", ep.Address, ep.Type, ep.MaxPacket))
 		}
 		m["endpoints"] = eps
-		switch {
-		case i.Class == 0xff:
+		switch i.Class {
+		case 0xff:
 			m["role"] = "jtag (claimed by this plugin)"
-		case i.Class == 0x02 || i.Class == 0x0a:
+		case 0x02, 0x0a:
 			m["role"] = "cdc-acm serial (never claimed; use the uart plugin)"
 		}
 		ifs = append(ifs, m)
@@ -421,7 +421,7 @@ func (s *session) shift(ctx context.Context, args map[string]any, ir bool) (map[
 		}
 		b, err := hex.DecodeString(strings.TrimPrefix(strings.TrimSpace(str), "0x"))
 		if err != nil {
-			return nil, argErr(fmt.Errorf("data: %v", err))
+			return nil, argErr(fmt.Errorf("data: %w", err))
 		}
 		if len(b) != (n+7)/8 {
 			return nil, argErr(fmt.Errorf("data: %d bits need %d bytes, got %d", n, (n+7)/8, len(b)))

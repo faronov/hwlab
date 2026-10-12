@@ -8,6 +8,14 @@ import (
 	"testing"
 )
 
+// CheckError reports cleanup failures without stopping remaining cleanup.
+func CheckError(tb testing.TB, err error) {
+	tb.Helper()
+	if err != nil {
+		tb.Error(err)
+	}
+}
+
 // ModuleRoot returns the repository root (the directory holding go.mod).
 func ModuleRoot(tb testing.TB) string {
 	tb.Helper()
@@ -33,7 +41,7 @@ func BuildPlugin(tb testing.TB, name string) string {
 	dir := tb.TempDir()
 	goBin, err := exec.LookPath("go")
 	if err != nil {
-		goBin = filepath.Join(runtime.GOROOT(), "bin", "go")
+		tb.Fatalf("locate Go tool: %v", err)
 	}
 	cmd := exec.Command(goBin, "build", "-o", filepath.Join(dir, "hwlab-plugin-"+name+exeSuffix()), "./plugins/"+name+"/cmd/hwlab-plugin-"+name)
 	cmd.Dir = ModuleRoot(tb)

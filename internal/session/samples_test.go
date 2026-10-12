@@ -41,7 +41,11 @@ func TestHwcapPowerRoundTripAndRangeRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	t.Cleanup(func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	if r.Kind() != "power" || r.Samples() != int64(len(written)) {
 		t.Fatalf("kind=%s samples=%d", r.Kind(), r.Samples())
 	}
@@ -85,44 +89,66 @@ func TestHwcapPowerRoundTripAndRangeRead(t *testing.T) {
 
 func TestHwcapDigitalAndAnalog(t *testing.T) {
 	store := DirSampleStore{Root: t.TempDir()}
-	w, _ := store.Create("d.hwcap")
+	w, err := store.Create("d.hwcap")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := w.WriteDigital(&DigitalChunk{StartNs: 100, PeriodNs: 10, Words: []uint32{0, 1, 3, 2}}); err != nil {
 		t.Fatal(err)
 	}
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
 	r, err := store.Open("d.hwcap")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	t.Cleanup(func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	var words []uint32
-	r.ReadDigital(context.Background(), math.MinInt64, math.MaxInt64, func(c *DigitalChunk) error {
+	if err := r.ReadDigital(context.Background(), math.MinInt64, math.MaxInt64, func(c *DigitalChunk) error {
 		words = append(words, c.Words...)
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if len(words) != 4 || words[2] != 3 {
 		t.Errorf("words = %v", words)
 	}
 
-	w, _ = store.Create("a.hwcap")
+	w, err = store.Create("a.hwcap")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ac := &AnalogChunk{StartNs: 0, PeriodNs: 1000, Channels: 2, Samples: []float32{1, 2, 3, 4, 5, 6}}
 	if err := w.WriteAnalog(ac); err != nil {
 		t.Fatal(err)
 	}
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
 	r2, err := store.Open("a.hwcap")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r2.Close()
+	t.Cleanup(func() {
+		if err := r2.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	var samples []float32
-	r2.ReadAnalog(context.Background(), math.MinInt64, math.MaxInt64, func(c *AnalogChunk) error {
+	if err := r2.ReadAnalog(context.Background(), math.MinInt64, math.MaxInt64, func(c *AnalogChunk) error {
 		if c.Channels != 2 || c.N() != 3 {
 			t.Errorf("channels=%d n=%d", c.Channels, c.N())
 		}
 		samples = append(samples, c.Samples...)
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if len(samples) != 6 || samples[5] != 6 {
 		t.Errorf("samples = %v", samples)
 	}
@@ -131,8 +157,13 @@ func TestHwcapDigitalAndAnalog(t *testing.T) {
 func TestOpenRejectsGarbage(t *testing.T) {
 	dir := t.TempDir()
 	store := DirSampleStore{Root: dir}
-	w, _ := store.Create("x.hwcap")
-	w.Close()
+	w, err := store.Create("x.hwcap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := writeFile(dir+"/bad.hwcap", []byte("not an hwcap file at all")); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +202,11 @@ func TestPowerDigitalEncodings(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer r.Close()
+			t.Cleanup(func() {
+				if err := r.Close(); err != nil {
+					t.Error(err)
+				}
+			})
 			var got []uint32
 			if err := r.ReadPower(context.Background(), 0, 1<<40, func(pc *PowerChunk) error {
 				got = append(got, pc.Digital...)

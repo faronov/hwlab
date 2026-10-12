@@ -71,15 +71,6 @@ type known struct {
 	id   *identity
 }
 
-func (p *Plugin) present(id string) bool {
-	for _, e := range p.list() {
-		if e.ID == id {
-			return true
-		}
-	}
-	return false
-}
-
 // pollUntil calls f every step until it returns true or the deadline passes.
 func pollUntil(ctx context.Context, d, step time.Duration, f func() bool) (time.Duration, bool) {
 	t0 := time.Now()

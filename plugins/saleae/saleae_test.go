@@ -341,7 +341,7 @@ func TestReadDigitalCSVMergesAndBatches(t *testing.T) {
 	for i := 0; i < 2*maxEdgesPerBatch+10; i++ {
 		ns := 1000 + i*10
 		level := (i + 1) % 2
-		b.WriteString(fmt.Sprintf("0.%09d,%d\n", ns, level))
+		fmt.Fprintf(&b, "0.%09d,%d\n", ns, level)
 	}
 	var batches []*digitalEdges
 	err := readDigitalCSV(strings.NewReader(b.String()), 1, func(e *digitalEdges) error {

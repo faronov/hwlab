@@ -128,7 +128,7 @@ func (t *usbTransport) Exchange(req []byte, timeout time.Duration) ([]byte, erro
 	for len(payload) < n {
 		more, err := t.in(ctx, deadline)
 		if err != nil {
-			return nil, fmt.Errorf("%w: got %d of %d payload bytes: %v", ErrShortReply, len(payload), n, err)
+			return nil, fmt.Errorf("%w: got %d of %d payload bytes: %w", ErrShortReply, len(payload), n, err)
 		}
 		payload = append(payload, more...)
 	}

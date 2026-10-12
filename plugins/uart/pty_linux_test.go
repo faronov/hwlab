@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/faronov/hwlab/internal/testutil"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
 )
@@ -25,7 +26,7 @@ func openPTY(t *testing.T) (*os.File, string) {
 	if err != nil {
 		t.Skipf("no pty support: %v", err)
 	}
-	t.Cleanup(func() { m.Close() })
+	t.Cleanup(func() { testutil.CheckError(t, m.Close()) })
 	rc, err := m.SyscallConn()
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +68,7 @@ func TestRealPortFramingAndFlowControlOnPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer func() { testutil.CheckError(t, p.Close()) }()
 
 	tio := portTermios(t, p)
 	if tio.Cflag&unix.CRTSCTS == 0 {
@@ -110,7 +111,7 @@ func TestPluginOverPTY(t *testing.T) {
 	if err := p.OpenDevice(ctx, "pty", map[string]any{"path": slave, "baud": 115200.0}); err != nil {
 		t.Fatal(err)
 	}
-	defer p.CloseDevice(ctx, "pty")
+	defer func() { testutil.CheckError(t, p.CloseDevice(ctx, "pty")) }()
 
 	cctx, cancel := context.WithCancel(ctx)
 	sink := pluginsdk.NewTestSink(64)

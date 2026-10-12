@@ -67,17 +67,14 @@ func OpenSocketCAN(name string, o Options) (Bus, error) {
 		return nil, fmt.Errorf("socket(AF_CAN): %w", err)
 	}
 	if err := configureSocket(fd, o); err != nil {
-		unix.Close(fd)
-		return nil, err
+		return nil, errors.Join(err, unix.Close(fd))
 	}
 	if err := unix.Bind(fd, &unix.SockaddrCAN{Ifindex: ifi.Index}); err != nil {
-		unix.Close(fd)
-		return nil, fmt.Errorf("bind %s: %w", name, err)
+		return nil, errors.Join(fmt.Errorf("bind %s: %w", name, err), unix.Close(fd))
 	}
 	b, err := newSocketBus(fd, name, o)
 	if err != nil {
-		unix.Close(fd)
-		return nil, err
+		return nil, errors.Join(err, unix.Close(fd))
 	}
 	return b, nil
 }

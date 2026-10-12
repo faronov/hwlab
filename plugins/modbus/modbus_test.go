@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/faronov/hwlab/internal/modbus"
+	"github.com/faronov/hwlab/internal/testutil"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
 	"github.com/faronov/hwlab/plugins/uart"
@@ -204,7 +205,7 @@ func TestErrorsAndValidation(t *testing.T) {
 	if err := p.OpenDevice(context.Background(), FakeID, map[string]any{"timeout_ms": 60.0}); err != nil {
 		t.Fatal(err)
 	}
-	defer p.CloseDevice(context.Background(), FakeID)
+	defer func() { testutil.CheckError(t, p.CloseDevice(context.Background(), FakeID)) }()
 
 	if _, err := invoke(t, p, "read_holding_registers", map[string]any{"address": 1000.0, "quantity": 2.0}); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "illegal_data_address") {
 		t.Errorf("exception: %v", err)
@@ -264,7 +265,7 @@ func TestTCPPath(t *testing.T) {
 	if err != nil {
 		t.Skip("no loopback:", err)
 	}
-	defer l.Close()
+	defer func() { testutil.CheckError(t, l.Close()) }()
 	go slave.ServeTCP(l)
 	list := func() ([]Entry, error) {
 		return []Entry{{ID: "plc", Source: "env", Addr: Addr{Kind: "tcp", Target: l.Addr().String()}}}, nil
@@ -369,7 +370,7 @@ func TestCaptureValidationAndExclusivity(t *testing.T) {
 	if err := p.OpenDevice(ctx, FakeID, nil); err != nil {
 		t.Fatal(err)
 	}
-	defer p.CloseDevice(context.Background(), FakeID)
+	defer func() { testutil.CheckError(t, p.CloseDevice(context.Background(), FakeID)) }()
 	cfg := map[string]any{"polls": []any{map[string]any{"address": 0.0, "interval_ms": 20.0}}}
 	c, sink, err := startCap(t, p, cfg, ctx)
 	if err != nil {

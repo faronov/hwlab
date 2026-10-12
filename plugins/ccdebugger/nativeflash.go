@@ -3,6 +3,7 @@ package ccdebugger
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -84,26 +85,25 @@ func newFile(path string, overwrite bool) (*os.File, string, error) {
 }
 
 // publish atomically moves a finished temporary file into place.
-func publish(f *os.File, tmp, path string, overwrite bool) error {
+func publish(f *os.File, tmp, path string, overwrite bool) (retErr error) {
+	defer func() {
+		if err := os.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
+			retErr = errors.Join(retErr, status.Errorf(codes.Internal, "remove temporary output: %v", err))
+		}
+	}()
 	if err := f.Close(); err != nil {
-		os.Remove(tmp)
 		return status.Errorf(codes.Internal, "write %s: %v", path, err)
 	}
 	if err := os.Chmod(tmp, 0o644); err != nil {
-		os.Remove(tmp)
 		return status.Errorf(codes.Internal, "write %s: %v", path, err)
 	}
 	move := func() error {
 		if overwrite {
 			return os.Rename(tmp, path)
 		}
-		if err := os.Link(tmp, path); err != nil {
-			return err
-		}
-		return os.Remove(tmp)
+		return os.Link(tmp, path)
 	}
 	if err := move(); err != nil {
-		os.Remove(tmp)
 		if os.IsExist(err) {
 			return status.Errorf(codes.AlreadyExists, "%s exists; pass overwrite=true to replace it", path)
 		}
@@ -189,9 +189,7 @@ func (p *Plugin) nativeFlashRead(id string, args map[string]any, infoPage bool) 
 			return nil, err
 		}
 		if _, err := f.Write(page); err != nil {
-			f.Close()
-			os.Remove(tmp)
-			return nil, status.Errorf(codes.Internal, "write %s: %v", path, err)
+			return nil, errors.Join(status.Errorf(codes.Internal, "write %s: %v", path, err), f.Close(), os.Remove(tmp))
 		}
 		h.Write(page)
 		n = len(page)
@@ -208,7 +206,7 @@ func (p *Plugin) nativeFlashRead(id string, args map[string]any, infoPage bool) 
 		}
 		g = ci.Geometry
 	}
-	addr, length := 0, g.FlashSize
+	addr, length := 0, 0
 	if _, ok := args["address"]; ok {
 		if addr, err = intArg(args, "address", true); err != nil {
 			return nil, err
@@ -230,9 +228,7 @@ func (p *Plugin) nativeFlashRead(id string, args map[string]any, infoPage bool) 
 	}
 	n, err = d.ReadFlash(addr, length, io.MultiWriter(f, h), nil)
 	if err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return nil, mapErr(err)
+		return nil, errors.Join(mapErr(err), f.Close(), os.Remove(tmp))
 	}
 	if err := publish(f, tmp, path, ow); err != nil {
 		return nil, err
@@ -242,7 +238,7 @@ func (p *Plugin) nativeFlashRead(id string, args map[string]any, infoPage bool) 
 
 // loadImage reads a .hex or raw .bin firmware file without exceeding the
 // image bound.
-func loadImage(args map[string]any) (flashplan.Image, string, error) {
+func loadImage(args map[string]any) (_ flashplan.Image, _ string, retErr error) {
 	path, err := pathArg(args)
 	if err != nil {
 		return flashplan.Image{}, "", err
@@ -258,7 +254,7 @@ func loadImage(args map[string]any) (flashplan.Image, string, error) {
 	if err != nil {
 		return flashplan.Image{}, "", status.Errorf(codes.InvalidArgument, "%v", err)
 	}
-	defer f.Close()
+	defer func() { retErr = errors.Join(retErr, f.Close()) }()
 	var img flashplan.Image
 	if strings.EqualFold(filepath.Ext(path), ".hex") {
 		img, err = flashplan.ParseIntelHex(f)
@@ -485,8 +481,7 @@ func (p *Plugin) nativeWriteConfig(id string, args map[string]any) (map[string]a
 				return err
 			}
 			if _, err := f.Write(page); err != nil {
-				f.Close()
-				return err
+				return errors.Join(err, f.Close())
 			}
 			if err := f.Close(); err != nil {
 				return err

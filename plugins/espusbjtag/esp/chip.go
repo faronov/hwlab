@@ -100,8 +100,6 @@ func le32(b []byte) uint32 {
 	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
 }
 
-func put32(v uint32) []byte { return []byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)} }
-
 // ReadWord reads one 32-bit register or memory word.
 func ReadWord(ctx context.Context, dm *riscv.DM, addr uint32) (uint32, error) {
 	r, err := dm.BusBatch(ctx, []riscv.BusOp{{Kind: riscv.BusRead, Addr: addr, Words: 1}})

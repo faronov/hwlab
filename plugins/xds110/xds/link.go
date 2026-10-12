@@ -154,16 +154,16 @@ func (l *SWDLink) run(q *queue) ([]uint32, error) {
 }
 
 func transferError(e *Error) error {
-	te := &adiv5.TransferError{Err: fmt.Errorf("%w: %v", adiv5.ErrProtocol, e)}
+	te := &adiv5.TransferError{Err: fmt.Errorf("%w: %w", adiv5.ErrProtocol, e)}
 	switch e.Status {
 	case StatusSWDWait:
 		te.Err, te.Ack = adiv5.ErrWait, 2
 	case StatusSWDFault:
 		te.Err, te.Ack = adiv5.ErrFault, 4
 	case StatusSWDDevID:
-		te.Err = fmt.Errorf("%w (%v)", adiv5.ErrNoACK, e)
+		te.Err = fmt.Errorf("%w (%w)", adiv5.ErrNoACK, e)
 	case StatusSWDProto, StatusSWDParity:
-		te.Err = fmt.Errorf("%w (%v)", adiv5.ErrProtocol, e)
+		te.Err = fmt.Errorf("%w (%w)", adiv5.ErrProtocol, e)
 	default:
 		return e
 	}

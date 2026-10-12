@@ -53,27 +53,29 @@ func launch(ctx context.Context, path, coreVersion string, log *slog.Logger) (*p
 	if err != nil {
 		return nil, fmt.Errorf("create socket dir: %w", err)
 	}
+	cleanupStartup := func(primary error) error {
+		if err := os.RemoveAll(dir); err != nil {
+			return errors.Join(primary, fmt.Errorf("remove plugin socket directory: %w", err))
+		}
+		return primary
+	}
 	sock := filepath.Join(dir, "p.sock")
 	cmd := exec.Command(path)
 	cmd.Env = append(os.Environ(), pluginv1.EnvSocket+"="+sock, pluginv1.EnvWatchStdin+"=1")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		os.RemoveAll(dir)
-		return nil, err
+		return nil, cleanupStartup(err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		os.RemoveAll(dir)
-		return nil, err
+		return nil, cleanupStartup(err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		os.RemoveAll(dir)
-		return nil, err
+		return nil, cleanupStartup(err)
 	}
 	if err := cmd.Start(); err != nil {
-		os.RemoveAll(dir)
-		return nil, fmt.Errorf("start %s: %w", path, err)
+		return nil, cleanupStartup(fmt.Errorf("start %s: %w", path, err))
 	}
 	p := &process{path: path, log: log.With("plugin_exe", filepath.Base(path)), cmd: cmd, stdin: stdin, sockDir: dir, done: make(chan struct{})}
 
@@ -115,7 +117,10 @@ func launch(ctx context.Context, path, coreVersion string, log *slog.Logger) (*p
 		}
 		sock = parts[3]
 	case <-p.done:
-		return fail(fmt.Errorf("%s exited during startup: %v", filepath.Base(path), p.exitErr))
+		if p.exitErr != nil {
+			return fail(fmt.Errorf("%s exited during startup: %w", filepath.Base(path), p.exitErr))
+		}
+		return fail(fmt.Errorf("%s exited during startup without a handshake", filepath.Base(path)))
 	case <-time.After(launchTimeout):
 		return fail(fmt.Errorf("%s: timeout waiting for handshake line", filepath.Base(path)))
 	case <-ctx.Done():
@@ -157,9 +162,13 @@ func (p *process) kill() {
 func (p *process) cleanup() {
 	p.once.Do(func() {
 		if p.conn != nil {
-			_ = p.conn.Close()
+			if err := p.conn.Close(); err != nil {
+				p.log.Warn("close plugin connection", "err", err)
+			}
 		}
-		os.RemoveAll(p.sockDir)
+		if err := os.RemoveAll(p.sockDir); err != nil {
+			p.log.Warn("remove plugin socket directory", "err", err)
+		}
 	})
 }
 
@@ -169,11 +178,14 @@ func (p *process) wrap(op string, err error) error {
 	}
 	select {
 	case <-p.done:
-		return fmt.Errorf("%s %s: %w (%v)", p.info.GetId(), op, ErrCrashed, p.exitErr)
+		if p.exitErr != nil {
+			return fmt.Errorf("%s %s: %w (%w)", p.info.GetId(), op, ErrCrashed, p.exitErr)
+		}
+		return fmt.Errorf("%s %s: %w", p.info.GetId(), op, ErrCrashed)
 	default:
 	}
 	if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-		return fmt.Errorf("%s %s: %w: %v", p.info.GetId(), op, ErrCrashed, err)
+		return fmt.Errorf("%s %s: %w: %w", p.info.GetId(), op, ErrCrashed, err)
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err

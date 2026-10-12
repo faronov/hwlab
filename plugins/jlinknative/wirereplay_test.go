@@ -76,8 +76,11 @@ func (r *replayTransport) Exchange(_ context.Context, cmd []byte, replyLen int) 
 		return nil, fmt.Errorf("replay: exchange %d sent %s, recorded %s", r.next, abbrev(got), abbrev(s.Cmd))
 	}
 	rep, err := hex.DecodeString(s.Reply)
-	if err != nil || len(rep) != replyLen {
-		return nil, fmt.Errorf("replay: exchange %d reply %d bytes, expected %d (%v)", r.next, len(rep), replyLen, err)
+	if err != nil {
+		return nil, fmt.Errorf("replay: exchange %d reply: %w", r.next, err)
+	}
+	if len(rep) != replyLen {
+		return nil, fmt.Errorf("replay: exchange %d reply %d bytes, expected %d", r.next, len(rep), replyLen)
 	}
 	r.next++
 	return rep, nil

@@ -122,7 +122,7 @@ func (m *DM) StepN(ctx context.Context, n int) (res []StepResult, err error) {
 			werr = cerr
 		}
 		if werr != nil {
-			return res, fmt.Errorf("%w: step %d: %v (dmstatus=%#08x)", ErrStep, i, werr, st.Raw)
+			return res, fmt.Errorf("%w: step %d: %w (dmstatus=%#08x)", ErrStep, i, werr, st.Raw)
 		}
 		vals, err := m.ReadRegs(ctx, []RegNum{CSRDCSR, CSRDPC})
 		if err != nil {

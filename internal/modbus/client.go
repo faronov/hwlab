@@ -111,7 +111,7 @@ func (t *RTU) RoundTrip(ctx context.Context, unit byte, pdu []byte) (*Exchange, 
 			buf = append(buf, chunk[:n]...)
 			t.last = time.Now()
 		}
-		if err != nil && !(errors.Is(err, io.EOF) && n > 0) {
+		if err != nil && (!errors.Is(err, io.EOF) || n <= 0) {
 			if errors.Is(err, io.EOF) {
 				err = errors.New("the serial port was closed")
 			}

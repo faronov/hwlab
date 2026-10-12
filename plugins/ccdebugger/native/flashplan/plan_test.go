@@ -175,7 +175,7 @@ func rec(typ byte, addr int, data ...byte) string {
 	for _, v := range b {
 		sum += v
 	}
-	return fmt.Sprintf(":%X%02X\n", b, byte(-sum))
+	return fmt.Sprintf(":%X%02X\n", b, -sum)
 }
 
 func TestIntelHex(t *testing.T) {

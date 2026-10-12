@@ -59,7 +59,7 @@ func openHID(d UsbDevice) (Transport, error) {
 	f, err := os.OpenFile(d.HIDRaw, os.O_RDWR|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrPermission) {
-			return nil, fmt.Errorf("%v (grant access to %s, e.g. with a udev rule for %s:%s)", err, d.HIDRaw, d.VID, d.PID)
+			return nil, fmt.Errorf("%w (grant access to %s, e.g. with a udev rule for %s:%s)", err, d.HIDRaw, d.VID, d.PID)
 		}
 		return nil, err
 	}

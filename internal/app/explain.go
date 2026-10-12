@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -128,7 +129,7 @@ var packetFilter = timeline.Filter{Types: []string{timeline.TypePacket}}
 
 // Explain relates a current spike (or a time, or a packet) to nearby radio
 // activity, energy and clock uncertainty.
-func (a *App) Explain(ctx context.Context, q ExplainQuery) (*Explanation, error) {
+func (a *App) Explain(ctx context.Context, q ExplainQuery) (_ *Explanation, retErr error) {
 	s, err := a.OpenSession(q.Session)
 	if err != nil {
 		return nil, err
@@ -147,7 +148,7 @@ func (a *App) Explain(ctx context.Context, q ExplainQuery) (*Explanation, error)
 	if err != nil {
 		return nil, err
 	}
-	defer rd.Close()
+	defer func() { retErr = errors.Join(retErr, rd.Close()) }()
 
 	spikes, err := analysis.DetectSpikes(ctx, rd, 0, 0, q.NominalVoltage, analysis.SpikeOptions{})
 	if err != nil {

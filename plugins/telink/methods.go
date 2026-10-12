@@ -219,7 +219,7 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.prog.SetContext(ctx)
-	defer d.prog.SetContext(nil)
+	defer d.prog.SetContext(context.Background())
 
 	var res map[string]any
 	switch method {

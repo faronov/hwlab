@@ -66,7 +66,7 @@ func TestRealSessionReplaysWithoutHardware(t *testing.T) {
 	if err != nil || rr.Status != "complete" {
 		t.Fatalf("replay: %+v err=%v", rr, err)
 	}
-	if uint64(rr.Samples) != pc.Samples {
+	if rr.Samples != pc.Samples {
 		t.Errorf("replayed samples=%d, recorded %d", rr.Samples, pc.Samples)
 	}
 	got, err := a.SessionInfo(rr.SessionID)

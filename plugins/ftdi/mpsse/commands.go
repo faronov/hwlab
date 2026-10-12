@@ -64,20 +64,6 @@ type Mode struct {
 // the falling edge, data in is sampled on the rising edge.
 var JTAGMode = Mode{LSBFirst: true, WriteNeg: true}
 
-func (m Mode) flags() byte {
-	var f byte
-	if m.LSBFirst {
-		f |= FlagLSB
-	}
-	if m.WriteNeg {
-		f |= FlagWriteNeg
-	}
-	if m.ReadNeg {
-		f |= FlagReadNeg
-	}
-	return f
-}
-
 // MaxBytesPerCommand is the longest byte-length data command (length is
 // encoded as n-1 in 16 bits).
 const MaxBytesPerCommand = 65536

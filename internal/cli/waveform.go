@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 
 	"github.com/faronov/hwlab/internal/app"
@@ -27,7 +25,9 @@ JSON output carries a min/max envelope of at most --points buckets per segment.`
 		Example: `  hwlab waveform measure latest
   hwlab waveform measure latest --source scope --channel A --from 1ms --to 4ms --json`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			q := app.WaveformQuery{Session: args[0], Source: source, Channel: channel, Points: points}
 			var err error
 			if from != "" {
@@ -48,41 +48,41 @@ JSON output carries a min/max envelope of at most --points buckets per segment.`
 				return g.printJSON(rep)
 			}
 			for _, s := range rep.Streams {
-				fmt.Fprintf(g.out, "source %s channel %s (%s), %d segment(s)\n", s.Source, s.Channel, s.Unit, len(s.Segments))
+				out.printf(g.out, "source %s channel %s (%s), %d segment(s)\n", s.Source, s.Channel, s.Unit, len(s.Segments))
 				for _, sg := range s.Segments {
-					fmt.Fprintf(g.out, "  %s .. %s  %d samples, %d ns/sample\n", timeline.FormatNs(sg.StartNs), timeline.FormatNs(sg.EndNs), sg.Samples, sg.PeriodNs)
+					out.printf(g.out, "  %s .. %s  %d samples, %d ns/sample\n", timeline.FormatNs(sg.StartNs), timeline.FormatNs(sg.EndNs), sg.Samples, sg.PeriodNs)
 					if sg.Error != "" {
-						fmt.Fprintf(g.out, "    %s\n", sg.Error)
+						out.printf(g.out, "    %s\n", sg.Error)
 						continue
 					}
 					m := sg.Measurements
-					fmt.Fprintf(g.out, "    min %.4g  max %.4g  mean %.4g  rms %.4g  vpp %.4g\n", m.Min, m.Max, m.Mean, m.RMS, m.Vpp)
+					out.printf(g.out, "    min %.4g  max %.4g  mean %.4g  rms %.4g  vpp %.4g\n", m.Min, m.Max, m.Mean, m.RMS, m.Vpp)
 					if m.FrequencyHz != nil && m.PeriodS != nil {
-						fmt.Fprintf(g.out, "    %.6g Hz  period %.4g s", *m.FrequencyHz, *m.PeriodS)
+						out.printf(g.out, "    %.6g Hz  period %.4g s", *m.FrequencyHz, *m.PeriodS)
 						if m.Duty != nil {
-							fmt.Fprintf(g.out, "  duty %.1f%%", *m.Duty*100)
+							out.printf(g.out, "  duty %.1f%%", *m.Duty*100)
 						}
-						fmt.Fprintln(g.out)
+						out.println(g.out)
 					}
 					if m.RiseTimeS != nil || m.FallTimeS != nil {
-						fmt.Fprint(g.out, "   ")
+						out.print(g.out, "   ")
 						if m.RiseTimeS != nil {
-							fmt.Fprintf(g.out, " rise %.4g s", *m.RiseTimeS)
+							out.printf(g.out, " rise %.4g s", *m.RiseTimeS)
 						}
 						if m.FallTimeS != nil {
-							fmt.Fprintf(g.out, " fall %.4g s", *m.FallTimeS)
+							out.printf(g.out, " fall %.4g s", *m.FallTimeS)
 						}
-						fmt.Fprintln(g.out)
+						out.println(g.out)
 					}
 					for _, n := range m.Notes {
-						fmt.Fprintf(g.out, "    note: %s\n", n)
+						out.printf(g.out, "    note: %s\n", n)
 					}
 				}
 				if s.Truncated {
-					fmt.Fprintln(g.out, "  ... more segments; narrow with --from/--to")
+					out.println(g.out, "  ... more segments; narrow with --from/--to")
 				}
 			}
-			fmt.Fprintln(g.out, rep.Note)
+			out.println(g.out, rep.Note)
 			return nil
 		},
 	}

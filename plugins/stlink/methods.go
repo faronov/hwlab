@@ -104,7 +104,7 @@ func IsUnsupportedByHW(err error) bool {
 }
 
 func wrap(err error) error {
-	if primary := cortexm.PrimaryError(err); primary != err {
+	if primary, cleanup := cortexm.PrimaryError(err); cleanup {
 		st := status.Convert(wrap(primary))
 		return status.Error(st.Code(), st.Message()+strings.TrimPrefix(err.Error(), primary.Error()))
 	}

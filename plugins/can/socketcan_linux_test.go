@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/faronov/hwlab/internal/can"
+	"github.com/faronov/hwlab/internal/testutil"
 )
 
 // socketPair returns a bus on one end of a datagram socketpair, standing in
@@ -28,7 +29,10 @@ func socketPair(t *testing.T, o Options) (*scBus, int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { b.Close(); unix.Close(fds[1]) })
+	t.Cleanup(func() {
+		testutil.CheckError(t, b.Close())
+		testutil.CheckError(t, unix.Close(fds[1]))
+	})
 	return b, fds[1]
 }
 

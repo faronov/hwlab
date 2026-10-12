@@ -2,6 +2,7 @@ package scpiplugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -159,7 +160,7 @@ func (s *serialTransport) Read(p []byte, timeout time.Duration) (int, error) {
 	if n == 0 && err == nil {
 		return 0, scpi.ErrTimeout
 	}
-	if n == 0 && err == io.EOF {
+	if n == 0 && errors.Is(err, io.EOF) {
 		return 0, scpi.ErrTimeout
 	}
 	return n, err
@@ -185,7 +186,7 @@ func (p *Plugin) ListDevices(context.Context) ([]*pluginv1.Device, error) {
 	}
 	out := make([]*pluginv1.Device, 0, len(es))
 	for _, e := range es {
-		transport := string(e.Addr.Kind)
+		transport := e.Addr.Kind
 		props := map[string]string{"source": e.Source}
 		if e.Fake != nil {
 			transport = "fake"

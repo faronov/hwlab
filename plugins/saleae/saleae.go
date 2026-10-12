@@ -12,6 +12,7 @@ package saleae
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -101,8 +102,7 @@ func (p *Plugin) reachable() bool {
 	if err != nil {
 		return false
 	}
-	c.Close()
-	return true
+	return c.Close() == nil
 }
 
 func (p *Plugin) dial(ctx context.Context) (*grpc.ClientConn, saleaepb.ManagerClient, error) {
@@ -134,12 +134,12 @@ func deviceName(t saleaepb.DeviceType) string {
 // ListDevices implements pluginsdk.Plugin. It asks Logic 2 for the attached
 // analyzers; with Logic 2 not running (nothing listens on the endpoint) or no
 // device attached it returns no devices rather than an error.
-func (p *Plugin) ListDevices(ctx context.Context) ([]*pluginv1.Device, error) {
+func (p *Plugin) ListDevices(ctx context.Context) (_ []*pluginv1.Device, retErr error) {
 	conn, mgr, err := p.dial(ctx)
 	if err != nil {
 		return nil, nil
 	}
-	defer conn.Close()
+	defer func() { retErr = errors.Join(retErr, conn.Close()) }()
 	cctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 	// WaitForReady is off: a closed port must fail fast.
@@ -166,24 +166,24 @@ func (p *Plugin) ListDevices(ctx context.Context) ([]*pluginv1.Device, error) {
 
 // OpenDevice implements pluginsdk.Plugin. It checks that Logic 2 is reachable
 // and still lists the device.
-func (p *Plugin) OpenDevice(ctx context.Context, id string, _ map[string]any) error {
+func (p *Plugin) OpenDevice(ctx context.Context, id string, _ map[string]any) (retErr error) {
 	conn, mgr, err := p.dial(ctx)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { retErr = errors.Join(retErr, conn.Close()) }()
 	cctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 	reply, err := mgr.GetDevices(cctx, &saleaepb.GetDevicesRequest{IncludeSimulationDevices: p.sim})
 	if err != nil {
-		return fmt.Errorf("Logic 2 automation endpoint %s is not reachable: %w (start Logic 2 with the automation server enabled)", p.addr, err)
+		return fmt.Errorf("logic 2 automation endpoint %s is not reachable: %w (start Logic 2 with the automation server enabled)", p.addr, err)
 	}
 	for _, d := range reply.GetDevices() {
 		if d.GetDeviceId() == id {
 			return nil
 		}
 	}
-	return fmt.Errorf("Logic 2 does not list device %q (is it connected and not in use by the UI?)", id)
+	return fmt.Errorf("logic 2 does not list device %q (is it connected and not in use by the UI?)", id)
 }
 
 // CloseDevice implements pluginsdk.Plugin.
@@ -200,7 +200,7 @@ func (p *Plugin) lock(id string) (func(), error) {
 }
 
 // Invoke implements pluginsdk.Plugin.
-func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*pluginv1.InvokeResponse, error) {
+func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (_ *pluginv1.InvokeResponse, retErr error) {
 	if req.GetCapability()+"."+req.GetMethod() != pluginv1.CapDigitalCapture+".app_info" {
 		return nil, fmt.Errorf("unsupported method %s.%s", req.GetCapability(), req.GetMethod())
 	}
@@ -208,12 +208,12 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer func() { retErr = errors.Join(retErr, conn.Close()) }()
 	cctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 	r, err := mgr.GetAppInfo(cctx, &saleaepb.GetAppInfoRequest{})
 	if err != nil {
-		return nil, fmt.Errorf("Logic 2 automation endpoint %s: %w", p.addr, err)
+		return nil, fmt.Errorf("logic 2 automation endpoint %s: %w", p.addr, err)
 	}
 	ai := r.GetAppInfo()
 	v := ai.GetApiVersion()

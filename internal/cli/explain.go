@@ -29,7 +29,9 @@ of the answer; cross-device timing is not nanosecond accurate.`,
   hwlab explain latest --packet 17
   hwlab explain latest --at 4.38s`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			var out printer
+			defer out.finish(&retErr)
 			w, err := app.ParseTime(window)
 			if err != nil {
 				return err
@@ -48,7 +50,9 @@ of the answer; cross-device timing is not nanosecond accurate.`,
 			if g.json {
 				return g.printJSON(res)
 			}
-			printExplanation(g.out, res)
+			if err := printExplanation(g.out, res); err != nil {
+				return err
+			}
 			if plotOut != "" {
 				from, to := res.AnchorNs-w, res.AnchorNs+w
 				if res.Anchor == "spike" && res.Spike != nil {
@@ -63,7 +67,7 @@ of the answer; cross-device timing is not nanosecond accurate.`,
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(g.out, "plot: %s\n", pr.Path)
+				out.printf(g.out, "plot: %s\n", pr.Path)
 			}
 			return nil
 		},
@@ -79,21 +83,23 @@ of the answer; cross-device timing is not nanosecond accurate.`,
 	return c
 }
 
-func printExplanation(w io.Writer, x *app.Explanation) {
-	fmt.Fprintf(w, "session %s, anchor %s at %s\n", x.Session, x.Anchor, fmtDur(x.AnchorNs))
+func printExplanation(w io.Writer, x *app.Explanation) (retErr error) {
+	var out printer
+	defer out.finish(&retErr)
+	out.printf(w, "session %s, anchor %s at %s\n", x.Session, x.Anchor, fmtDur(x.AnchorNs))
 	if sp := x.Spike; sp != nil {
 		label := "spike"
 		if x.Anchor != "spike" {
 			label = "nearest spike"
 		}
-		fmt.Fprintf(w, "%s #%d of %d: %s .. %s (%.1f µs), peak %s at %s, mean %s over a %s baseline, %.3f µC",
+		out.printf(w, "%s #%d of %d: %s .. %s (%.1f µs), peak %s at %s, mean %s over a %s baseline, %.3f µC",
 			label, sp.Index, sp.Total, fmtDur(sp.StartNs), fmtDur(sp.EndNs), float64(sp.DurationNs)/1e3,
 			analysis.FormatCurrent(sp.PeakNA), fmtDur(sp.PeakAtNs), analysis.FormatCurrent(sp.MeanNA),
 			analysis.FormatCurrent(sp.BaselineNA), sp.ChargeUC)
 		if sp.HasEnergy {
-			fmt.Fprintf(w, ", %.3f µJ", sp.EnergyUJ)
+			out.printf(w, ", %.3f µJ", sp.EnergyUJ)
 		}
-		fmt.Fprintln(w)
+		out.println(w)
 	}
 	if len(x.InBurst) > 0 {
 		kinds := make([]string, 0, len(x.InBurst))
@@ -101,72 +107,73 @@ func printExplanation(w io.Writer, x *app.Explanation) {
 			kinds = append(kinds, k)
 		}
 		sort.Strings(kinds)
-		fmt.Fprint(w, "packets during the burst:")
+		out.print(w, "packets during the burst:")
 		for _, k := range kinds {
-			fmt.Fprintf(w, " %s=%d", k, x.InBurst[k])
+			out.printf(w, " %s=%d", k, x.InBurst[k])
 		}
-		fmt.Fprintln(w)
+		out.println(w)
 	} else if x.Anchor == "spike" {
-		fmt.Fprintln(w, "packets during the burst: none")
+		out.println(w, "packets during the burst: none")
 	}
-	printRefs(w, "before", x.Before)
-	printRefs(w, "after", x.After)
+	printRefs(&out, w, "before", x.Before)
+	printRefs(&out, w, "after", x.After)
 	if x.Nearest != nil {
-		fmt.Fprintf(w, "nearest packet: #%d %s %+.3f ms (%s, %d B, %.0f dBm)\n", x.Nearest.Index, x.Nearest.Kind,
+		out.printf(w, "nearest packet: #%d %s %+.3f ms (%s, %d B, %.0f dBm)\n", x.Nearest.Index, x.Nearest.Kind,
 			float64(x.Nearest.DeltaNs)/1e6, x.Nearest.Source, x.Nearest.Bytes, x.Nearest.RSSIdBm)
 	}
 	if x.FirstTx != nil {
-		fmt.Fprintf(w, "first DATA after the anchor: #%d at %+.3f ms", x.FirstTx.Index, float64(x.FirstTx.DeltaNs)/1e6)
+		out.printf(w, "first DATA after the anchor: #%d at %+.3f ms", x.FirstTx.Index, float64(x.FirstTx.DeltaNs)/1e6)
 		if x.AckAfter != nil && x.DataAck != nil {
-			fmt.Fprintf(w, ", ACK #%d at %+.3f ms (%.3f ms after DATA)", x.AckAfter.Index,
+			out.printf(w, ", ACK #%d at %+.3f ms (%.3f ms after DATA)", x.AckAfter.Index,
 				float64(x.AckAfter.DeltaNs)/1e6, float64(*x.DataAck)/1e6)
 		} else {
-			fmt.Fprint(w, ", no ACK seen after it")
+			out.print(w, ", no ACK seen after it")
 		}
-		fmt.Fprintln(w)
+		out.println(w)
 	}
 	if c := x.Current; c.HasData {
-		fmt.Fprintf(w, "current %s before: mean %s peak %s; %s after: mean %s peak %s\n", fmtDur(c.WindowNs),
+		out.printf(w, "current %s before: mean %s peak %s; %s after: mean %s peak %s\n", fmtDur(c.WindowNs),
 			analysis.FormatCurrent(c.BeforeMean), analysis.FormatCurrent(c.BeforePeak), fmtDur(c.WindowNs),
 			analysis.FormatCurrent(c.AfterMean), analysis.FormatCurrent(c.AfterPeak))
 	}
 	e := x.Energy
-	fmt.Fprintf(w, "charge %.3f µC in %s .. %s", e.WindowUC, fmtDur(e.WindowFrom), fmtDur(e.WindowTo))
+	out.printf(w, "charge %.3f µC in %s .. %s", e.WindowUC, fmtDur(e.WindowFrom), fmtDur(e.WindowTo))
 	if e.HasEnergy {
-		fmt.Fprintf(w, ", energy %.3f µJ at %.2f V", e.WindowUJ, e.NominalV)
+		out.printf(w, ", energy %.3f µJ at %.2f V", e.WindowUJ, e.NominalV)
 	}
-	fmt.Fprintln(w)
+	out.println(w)
 	if e.GapNs > 0 {
-		fmt.Fprintf(w, "since the previous spike (%s ago): mean %s, %.3f µC", fmtDur(e.GapNs), analysis.FormatCurrent(e.GapMeanNA), e.GapUC)
+		out.printf(w, "since the previous spike (%s ago): mean %s, %.3f µC", fmtDur(e.GapNs), analysis.FormatCurrent(e.GapMeanNA), e.GapUC)
 		if e.HasEnergy {
-			fmt.Fprintf(w, ", %.3f µJ", e.GapUJ)
+			out.printf(w, ", %.3f µJ", e.GapUJ)
 		}
-		fmt.Fprintln(w)
+		out.println(w)
 	}
 	for _, c := range x.Clocks {
 		if c.Clock == nil {
-			fmt.Fprintf(w, "clock %s: not reported\n", c.Capture)
+			out.printf(w, "clock %s: not reported\n", c.Capture)
 			continue
 		}
-		fmt.Fprintf(w, "clock %s: error in [%s, %s] (%s)\n", c.Capture,
+		out.printf(w, "clock %s: error in [%s, %s] (%s)\n", c.Capture,
 			bound(c.Clock.ErrorMinNs, c.Clock.ErrorMinBounded, "-inf"), bound(c.Clock.ErrorMaxNs, c.Clock.ErrorMaxBounded, "+inf"), c.Clock.Source)
 	}
 	if t := x.Timing; t != nil {
-		fmt.Fprintf(w, "timing of the %s: stamped %+.3f ms; %s\n", t.Reference, float64(t.DeltaNs)/1e6, t.Statement)
+		out.printf(w, "timing of the %s: stamped %+.3f ms; %s\n", t.Reference, float64(t.DeltaNs)/1e6, t.Statement)
 	}
 	for _, n := range x.Notes {
-		fmt.Fprintf(w, "note: %s\n", n)
+		out.printf(w, "note: %s\n", n)
 	}
+	return nil
 }
 
-func printRefs(w io.Writer, label string, refs []app.PacketRef) {
+func printRefs(out *printer, w io.Writer, label string, refs []app.PacketRef) {
 	if len(refs) == 0 {
-		fmt.Fprintf(w, "packets %s: none in the window\n", label)
+		out.printf(w, "packets %s: none in the window\n", label)
 		return
 	}
-	fmt.Fprintf(w, "packets %s:\n", label)
+	out.printf(w, "packets %s:\n", label)
 	for _, r := range refs {
-		fmt.Fprintf(w, "  %+10.3f ms  #%-4d %-7s %3d B  %4.0f dBm  lqi %d  (%s)\n", float64(r.DeltaNs)/1e6, r.Index, r.Kind, r.Bytes, r.RSSIdBm, r.LQI, r.Source)
+		out.printf(w, "  %+10.3f ms  #%-4d %-7s %3d B  %4.0f dBm  lqi %d  (%s)\n", float64(r.DeltaNs)/1e6, r.Index, r.Kind, r.Bytes, r.RSSIdBm, r.LQI, r.Source)
 	}
 }
 

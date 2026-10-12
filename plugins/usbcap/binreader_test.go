@@ -3,6 +3,7 @@ package usbcapplugin
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/faronov/hwlab/internal/testutil"
 	"github.com/faronov/hwlab/internal/usbcap"
 )
 
@@ -42,7 +44,7 @@ func TestBinReaderKeepsFullPayloadAndSplitsEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := newBinReader(f)
-	defer r.Close()
+	defer func() { testutil.CheckError(t, r.Close()) }()
 	// A regular file returns both events in one read, like a large kernel read.
 	for i, want := range pk {
 		got, err := r.Next(context.Background())
@@ -53,7 +55,7 @@ func TestBinReaderKeepsFullPayloadAndSplitsEvents(t *testing.T) {
 			t.Errorf("packet %d: %+v", i, got)
 		}
 	}
-	if _, err := r.Next(context.Background()); err != io.EOF {
+	if _, err := r.Next(context.Background()); !errors.Is(err, io.EOF) {
 		t.Errorf("want EOF, got %v", err)
 	}
 	if n, first := r.Skipped(); n != 0 {
@@ -70,13 +72,13 @@ func TestBinReaderSkipsGarbageAndHonoursCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer w.Close()
+	defer func() { testutil.CheckError(t, w.Close()) }()
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := newBinReader(f)
-	defer r.Close()
+	defer func() { testutil.CheckError(t, r.Close()) }()
 	bad := make([]byte, wireHeaderLen)
 	bad[8] = 'X'
 	good := wire(binPacket(7, usbcap.Submit, 2, false, []byte{9}, 5_000_000))

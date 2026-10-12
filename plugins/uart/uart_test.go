@@ -493,7 +493,9 @@ func TestCaptureReportsDisconnect(t *testing.T) {
 	defer cancel()
 	fp.push("before")
 	time.Sleep(30 * time.Millisecond)
-	fp.Close() // the device vanished
+	if err := fp.Close(); err != nil { // the device vanished
+		t.Fatal(err)
+	}
 	err := c.Wait()
 	if err == nil || !strings.Contains(err.Error(), "disconnected") {
 		t.Fatalf("a vanished device must fail the capture: %v", err)

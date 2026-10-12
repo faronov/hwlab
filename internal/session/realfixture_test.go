@@ -13,7 +13,11 @@ func TestReadRealPPK2Fixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	t.Cleanup(func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	if r.Kind() != KindPower {
 		t.Fatalf("kind = %s", r.Kind())
 	}

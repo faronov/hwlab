@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,10 +113,11 @@ func (c *ExecCommander) Run(ctx context.Context, serial string, t Target, script
 		return "", err
 	}
 	if _, err := f.WriteString(strings.Join(append(append([]string{}, script...), "exit"), "\n") + "\n"); err != nil {
-		f.Close()
-		return "", err
+		return "", errors.Join(err, f.Close())
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("close Commander script: %w", err)
+	}
 
 	to := c.Timeout
 	if to <= 0 {
@@ -164,8 +166,12 @@ func (c *ExecCommander) Start(_ context.Context, serial string, t Target, rttPor
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
 	stop := func() {
-		_, _ = io.WriteString(stdin, "exit\n")
-		stdin.Close()
+		if _, err := io.WriteString(stdin, "exit\n"); err != nil {
+			slog.Warn("request Commander exit", "err", err)
+		}
+		if err := stdin.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			slog.Warn("close Commander stdin", "err", err)
+		}
 		select {
 		case <-done:
 		case <-time.After(3 * time.Second):

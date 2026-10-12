@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -635,7 +636,10 @@ func (p *Plugin) reserveRTTPort(host string) int {
 		if err != nil {
 			continue
 		}
-		l.Close()
+		if err := l.Close(); err != nil {
+			slog.Warn("release RTT port availability check", "err", err)
+			continue
+		}
 		p.rttPorts[port] = true
 		return port
 	}

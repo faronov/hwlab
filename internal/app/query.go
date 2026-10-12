@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -49,7 +51,7 @@ func ParseTime(s string) (int64, error) {
 func (a *App) ResolveSession(ref string) (string, error) {
 	dir, err := session.Resolve(a.Cfg.SessionsDir, ref)
 	if err != nil {
-		return "", apperr.Wrap(apperr.NotFound, fmt.Errorf("%w: %v", errNoSuchSession, err))
+		return "", apperr.Wrap(apperr.NotFound, fmt.Errorf("%w: %w", errNoSuchSession, err))
 	}
 	return dir, nil
 }
@@ -104,7 +106,9 @@ func describe(s *session.Session) *SessionInfo {
 			if rd, err := s.OpenStream(st); err == nil {
 				si.Samples = rd.Samples()
 				si.StartNs, si.EndNs = rd.Bounds()
-				rd.Close()
+				if err := rd.Close(); err != nil {
+					slog.Warn("close stream while describing session", "err", err)
+				}
 			}
 			info.Streams = append(info.Streams, si)
 		}
@@ -314,7 +318,7 @@ func (a *App) Analyze(ctx context.Context, o AnalyzeOptions) ([]PowerAnalysis, e
 				pa.Spikes, err = analysis.DetectSpikes(ctx, rd, from, to, o.NominalVoltage, analysis.SpikeOptions{})
 			}
 		}
-		rd.Close()
+		err = errors.Join(err, rd.Close())
 		if err != nil {
 			return nil, err
 		}

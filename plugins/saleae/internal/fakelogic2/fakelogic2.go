@@ -7,6 +7,7 @@ package fakelogic2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -81,8 +82,14 @@ func Start(tb testing.TB) (*Server, string) {
 	}
 	gs := grpc.NewServer()
 	saleaepb.RegisterManagerServer(gs, s)
-	go gs.Serve(lis)
-	tb.Cleanup(gs.Stop)
+	done := make(chan error, 1)
+	go func() { done <- gs.Serve(lis) }()
+	tb.Cleanup(func() {
+		gs.Stop()
+		if err := <-done; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			tb.Error(err)
+		}
+	})
 	return s, lis.Addr().String()
 }
 

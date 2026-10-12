@@ -292,7 +292,7 @@ func (m *DM) Halt(ctx context.Context) (Status, error) {
 		return st, err
 	}
 	if err != nil {
-		return st, fmt.Errorf("%w: %v", ErrHaltTimeout, err)
+		return st, fmt.Errorf("%w: %w", ErrHaltTimeout, err)
 	}
 	return st, nil
 }

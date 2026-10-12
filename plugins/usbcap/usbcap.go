@@ -444,7 +444,7 @@ func (p *Plugin) info(id string) (map[string]any, error) {
 	}, nil
 }
 
-func (p *Plugin) peek(ctx context.Context, id string, args map[string]any) (map[string]any, error) {
+func (p *Plugin) peek(ctx context.Context, id string, args map[string]any) (_ map[string]any, retErr error) {
 	src, opts, d, err := p.resolve(id)
 	if err != nil {
 		return nil, err
@@ -488,7 +488,7 @@ func (p *Plugin) peek(ctx context.Context, id string, args map[string]any) (map[
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "open %s: %v", id, err)
 	}
-	defer rd.Close()
+	defer func() { retErr = errors.Join(retErr, rd.Close()) }()
 	cctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Millisecond)
 	defer cancel()
 	var pkts []usbcap.Packet

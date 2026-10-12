@@ -191,7 +191,7 @@ func (c Config) Validate() error {
 	if p.DMAEnable && !p.TargetReset {
 		return policyf("dma enable requires separate target-reset permission")
 	}
-	if (p.FlashErase || p.FlashProgram) && !(p.MemoryAccess && p.MemoryWrite) {
+	if (p.FlashErase || p.FlashProgram) && (!p.MemoryAccess || !p.MemoryWrite) {
 		return policyf("flash erase/program stage data in RAM and require memory-access and memory-write permissions")
 	}
 	if p.FlashProgram && !p.FlashErase {

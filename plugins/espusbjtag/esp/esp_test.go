@@ -15,6 +15,7 @@ import (
 	"github.com/faronov/hwlab/internal/jtag"
 	"github.com/faronov/hwlab/internal/riscv"
 	"github.com/faronov/hwlab/internal/riscv/rvsim"
+	"github.com/faronov/hwlab/internal/testutil"
 	"github.com/faronov/hwlab/plugins/espusbjtag/esp"
 )
 
@@ -96,7 +97,7 @@ func TestInfoNoChip(t *testing.T) {
 	r := newRig(t, 1<<20, false)
 	r.fl.ID = [3]byte{0xFF, 0xFF, 0xFF}
 	f, _ := esp.OpenFlash(ctx, r.dm)
-	defer f.Close(ctx)
+	defer func() { testutil.CheckError(t, f.Close(ctx)) }()
 	if _, err := f.ReadInfo(ctx); err == nil || !strings.Contains(err.Error(), "no flash") {
 		t.Fatal(err)
 	}
@@ -287,7 +288,9 @@ func TestBackupTwiceAndMismatch(t *testing.T) {
 	}
 	// Tampered file is refused.
 	b[10] ^= 1
-	os.WriteFile(path, b, 0o600)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := esp.LoadBackup(path); err == nil {
 		t.Fatal("a modified backup must be refused")
 	}

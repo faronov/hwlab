@@ -154,9 +154,6 @@ func optBool(a map[string]any, key string) (val, set bool, err error) {
 
 func hex32(v uint32) string { return fmt.Sprintf("0x%08x", v) }
 
-// probeOnly methods never need a target attachment.
-var probeOnly = map[string]bool{"DebugProbe.info": true, "DebugProbe.target_power": true, "DebugProbe.clock_probe": true, "DebugProbe.jtag_scan": true, "PowerMeasurement.info": true}
-
 // needsOpen methods keep state that only survives on an open device.
 var needsOpen = map[string]bool{"DebugProbe.set_breakpoint": true, "DebugProbe.set_watchpoint": true}
 

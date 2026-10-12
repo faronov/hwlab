@@ -146,8 +146,7 @@ func (d DirSampleStore) Create(rel string) (StreamWriter, error) {
 	}
 	w := &fileWriter{f: f, bw: bufio.NewWriterSize(f, 256<<10)}
 	if _, err := w.bw.WriteString(hwcapMagic); err != nil {
-		f.Close()
-		return nil, err
+		return nil, errors.Join(err, f.Close())
 	}
 	return w, nil
 }
@@ -284,7 +283,6 @@ type fileReader struct {
 	kind    string
 	chunks  []chunkRef
 	samples int64
-	mu      sync.Mutex
 	pool    sync.Pool
 }
 
@@ -296,8 +294,7 @@ func openFileReader(path string) (*fileReader, error) {
 	r := &fileReader{f: f}
 	r.pool.New = func() any { b := make([]byte, 0, 64<<10); return &b }
 	if err := r.index(); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("index %s: %w", path, err)
+		return nil, errors.Join(fmt.Errorf("index %s: %w", path, err), f.Close())
 	}
 	return r, nil
 }

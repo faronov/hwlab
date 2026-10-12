@@ -430,7 +430,11 @@ func TestTCPTransport(t *testing.T) {
 	}
 	i := NewInstrument(tr)
 	i.Timeout = time.Second
-	defer i.Close()
+	t.Cleanup(func() {
+		if err := i.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	idn, err := i.Identify()
 	if err != nil || idn.Model != "DS1054Z" {
 		t.Fatalf("%+v %v", idn, err)

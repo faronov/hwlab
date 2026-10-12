@@ -97,10 +97,10 @@ func Open(d Device, ifnum int, opt OpenOptions) (Port, error) {
 	f, err := os.OpenFile(d.Path(), os.O_RDWR|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrPermission) {
-			return nil, fmt.Errorf("%w: %v (grant access with a udev rule for %04x:%04x, see docs/hardware.md)", ErrPermission, err, d.VID, d.PID)
+			return nil, fmt.Errorf("%w: %w (grant access with a udev rule for %04x:%04x, see docs/hardware.md)", ErrPermission, err, d.VID, d.PID)
 		}
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%w: %v", ErrDisconnected, err)
+			return nil, fmt.Errorf("%w: %w", ErrDisconnected, err)
 		}
 		return nil, err
 	}
@@ -113,8 +113,10 @@ func Open(d Device, ifnum int, opt OpenOptions) (Port, error) {
 	}()
 	// Reading the usbfs node returns the device descriptor first.
 	var desc [18]byte
-	if n, err := f.Read(desc[:]); err != nil || n != len(desc) {
-		return nil, fmt.Errorf("usb: cannot read the device descriptor: %v", err)
+	if n, err := f.Read(desc[:]); err != nil {
+		return nil, fmt.Errorf("usb: cannot read the device descriptor: %w", err)
+	} else if n != len(desc) {
+		return nil, fmt.Errorf("usb: device descriptor has %d bytes, expected %d", n, len(desc))
 	}
 	if vid, pid := uint16(desc[8])|uint16(desc[9])<<8, uint16(desc[10])|uint16(desc[11])<<8; vid != d.VID || pid != d.PID {
 		return nil, fmt.Errorf("usb: device %d:%d is %04x:%04x, expected %04x:%04x (re-enumerated?)", d.Bus, d.Address, vid, pid, d.VID, d.PID)
@@ -151,7 +153,7 @@ func claimErr(ifnum int, driver string, err error) error {
 		return fmt.Errorf("%w: interface %d is claimed by a kernel driver or another process", ErrBusy, ifnum)
 	}
 	if errors.Is(err, syscall.ENODEV) {
-		return fmt.Errorf("%w: %v", ErrDisconnected, err)
+		return fmt.Errorf("%w: %w", ErrDisconnected, err)
 	}
 	return fmt.Errorf("usb: cannot claim interface %d: %w", ifnum, err)
 }
@@ -187,7 +189,7 @@ func millis(d time.Duration) uint32 {
 func (p *port) mapErr(what string, err error) error {
 	if errors.Is(err, syscall.EPROTO) || errors.Is(err, syscall.EILSEQ) || errors.Is(err, syscall.EIO) || errors.Is(err, syscall.ETIME) {
 		if p.vanished() {
-			return fmt.Errorf("%w: %s: %v (the device left the bus)", ErrDisconnected, what, err)
+			return fmt.Errorf("%w: %s: %w (the device left the bus)", ErrDisconnected, what, err)
 		}
 	}
 	return mapErr(what, err)
@@ -227,7 +229,7 @@ func mapErr(what string, err error) error {
 	case errors.Is(err, syscall.EPIPE):
 		return fmt.Errorf("%w: %s", ErrStall, what)
 	case errors.Is(err, syscall.ENODEV), errors.Is(err, syscall.ESHUTDOWN), errors.Is(err, syscall.ENOENT):
-		return fmt.Errorf("%w: %s: %v", ErrDisconnected, what, err)
+		return fmt.Errorf("%w: %s: %w", ErrDisconnected, what, err)
 	}
 	return fmt.Errorf("usb: %s: %w", what, err)
 }

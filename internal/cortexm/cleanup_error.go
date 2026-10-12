@@ -1,6 +1,9 @@
 package cortexm
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 type cleanupError struct{ primary, cleanup error }
 
@@ -22,12 +25,16 @@ func WithCleanupError(primary, cleanup error) error {
 	return &cleanupError{primary: primary, cleanup: cleanup}
 }
 
-func PrimaryError(err error) error {
+// PrimaryError returns the operation error and whether cleanup failures were
+// separated from it. The flag avoids comparing error identities to detect this.
+func PrimaryError(err error) (error, bool) {
+	separated := false
 	for {
-		e, ok := err.(*cleanupError)
-		if !ok {
-			return err
+		var e *cleanupError
+		if !errors.As(err, &e) {
+			return err, separated
 		}
+		separated = true
 		err = e.primary
 	}
 }
