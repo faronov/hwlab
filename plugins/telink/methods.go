@@ -64,6 +64,7 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 			spec(D, confirm, "reset", "reset the target and let it run: kind hard (default, pulses RST) or soft (SWire reboot register); SWire must be re-activated afterwards with attach",
 				obj(optProps+`,"kind":{"enum":["hard","soft"]},"reset_ms":{"type":"number"}`)),
 			spec(D, safe, "read_registers", "read r0-r15 (r11 fp, r12 ip, r13 sp, r14 lr, r15 pc) and psr; meaningful only while the CPU is captured", obj(optProps)),
+			spec(D, safe, "chip_info", "target chip id, revision, family and (CPU halted) flash JEDEC id and unique id", obj(optProps)),
 			spec(D, confirm, "set_breakpoint", "arm the single hardware breakpoint at an address and let the CPU run; wait_ms>0 waits for the PC to reach it", `{"type":"object","required":["address"],"properties":{`+optProps+`,"address":{},"wait_ms":{"type":"number"}}}`),
 			spec(D, confirm, "clear_breakpoint", "disarm the hardware breakpoint", obj(optProps)),
 			spec(M, safe, "read", "read target memory over SWire (peripheral registers from 0x800000, SRAM from 0x840000); args: address, length (max 64 KiB; over 4 KiB returns a preview and sha256). Register reads can have side effects",
@@ -73,10 +74,15 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 			spec(F, safe, "read", "read flash; args: address, length (max 64 KiB inline; with path, writes up to the whole flash to a new file). Also lists the layout regions touched",
 				`{"type":"object","required":["address","length"],"properties":{`+optProps+`,"address":{},"length":{"type":"number"},"path":{"type":"string"}}}`),
 			spec(F, safe, "verify", "compare flash with a file or hex data without changing it; args: address, path or data", `{"type":"object","required":["address"],"properties":{`+optProps+`,"address":{},"path":{"type":"string"},"data":{"type":"string"}}}`),
-			spec(F, confirm, "erase", "erase the 4 KiB sectors covering a range. Refuses factory data (EUI-64, config, ADC calibration) always and the NV journals unless allow_journals. Clears flash block protection first",
-				`{"type":"object","required":["address","length"],"properties":{`+optProps+`,"address":{},"length":{"type":"number"},"allow_journals":{"type":"boolean"}}}`),
-			spec(F, confirm, "program", "erase the covering sectors, write an image, and read it back. address must be 4 KiB aligned; image from path (.bin) or hex data. Same region rules as erase; clears flash block protection (persistent)",
-				`{"type":"object","required":["address"],"properties":{`+optProps+`,"address":{},"path":{"type":"string"},"data":{"type":"string"},"allow_journals":{"type":"boolean"}}}`),
+			spec(F, confirm, "erase", "erase the 4 KiB sectors covering a range. Refuses factory data (EUI-64, config, ADC calibration) always and the NV journals unless allow_journals. Requires the CPU halted and backup= a verified full backup of this board. Clears flash block protection first",
+				`{"type":"object","required":["address","length","backup"],"properties":{`+optProps+`,"address":{},"length":{"type":"number"},"allow_journals":{"type":"boolean"},"backup":{"type":"string","description":"path of a FlashProgramming.backup .bin of this board (required)"}}}`),
+			spec(F, confirm, "program", "erase the covering sectors, write an image, and read it back. address must be 4 KiB aligned; image from path (.bin) or hex data. Same region, halt and backup rules as erase; clears flash block protection (persistent)",
+				`{"type":"object","required":["address","backup"],"properties":{`+optProps+`,"address":{},"path":{"type":"string"},"data":{"type":"string"},"allow_journals":{"type":"boolean"},"backup":{"type":"string","description":"path of a FlashProgramming.backup .bin of this board (required)"}}}`),
+			spec(F, safe, "info", "flash JEDEC id, size, unique id, selected layout, its verification and regions", obj(optProps)),
+			spec(F, confirm, "backup", "CPU halted: read the whole flash twice, require identical SHA-256, store it 0600 with a manifest bound to the flash unique id, JEDEC and chip id; default dir $HWLAB_HOME/artifacts/telink-flash. Never writes flash",
+				obj(optProps+`,"dir":{"type":"string"}`)),
+			spec(F, confirm, "restore", "CPU halted: rewrite every application sector (journals only with allow_journals) that differs from a backup of this board, then read back the whole flash and require it to equal the backup. Refuses if factory or undescribed sectors differ. skip_journals keeps the current journals (restoring an old security journal rolls back frame counters: never do it on a board that was on a live network). path is accepted as an alias of backup",
+				`{"type":"object","properties":{`+optProps+`,"allow_journals":{"type":"boolean"},"skip_journals":{"type":"boolean"},"path":{"type":"string"},"backup":{"type":"string","description":"path of a FlashProgramming.backup .bin of this board (required)"}}}`),
 		},
 	}
 }
@@ -202,8 +208,9 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 	switch method {
 	case "DebugProbe.info", "DebugProbe.connect", "DebugProbe.attach", "DebugProbe.status", "DebugProbe.halt", "DebugProbe.resume",
 		"DebugProbe.step", "DebugProbe.reset", "DebugProbe.read_registers", "DebugProbe.set_breakpoint", "DebugProbe.clear_breakpoint",
-		"MemoryAccess.read", "MemoryAccess.write",
-		"FlashProgramming.read", "FlashProgramming.verify", "FlashProgramming.erase", "FlashProgramming.program":
+		"DebugProbe.chip_info", "MemoryAccess.read", "MemoryAccess.write",
+		"FlashProgramming.read", "FlashProgramming.verify", "FlashProgramming.erase", "FlashProgramming.program",
+		"FlashProgramming.info", "FlashProgramming.backup", "FlashProgramming.restore":
 	default:
 		return nil, status.Errorf(codes.Unimplemented, "method %s", method)
 	}
@@ -247,6 +254,14 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 		if err = d.prog.ClearBreakpoint(); err == nil {
 			res = map[string]any{"breakpoint": "cleared"}
 		}
+	case "DebugProbe.chip_info":
+		res, err = d.chipInfo()
+	case "FlashProgramming.info":
+		res, err = d.flashInfo()
+	case "FlashProgramming.backup":
+		res, err = d.flashBackup(args)
+	case "FlashProgramming.restore":
+		res, err = d.flashRestore(args)
 	case "MemoryAccess.read":
 		res, err = d.readMemory(args)
 	case "MemoryAccess.write":
@@ -265,6 +280,11 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 	}
 	if d.entry.Sim != nil {
 		res["synthetic"] = true
+	}
+	if st := d.prog.Stats(); st != (sws.Stats{}) {
+		// Recoveries are cumulative for the open session; report them so a
+		// marginal link is visible instead of silently papered over.
+		res["link_recoveries"] = map[string]any{"retries": float64(st.Retries), "resyncs": float64(st.Resyncs), "capture_retries": float64(st.CaptureRetries)}
 	}
 	s, err := structpb.NewStruct(res)
 	if err != nil {
@@ -763,11 +783,20 @@ func (d *device) flashErase(a map[string]any) (map[string]any, error) {
 	if err := d.refuse(prot, addr, n, pol); err != nil {
 		return nil, err
 	}
+	if err := d.requireCaptured(); err != nil {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+	_, bk, err := d.backupGate(a, prot)
+	if err != nil {
+		return nil, err
+	}
 	rep, err := d.prog.EraseRange(prot.Layout, addr, uint32(n), pol)
 	if err != nil {
 		return nil, fmt.Errorf("%w (done so far: %d sectors erased)", err, rep.SectorsErased)
 	}
-	return reportMap(rep), nil
+	res := reportMap(rep)
+	res["backup"] = bk
+	return res, nil
 }
 
 func (d *device) flashProgram(a map[string]any) (map[string]any, error) {
@@ -793,6 +822,13 @@ func (d *device) flashProgram(a map[string]any) (map[string]any, error) {
 	if err := d.refuse(prot, addr, len(img), pol); err != nil {
 		return nil, err
 	}
+	if err := d.requireCaptured(); err != nil {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+	_, bk, err := d.backupGate(a, prot)
+	if err != nil {
+		return nil, err
+	}
 	rep, err := d.prog.Program(prot.Layout, addr, img, pol)
 	if err != nil {
 		return nil, fmt.Errorf("%w (done so far: %d sectors erased, %d pages written; the flash may now hold a partial image)", err, rep.SectorsErased, rep.PagesWritten)
@@ -800,5 +836,6 @@ func (d *device) flashProgram(a map[string]any) (map[string]any, error) {
 	sum := sha256.Sum256(img)
 	res := reportMap(rep)
 	res["address"], res["length"], res["sha256"] = hex24(addr), float64(len(img)), hex.EncodeToString(sum[:])
+	res["backup"] = bk
 	return res, nil
 }

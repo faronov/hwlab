@@ -96,20 +96,27 @@ func TestESPUSBJTAGCapabilityGrades(t *testing.T) {
 // Telink is validated read-only on one board; flash modification must stay
 // listed as unverified until a protection map is verified and a sacrificial
 // board is used.
-func TestTelinkClaimsOnlyReadOnlyValidation(t *testing.T) {
+// TestTelinkClaimsMatchHardwareEvidence keeps the telink claims at what
+// docs/notes/phase15-telink-flash-hardware-results.md shows on the real board.
+func TestTelinkClaimsMatchHardwareEvidence(t *testing.T) {
 	e, _ := Lookup("telink")
 	b := e.Backends[0]
 	if b.Validation != ValHardwarePartial || b.Fixture != FixtureReal {
 		t.Fatalf("%+v", b)
 	}
-	joined := ""
-	for _, u := range b.Unverified {
-		joined += u + "\n"
+	join := func(l []string) string { return strings.Join(l, "\n") }
+	for _, want := range []string{"full-flash backup", "refused without a board-matched backup", "erase and program of one application sector", "restore of application sectors"} {
+		if !strings.Contains(join(b.Verified), want) {
+			t.Errorf("%q should be listed as verified", want)
+		}
 	}
-	for _, want := range []string{"flash erase/program/verify", "memory write", "single-step"} {
-		if !strings.Contains(joined, want) {
+	for _, want := range []string{"whole application image", "memory write", "single-step"} {
+		if !strings.Contains(join(b.Unverified), want) {
 			t.Errorf("%q must stay unverified", want)
 		}
+	}
+	if _, err := os.Stat(filepath.Join("..", "..", "docs", "notes", "phase15-telink-flash-hardware-results.md")); err != nil {
+		t.Errorf("hardware evidence note missing: %v", err)
 	}
 }
 

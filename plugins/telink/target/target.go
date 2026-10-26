@@ -40,6 +40,10 @@ type layoutDef struct {
 	sws.Layout
 	Source   string
 	Evidence []string
+	// BlankFactory marks a layout for boards whose factory block was never
+	// programmed: it is confirmed only when every factory region reads fully
+	// blank, and modification additionally requires a backup of the board.
+	BlankFactory bool
 }
 
 // Identity is what is known about the connected target.
@@ -133,6 +137,21 @@ func (f *Family) Protection(name string, flashBytes uint32, read ReadFlash) Prot
 	}
 	if read == nil {
 		return unverified("layout evidence cannot be read")
+	}
+	if def.BlankFactory {
+		for _, r := range def.Regions {
+			if r.Class != sws.ClassFactory {
+				continue
+			}
+			b, err := read(r.Start, int(r.End-r.Start))
+			if err != nil {
+				return unverified(fmt.Sprintf("cannot read %s at 0x%05x to confirm layout %s: %v", r.Name, r.Start, def.Name, err))
+			}
+			if !blank(b) {
+				return unverified(fmt.Sprintf("%s at 0x%05x holds data: this board has a factory block, so layout %s (blank factory block) does not apply", r.Name, r.Start, def.Name))
+			}
+		}
+		return Protection{Layout: def.Layout, Verified: true, Reason: "layout " + def.Name + " (" + def.Source + ") matches flash size; every factory region reads blank and stays write-protected; modification needs a board-matched backup"}
 	}
 	for _, rn := range def.Evidence {
 		for _, r := range def.Regions {

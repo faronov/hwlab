@@ -28,16 +28,20 @@ development host. Nothing here has met real hardware.
 
 | Capability | SAFE | CONFIRM |
 |---|---|---|
-| DebugProbe | info, connect, status, read_registers | attach (pulses RST), halt, resume, step, reset, set_breakpoint, clear_breakpoint |
+| DebugProbe | info, connect, status, read_registers, chip_info | attach (pulses RST), halt, resume, step, reset, set_breakpoint, clear_breakpoint |
 | MemoryAccess | read | write |
-| FlashProgramming | read, verify | erase, program |
+| FlashProgramming | read, verify, info | erase, program, backup, restore |
 
 `connect` never activates the target; a target that does not answer is a result,
 not an error. There is no chip erase and no UART baud switching.
 
 ### Flash safety
 
-The only layout is `tb04-512k`, taken from the zigbee-rs platform guide:
+Two layouts describe the TB-04 map from the zigbee-rs platform guide:
+`tb04-512k` (confirmed when the factory EUI-64 sector holds data) and
+`tb04-512k-nofactory` (confirmed only when every byte of both factory sectors
+reads 0xFF; zigbee-rs then derives the EUI-64 from the flash unique id). Both
+keep the factory sectors unmodifiable:
 
 | Range | Class | Rule |
 |---|---|---|
@@ -53,6 +57,35 @@ a protected flash (status register = 0) is a persistent side effect and is
 reported as `flash_protection_cleared`. Memory writes are limited to SRAM
 (0x840000-0x84ffff) unless `allow_registers` is given. Factory data stays
 readable.
+
+### Backup gate (phase 15)
+
+Erase, program and restore additionally require:
+
+- the CPU captured (`DebugProbe.halt`), so the firmware cannot race the flash;
+- `backup=<file>` written by `FlashProgramming.backup`: the whole flash read
+  twice with identical SHA-256, stored 0600 with a manifest
+  (`hwlab-telink-flash-backup/1`) binding it to the flash unique id, JEDEC id,
+  chip id and size. The backup must match the connected board, its SHA-256 must
+  match the manifest, and every factory region must still equal the backup.
+
+`FlashProgramming.restore` rewrites only sectors that differ from the backup
+and reads the whole flash back. Factory and undescribed sectors are never
+written; journals need `allow_journals`, or `skip_journals` keeps the current
+journals. Restoring an old security journal rolls back NWK/APS frame counters,
+so it must never be done on a board that has been on a live network.
+
+### Transport recovery (phase 15)
+
+On the CH340 link about one session in 100-300 got a malformed first answer
+right after the port was opened. The port now settles 50 ms and is flushed after
+opening (as TlsrPgm does), stray bytes before an answer header are skipped (at
+most 64; the CRC still has to match), and idempotent reads (version, flash
+read/JEDEC/status/CRC/unique id, SRAM/debug-block/chip-id SWire reads) are
+retried twice after draining the line. Writes, erases, flash status writes,
+reset and activation are never retried. CPU capture retries the control write up
+to 4 times and checks the control byte each time. Recoveries are reported as
+`link_recoveries`.
 
 ### Discovery
 
@@ -85,14 +118,15 @@ come from `HWLAB_TELINK_PORTS=name=/dev/ttyUSB0[@baud]`, plus the SYNTHETIC
   plugin methods. SWire is a transport, not a core abstraction.
 - Fail-closed flash protection: a layout (e.g. `tb04-512k`) is applied only if
   it is chosen with the `layout` device option, the JEDEC flash size matches
-  and its evidence region (factory EUI-64) is non-blank. Otherwise
+  and its evidence region (factory EUI-64) is non-blank (or, for
+  `tb04-512k-nofactory`, both factory sectors are entirely blank). Otherwise
   erase/program return PermissionDenied and capabilities report
-  `allowed_on_current_target: false`. The connected real board has a blank
-  0x76000.. area, so modification is disabled there.
+  `allowed_on_current_target: false`.
 - Discovery lists USB-UART VID/PID candidates without opening them.
-- Real read-only validation: see `docs/notes/phase14-telink-real-hardware-results.md`
-  and `testdata/real-telink`. Erase, program, memory write, step, breakpoints
-  and attach remain unvalidated on hardware.
+- Real validation: see `docs/notes/phase14-telink-real-hardware-results.md`,
+  `docs/notes/phase15-telink-flash-hardware-results.md` and
+  `testdata/real-telink`. Memory write, step and breakpoints remain unvalidated
+  on hardware.
 - Erase running from XIP can hang the bus on real hardware; recovery is untested.
 
 ## Deferred

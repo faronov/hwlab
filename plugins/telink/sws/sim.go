@@ -17,12 +17,14 @@ type Sim struct {
 	rx []byte // answers waiting to be read
 
 	// Fault injection, counted in requests.
-	DropNext     int  // ignore this many requests (the client sees a timeout)
-	BadCRCNext   int  // corrupt the CRC of this many answers
-	NoTarget     bool // activation and SWire reads fail with the SWire timeout error
-	Asleep       bool // the target answers nothing over SWire (deep sleep)
-	BusyPolls    int  // report flash busy for this many status reads after a write/erase
-	StuckProtect bool // status-register writes have no effect (hardware write protect)
+	DropNext        int    // ignore this many requests (the client sees a timeout)
+	BadCRCNext      int    // corrupt the CRC of this many answers
+	NoTarget        bool   // activation and SWire reads fail with the SWire timeout error
+	Asleep          bool   // the target answers nothing over SWire (deep sleep)
+	BusyPolls       int    // report flash busy for this many status reads after a write/erase
+	StuckProtect    bool   // status-register writes have no effect (hardware write protect)
+	JunkNext        []byte // stray bytes sent ahead of the next answer
+	IgnoreCtlWrites int    // ignore this many writes to the CPU control byte (capture lost)
 
 	// Observations for tests.
 	Requests   int
@@ -150,6 +152,10 @@ func (s *Sim) answer(cmd, errCode byte, count uint16, data []byte) []byte {
 	if s.BadCRCNext > 0 {
 		s.BadCRCNext--
 		out[len(out)-1] ^= 0xff
+	}
+	if len(s.JunkNext) > 0 {
+		out = append(append([]byte(nil), s.JunkNext...), out...)
+		s.JunkNext = nil
 	}
 	return out
 }
@@ -330,6 +336,10 @@ func (s *Sim) writeByte(a uint32, v byte) {
 	s.mem[a] = v
 	switch {
 	case a == RegCPUCtl:
+		if s.IgnoreCtlWrites > 0 {
+			s.IgnoreCtlWrites--
+			return
+		}
 		s.ctl = v
 		if v == cpuGoBkpt {
 			if s.mem[RegBkpt+7] == 0x01 {

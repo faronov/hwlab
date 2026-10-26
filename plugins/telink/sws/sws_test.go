@@ -96,6 +96,7 @@ func TestNoTargetAndErrors(t *testing.T) {
 
 func TestTimeoutBadCRCAndDrop(t *testing.T) {
 	p, s := newPair(t)
+	p.SetRetries(0)
 	s.DropNext = 1
 	if _, err := p.Version(); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("want ErrTimeout, got %v", err)
@@ -106,6 +107,100 @@ func TestTimeoutBadCRCAndDrop(t *testing.T) {
 	}
 	if _, err := p.Version(); err != nil {
 		t.Fatalf("recovers after faults: %v", err)
+	}
+	if st := p.Stats(); st != (Stats{}) {
+		t.Fatalf("no retries were allowed: %+v", st)
+	}
+}
+
+func TestReadRetriesAreBoundedAndCounted(t *testing.T) {
+	p, s := newPair(t)
+	s.DropNext = 1
+	if _, err := p.Version(); err != nil {
+		t.Fatalf("one dropped answer must be retried: %v", err)
+	}
+	s.BadCRCNext = 1
+	if _, err := p.Version(); err != nil {
+		t.Fatalf("one bad CRC must be retried: %v", err)
+	}
+	if st := p.Stats(); st.Retries != 2 {
+		t.Fatalf("retries not counted: %+v", st)
+	}
+	s.DropNext = DefaultRetries + 1
+	before := s.Requests
+	if _, err := p.Version(); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("retries must be bounded, got %v", err)
+	}
+	if got := s.Requests - before; got != DefaultRetries+1 {
+		t.Fatalf("%d attempts, want %d", got, DefaultRetries+1)
+	}
+}
+
+func TestProgrammerErrorIsNotRetried(t *testing.T) {
+	p, s := newPair(t)
+	s.NoTarget = true
+	before := s.Requests
+	if _, err := p.SWRead(0x840000, 4); err == nil {
+		t.Fatal("want the SWire error")
+	}
+	if got := s.Requests - before; got != 1 {
+		t.Fatalf("a programmer error code was retried (%d requests)", got)
+	}
+}
+
+func TestStrayBytesBeforeAnswerAreSkipped(t *testing.T) {
+	p, s := newPair(t)
+	s.JunkNext = []byte{0x55, 0xff, 0x13} // none is the Version command byte 0x00
+	if _, err := p.Version(); err != nil {
+		t.Fatalf("resync: %v", err)
+	}
+	if st := p.Stats(); st.Resyncs != 1 || st.Retries != 0 {
+		t.Fatalf("want one resync and no retry: %+v", st)
+	}
+	s.JunkNext = bytes.Repeat([]byte{0x55}, maxJunk+8)
+	p.SetRetries(0)
+	if _, err := p.Version(); !errors.Is(err, ErrBadResponse) {
+		t.Fatalf("unbounded junk must fail, got %v", err)
+	}
+}
+
+func TestStateChangingCommandsAreNotRetried(t *testing.T) {
+	p, s := activated(t)
+	cases := map[string]func() error{
+		"SWire write":      func() error { return p.SWWrite(0x840000, []byte{1}) },
+		"peripheral read":  func() error { _, err := p.SWRead(0x800000, 4); return err },
+		"sector erase":     func() error { return p.EraseSector(0x10000) },
+		"flash page write": func() error { return p.WriteFlashPage(0x10000, []byte{1}) },
+		"write enable":     func() error { _, err := p.wrrd(0, 0x06); return err },
+	}
+	for name, f := range cases {
+		s.DropNext = 1
+		before := s.Requests
+		if err := f(); !errors.Is(err, ErrTimeout) {
+			t.Fatalf("%s: want the timeout, got %v", name, err)
+		}
+		if got := s.Requests - before; got != 1 {
+			t.Fatalf("%s was repeated (%d requests)", name, got)
+		}
+		s.DropNext = 0
+	}
+}
+
+func TestCaptureRetriesLostWrite(t *testing.T) {
+	p, s := activated(t)
+	s.IgnoreCtlWrites = 1
+	if err := p.Stall(); err != nil {
+		t.Fatalf("a lost capture write must be repeated: %v", err)
+	}
+	if st := p.Stats(); st.CaptureRetries != 1 {
+		t.Fatalf("capture retry not counted: %+v", st)
+	}
+	if err := p.Go(); err != nil {
+		t.Fatal(err)
+	}
+	s.IgnoreCtlWrites = 100
+	if err := p.Stop(); err == nil {
+		t.Fatal("capture must give up")
 	}
 }
 

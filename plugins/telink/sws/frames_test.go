@@ -56,6 +56,9 @@ func (s *scriptLink) ResetInput() error                  { s.pending = nil; retu
 func scripted(t *testing.T, steps ...scriptStep) *Programmer {
 	p := New(&scriptLink{t: t, steps: steps})
 	p.SetTimeout(20 * time.Millisecond)
+	// Each script is one exchange: pin the framing of a single answer, not
+	// the retry policy (sws_test.go covers that).
+	p.SetRetries(0)
 	return p
 }
 

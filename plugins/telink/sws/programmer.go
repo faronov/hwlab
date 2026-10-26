@@ -67,12 +67,46 @@ type Programmer struct {
 	ver     Version
 	haveVer bool
 	ctx     context.Context
+	retries int
+	stats   Stats
 }
+
+// Stats counts link-level recoveries since the programmer was opened. Every
+// recovery is reported, never hidden: a rising count means a marginal link.
+type Stats struct {
+	// Retries counts read-only commands repeated after a timeout or a
+	// malformed answer.
+	Retries int
+	// Resyncs counts answers that arrived after stray bytes, which were skipped.
+	Resyncs int
+	// CaptureRetries counts CPU capture writes that had to be repeated.
+	CaptureRetries int
+}
+
+// DefaultRetries is how often a read-only command is repeated after a
+// transport failure (timeout or malformed answer). Commands that change state
+// are never repeated automatically.
+const DefaultRetries = 2
+
+// maxJunk bounds the stray bytes skipped while looking for an answer header.
+const maxJunk = 64
 
 // New wraps an open serial link.
 func New(l Link) *Programmer {
-	return &Programmer{link: l, timeout: defaultIOTimeout, ctx: context.Background()}
+	return &Programmer{link: l, timeout: defaultIOTimeout, ctx: context.Background(), retries: DefaultRetries}
 }
+
+// SetRetries sets how often read-only commands are repeated after a transport
+// failure (0 disables retries).
+func (p *Programmer) SetRetries(n int) {
+	if n < 0 {
+		n = 0
+	}
+	p.retries = n
+}
+
+// Stats returns the link recoveries counted so far.
+func (p *Programmer) Stats() Stats { return p.stats }
 
 // SetContext makes every following transaction fail with the context's error
 // once it is done. A transaction in flight completes first, so a cancelled
@@ -135,14 +169,31 @@ func (p *Programmer) transact(req []byte, dataLen int, timeout time.Duration) (c
 	if n == 0 {
 		return 0, nil, ErrTimeout
 	}
-	if n < 4 || hdr[0] != req[0] {
-		return 0, nil, ErrBadResponse
+	if n == 4 && hdr[0] != req[0] {
+		// Stray bytes ahead of the answer (a late answer to an earlier
+		// request, line noise after open): skip to the command byte. The
+		// answer's CRC still has to match, so a false start fails below.
+		skipped := 0
+		for hdr[0] != req[0] && skipped < maxJunk {
+			copy(hdr[:], hdr[1:])
+			if k, err := readFull(p.link, hdr[3:], timeout); err != nil || k == 0 {
+				return 0, nil, badAnswer(req[0], fmt.Sprintf("header after %d stray bytes", skipped+1), hdr[:3])
+			}
+			skipped++
+		}
+		if hdr[0] != req[0] {
+			return 0, nil, badAnswer(req[0], fmt.Sprintf("header (no answer within %d stray bytes)", skipped), hdr[:])
+		}
+		p.stats.Resyncs++
+	}
+	if n < 4 {
+		return 0, nil, badAnswer(req[0], "header", hdr[:n])
 	}
 	count = binary.LittleEndian.Uint16(hdr[2:4])
 	if hdr[1] != 0 {
 		var tail [2]byte
 		if k, _ := readFull(p.link, tail[:], timeout); k < 2 || !crcOK(append(hdr[:], tail[:]...)) {
-			return 0, nil, ErrBadResponse
+			return 0, nil, badAnswer(req[0], "error frame", append(hdr[:], tail[:k]...))
 		}
 		return 0, nil, &Error{Cmd: req[0], Code: hdr[1]}
 	}
@@ -152,9 +203,60 @@ func (p *Programmer) transact(req []byte, dataLen int, timeout time.Duration) (c
 		return 0, nil, err
 	}
 	if k < len(rest) || !crcOK(append(hdr[:], rest...)) {
-		return 0, nil, ErrBadResponse
+		return 0, nil, badAnswer(req[0], fmt.Sprintf("body (%d of %d bytes)", k, len(rest)), append(hdr[:], rest[:k]...))
 	}
 	return count, rest[:dataLen], nil
+}
+
+// transactRead is transact for commands without side effects on the target
+// or the flash: after a timeout or a malformed answer it drains the line and
+// repeats the request up to p.retries times. Programmer error codes and
+// cancellation are returned at once.
+func (p *Programmer) transactRead(req []byte, dataLen int, timeout time.Duration) (uint16, []byte, error) {
+	for attempt := 0; ; attempt++ {
+		c, d, err := p.transact(req, dataLen, timeout)
+		if err == nil || attempt >= p.retries || !retryable(err) || p.ctx.Err() != nil {
+			return c, d, err
+		}
+		p.stats.Retries++
+		p.drain(timeout)
+	}
+}
+
+func retryable(err error) bool {
+	return errors.Is(err, ErrTimeout) || errors.Is(err, ErrBadResponse)
+}
+
+// drain waits until the line has been quiet for a short while, so a late
+// answer to the failed request cannot be taken for the answer to the retry.
+func (p *Programmer) drain(timeout time.Duration) {
+	if timeout <= 0 {
+		timeout = p.timeout
+	}
+	quiet := 30 * time.Millisecond
+	if err := p.link.SetReadTimeout(quiet); err != nil {
+		return
+	}
+	deadline := time.Now().Add(timeout + quiet)
+	var buf [256]byte
+	for time.Now().Before(deadline) {
+		k, err := p.link.Read(buf[:])
+		if err != nil || k == 0 {
+			break
+		}
+	}
+	_ = p.link.ResetInput()
+}
+
+// badAnswer wraps ErrBadResponse with what actually arrived, so a flaky link
+// can be told apart from a protocol mismatch.
+func badAnswer(cmd byte, part string, got []byte) error {
+	const show = 16
+	tail := ""
+	if len(got) > show {
+		got, tail = got[:show], "..."
+	}
+	return fmt.Errorf("%w: command %d, bad %s: % x%s", ErrBadResponse, cmd, part, got, tail)
 }
 
 func addr3(cmd byte, addr uint32, extra ...byte) []byte {
@@ -168,7 +270,7 @@ func funcs(sub byte, arg uint16, extra ...byte) []byte {
 
 // Version reads the programmer's identity and SWire settings.
 func (p *Programmer) Version() (Version, error) {
-	_, d, err := p.transact(funcs(fnVersion, 0), 13, 0)
+	_, d, err := p.transactRead(funcs(fnVersion, 0), 13, 0)
 	if err != nil {
 		return Version{}, err
 	}
@@ -263,7 +365,7 @@ func (p *Programmer) ReadChipID() (rev byte, id uint16, err error) {
 	return d[0], binary.LittleEndian.Uint16(d[1:3]), nil
 }
 
-func (p *Programmer) readBlocks(cmd byte, addr uint32, n int, what string) ([]byte, error) {
+func (p *Programmer) readBlocks(cmd byte, addr uint32, n int, what string, retry bool) ([]byte, error) {
 	if n < 0 {
 		return nil, fmt.Errorf("%s: negative length", what)
 	}
@@ -274,7 +376,11 @@ func (p *Programmer) readBlocks(cmd byte, addr uint32, n int, what string) ([]by
 			chunk = MaxBlock
 		}
 		a := (addr + uint32(len(out))) & 0xffffff
-		c, d, err := p.transact(addr3(cmd, a, byte(chunk), byte(chunk>>8)), chunk, 0)
+		tx := p.transact
+		if retry {
+			tx = p.transactRead
+		}
+		c, d, err := tx(addr3(cmd, a, byte(chunk), byte(chunk>>8)), chunk, 0)
 		if err != nil {
 			return nil, fmt.Errorf("%s at 0x%06x: %w", what, a, err)
 		}
@@ -289,7 +395,17 @@ func (p *Programmer) readBlocks(cmd byte, addr uint32, n int, what string) ([]by
 // SWRead reads target memory and registers over SWire (peripherals at
 // 0x800000.., SRAM at 0x840000..).
 func (p *Programmer) SWRead(addr uint32, n int) ([]byte, error) {
-	return p.readBlocks(cmdSWRead, addr, n, "SWire read")
+	return p.readBlocks(cmdSWRead, addr, n, "SWire read", swReadRepeatable(addr, n))
+}
+
+// swReadRepeatable reports whether a SWire read may be repeated after a
+// transport failure: only SRAM and the CPU debug block (control, breakpoint,
+// registers, PC) and the chip id are known to be free of read side effects.
+// Other peripheral registers (FIFOs, status-clear-on-read) are read once.
+func swReadRepeatable(addr uint32, n int) bool {
+	end := uint64(addr) + uint64(n)
+	in := func(lo, hi uint64) bool { return uint64(addr) >= lo && end <= hi }
+	return in(0x840000, 0x850000) || in(RegCPUCtl, 0x700) || in(RegChipID, RegChipID+3)
 }
 
 // SWWrite writes target memory or registers over SWire, in blocks. There is
@@ -315,7 +431,7 @@ func (p *Programmer) SWWrite(addr uint32, data []byte) error {
 
 // JEDEC reads the flash JEDEC id (manufacturer, type, capacity code).
 func (p *Programmer) JEDEC() (uint32, error) {
-	c, d, err := p.transact(addr3(cmdFlashJEDEC, 0), 3, 0)
+	c, d, err := p.transactRead(addr3(cmdFlashJEDEC, 0), 3, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -327,7 +443,7 @@ func (p *Programmer) JEDEC() (uint32, error) {
 
 // FlashStatus reads the flash status register.
 func (p *Programmer) FlashStatus() (byte, error) {
-	c, d, err := p.transact(addr3(cmdFlashStat, 0), 1, 0)
+	c, d, err := p.transactRead(addr3(cmdFlashStat, 0), 1, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -354,14 +470,24 @@ func (p *Programmer) WaitFlashReady(tries int) error {
 
 // FlashRead reads flash through the programmer's flash path.
 func (p *Programmer) FlashRead(addr uint32, n int) ([]byte, error) {
-	return p.readBlocks(cmdFlashRead, addr, n, "flash read")
+	return p.readBlocks(cmdFlashRead, addr, n, "flash read", true)
 }
 
-// wrrd sends one raw flash command and reads rd bytes back.
+// wrrd sends one raw flash command and reads rd bytes back. It is never
+// retried: raw commands can change the flash (write enable, status write).
 func (p *Programmer) wrrd(rd int, flashCmd byte, arg ...byte) ([]byte, error) {
 	req := []byte{cmdFlashWrRd, 0, 0, 0, byte(rd), byte(rd >> 8), flashCmd}
 	req = append(req, arg...)
 	_, d, err := p.transact(req, rd, 0)
+	return d, err
+}
+
+// rdid sends a read-only raw flash command (the caller vouches for it) and
+// retries it like any other read.
+func (p *Programmer) rdid(rd int, flashCmd byte, arg ...byte) ([]byte, error) {
+	req := []byte{cmdFlashWrRd, 0, 0, 0, byte(rd), byte(rd >> 8), flashCmd}
+	req = append(req, arg...)
+	_, d, err := p.transactRead(req, rd, 0)
 	return d, err
 }
 
@@ -371,7 +497,7 @@ const FlashUIDBytes = 8
 // FlashUID reads the flash chip's unique id (SPI command 0x4B: four dummy
 // bytes, then the id). It is a read-only operation like JEDEC.
 func (p *Programmer) FlashUID() ([]byte, error) {
-	d, err := p.wrrd(4+FlashUIDBytes, 0x4B)
+	d, err := p.rdid(4+FlashUIDBytes, 0x4B)
 	if err != nil {
 		return nil, fmt.Errorf("flash unique id: %w", err)
 	}
@@ -450,6 +576,6 @@ func (p *Programmer) WriteFlashPage(addr uint32, data []byte) error {
 // FlashCRC asks the programmer for the CRC16 of a flash range (firmware 3+).
 // The programmer returns it in the answer's count field.
 func (p *Programmer) FlashCRC(addr uint32, n int) (uint16, error) {
-	c, _, err := p.transact(addr3(cmdFlashCRC, addr&0xffffff, byte(n), byte(n>>8)), 0, 0)
+	c, _, err := p.transactRead(addr3(cmdFlashCRC, addr&0xffffff, byte(n), byte(n>>8)), 0, 0)
 	return c, err
 }

@@ -28,6 +28,7 @@ package telinkplugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -160,6 +161,10 @@ func candidates(have []Entry, enum func() ([]uart.Info, error)) []Entry {
 	return out
 }
 
+// openSettle is the pause after opening the serial port before the first
+// command (the reference tool waits 50 ms).
+const openSettle = 50 * time.Millisecond
+
 func defaultOpen(e Entry, baud int) (sws.Link, func() error, error) {
 	if e.Sim != nil {
 		return e.Sim, func() error { return nil }, nil
@@ -171,6 +176,12 @@ func defaultOpen(e Entry, baud int) (sws.Link, func() error, error) {
 	p, err := uart.OpenPort(e.Port, m)
 	if err != nil {
 		return nil, nil, err
+	}
+	// Let the USB-UART bridge settle and drop whatever arrived while the
+	// port was opened, as the reference tool does before its first command.
+	time.Sleep(openSettle)
+	if err := p.ResetInput(); err != nil {
+		return nil, nil, errors.Join(err, p.Close())
 	}
 	return p, p.Close, nil
 }

@@ -58,18 +58,33 @@ func (p *Programmer) Stop() error { return p.capture(cpuStop) }
 // Stall captures the CPU with the stall mode (control 0x06).
 func (p *Programmer) Stall() error { return p.capture(cpuStall) }
 
+// captureAttempts bounds the capture writes. Writing the control byte is
+// idempotent, and the reference tool likewise keeps writing it until the
+// readback shows the CPU captured.
+const captureAttempts = 4
+
 func (p *Programmer) capture(mode byte) error {
-	if err := p.SWWrite(RegCPUCtl, []byte{mode}); err != nil {
-		return err
+	var c byte
+	for attempt := 0; attempt < captureAttempts; attempt++ {
+		if attempt > 0 {
+			p.stats.CaptureRetries++
+			time.Sleep(time.Duration(attempt) * 5 * time.Millisecond)
+		}
+		if err := p.SWWrite(RegCPUCtl, []byte{mode}); err != nil {
+			if retryable(err) && attempt+1 < captureAttempts {
+				continue
+			}
+			return err
+		}
+		var err error
+		if c, err = p.CPUControl(); err != nil {
+			return err
+		}
+		if c == mode {
+			return nil
+		}
 	}
-	c, err := p.CPUControl()
-	if err != nil {
-		return err
-	}
-	if c != mode {
-		return fmt.Errorf("CPU capture failed: [0x%03x] = 0x%02x, want 0x%02x", RegCPUCtl, c, mode)
-	}
-	return nil
+	return fmt.Errorf("CPU capture failed after %d attempts: [0x%03x] = 0x%02x, want 0x%02x", captureAttempts, RegCPUCtl, c, mode)
 }
 
 // Go lets a captured CPU run (control 0x08).

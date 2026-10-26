@@ -544,15 +544,23 @@ Code, fixtures and passing tests are not hardware validation.
   - halt and resume
   - reconnect between invocations
   - erase/program refused while the flash protection map is unverified (fail closed)
+  - full-flash backup (two identical reads, manifest bound to flash unique id/JEDEC/chip id)
+  - erase/program refused without a board-matched backup, with the CPU running, on factory, journal and undescribed sectors
+  - standalone erase and program of one application sector with CRC + readback verify; the firmware boots afterwards
+  - restore of application sectors from a backup (journals kept with skip_journals)
+  - layout tb04-512k-nofactory on a board whose factory block is blank
+  - hard reset and soft attach on the board
+  - transport recovery: bounded read retries, stray-byte resync, capture retry
 - unverified:
   - the exact TLSR825x variant (chip id 0x5562 does not distinguish them)
-  - flash erase/program/verify (disabled on the connected board: protection map not verified; never run)
+  - programming a whole application image on the board
+  - restore with allow_journals on the board
   - memory write
-  - single-step, breakpoints, soft reset and attach (RST pin) on the board
-  - PC register semantics (constant on this board)
+  - single-step and breakpoints on the board
+  - the cause of the rare malformed first answer after opening the CH340 port (mitigated by settle, flush, resync and retry)
 - known gaps:
   - only the TLSR825x family driver exists (TLSR826x/8208 chip ids are recognised but have no target driver)
-  - the only board layout is tb04-512k, which the connected board does not match
+  - board layouts: tb04-512k (factory block programmed) and tb04-512k-nofactory (factory block blank); 0x78000-0x80000 stays undescribed and refused
   - optional TlsrPgm/probe-rs fallbacks are not wired
 
 ### uart — Serial port capture and TX

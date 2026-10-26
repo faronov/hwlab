@@ -336,7 +336,8 @@ func TestProgramVerifyEraseHappyPath(t *testing.T) {
 	if err := os.WriteFile(path, img, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r := must(t, p, F, "program", withTB04(map[string]any{"address": "0x8000", "path": path}))
+	bk := haltAndBackup(t, p)
+	r := must(t, p, F, "program", withTB04(map[string]any{"address": "0x8000", "path": path, "backup": bk}))
 	if r["flash_protection_cleared"] != true || r["sectors_erased"].(float64) != 2 || r["verified_bytes"].(float64) != 5000 || r["flash_kib"].(float64) != 512 {
 		t.Fatalf("%v", r)
 	}
@@ -348,7 +349,7 @@ func TestProgramVerifyEraseHappyPath(t *testing.T) {
 	if v["match"] != false || v["first_difference"] != "0x008064" {
 		t.Fatalf("%v", v)
 	}
-	e := must(t, p, F, "erase", withTB04(map[string]any{"address": "0x8000", "length": float64(5000)}))
+	e := must(t, p, F, "erase", withTB04(map[string]any{"address": "0x8000", "length": float64(5000), "backup": bk}))
 	if e["sectors_erased"].(float64) != 2 || sim.Flash()[0x8000] != 0xff {
 		t.Fatalf("%v", e)
 	}
@@ -360,7 +361,8 @@ func TestProgramVerifyEraseHappyPath(t *testing.T) {
 func TestProgramHexData(t *testing.T) {
 	p, sim := armed(t)
 	data := []byte{1, 2, 3, 4, 5}
-	must(t, p, F, "program", withTB04(map[string]any{"address": "0x1000", "data": hex.EncodeToString(data)}))
+	bk := haltAndBackup(t, p)
+	must(t, p, F, "program", withTB04(map[string]any{"address": "0x1000", "data": hex.EncodeToString(data), "backup": bk}))
 	if !bytes.Equal(sim.Flash()[0x1000:0x1005], data) {
 		t.Fatal("not programmed")
 	}
@@ -420,9 +422,10 @@ func TestMethodSpecsDangerLevels(t *testing.T) {
 	for _, m := range p.Info().Methods {
 		danger[m.Capability+"."+m.Name] = m.Danger
 	}
-	safe := []string{"DebugProbe.info", "DebugProbe.connect", "DebugProbe.status", "DebugProbe.read_registers", "MemoryAccess.read", "FlashProgramming.read", "FlashProgramming.verify"}
+	safe := []string{"DebugProbe.info", "DebugProbe.connect", "DebugProbe.status", "DebugProbe.read_registers", "DebugProbe.chip_info", "MemoryAccess.read",
+		"FlashProgramming.read", "FlashProgramming.verify", "FlashProgramming.info"}
 	confirm := []string{"DebugProbe.attach", "DebugProbe.halt", "DebugProbe.resume", "DebugProbe.step", "DebugProbe.reset", "DebugProbe.set_breakpoint",
-		"DebugProbe.clear_breakpoint", "MemoryAccess.write", "FlashProgramming.erase", "FlashProgramming.program"}
+		"DebugProbe.clear_breakpoint", "MemoryAccess.write", "FlashProgramming.erase", "FlashProgramming.program", "FlashProgramming.backup", "FlashProgramming.restore"}
 	for _, n := range safe {
 		if danger[n] != pluginv1.Danger_DANGER_SAFE {
 			t.Errorf("%s should be SAFE", n)
