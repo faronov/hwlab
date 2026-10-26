@@ -68,6 +68,43 @@ type Link interface {
 	SWJSequence(bits int, data []byte) error
 }
 
+// DormantWaker is a Link that performs the dormant-to-SWD wake-up itself,
+// because the probe cannot clock the sequence through SWJSequence. It leaves
+// the line ready for the usual line reset and JTAG-to-SWD switch.
+type DormantWaker interface {
+	WakeDormant() error
+}
+
+// selectionAlert is the ADIv5.2 128-bit Selection Alert sequence
+// 0x19BC0EA2_E3DDAFE9_86852D95_6209F392, LSB first.
+var selectionAlert = []byte{
+	0x92, 0xF3, 0x09, 0x62, 0x95, 0x2D, 0x85, 0x86,
+	0xE9, 0xAF, 0xDD, 0xE3, 0xA2, 0x0E, 0xBC, 0x19,
+}
+
+// activationSWD is the activation code that selects SW-DP after the alert.
+const activationSWD = 0x1A
+
+// DormantWakeTMS returns the dormant-to-SWD wake-up as SWDIO (TMS) levels,
+// one per SWCLK cycle: at least eight high, the selection alert, four low,
+// the SWD activation code and a line reset. A dormant-capable DP (DPv2, such
+// as the TI CC23xx SW-DP) can come out of power-on in the dormant state,
+// where it ignores the JTAG-to-SWD switch.
+func DormantWakeTMS() []bool {
+	var b []bool
+	add := func(data []byte, bits int) {
+		for i := 0; i < bits; i++ {
+			b = append(b, data[i/8]>>(i%8)&1 == 1)
+		}
+	}
+	add([]byte{0xFF}, 8)
+	add(selectionAlert, 128)
+	add([]byte{0x00}, 4)
+	add([]byte{activationSWD}, 8)
+	add([]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, 56)
+	return b
+}
+
 // Op is one DP or AP register access. Reg is the register address as the
 // architecture names it (DP: 0x0, 0x4, 0x8, 0xC; AP: 0x00..0xFC), but the
 // AP bank must already be selected: only bits 3:2 go on the wire.
@@ -108,6 +145,9 @@ type Target struct {
 	ap    uint8
 	DPIDR uint32
 	APIDR uint32
+	// WokeFromDormant is set once the debug port only answered after the
+	// dormant-to-SWD wake-up.
+	WokeFromDormant bool
 	// cswProt keeps the AP's reset protection/mode bits (31:24) so the
 	// accesses use the privilege and security the AP defaults to.
 	cswProt  uint32
@@ -176,8 +216,49 @@ func (t *Target) RefreshAP() error {
 
 // Reinit repeats the SWD line reset, DPIDR read, error clearing and debug
 // power-up. Attach calls it; a reset that takes the debug port down needs it
-// again.
+// again. When the debug port does not answer, Reinit sends the
+// dormant-to-SWD wake-up once and tries again; the original error is returned
+// if that does not help.
 func (t *Target) Reinit() error {
+	err := t.lineUp()
+	if err != nil {
+		werr := t.wakeDormant()
+		if werr == nil {
+			werr = t.lineUp()
+		}
+		if werr != nil {
+			return fmt.Errorf("%w (dormant-to-SWD wake-up also tried: %v)", err, werr)
+		}
+		t.WokeFromDormant = true
+	}
+	if err := t.p.WriteABORT(abortClearAll); err != nil {
+		return err
+	}
+	return t.powerUp()
+}
+
+func (t *Target) wakeDormant() error {
+	if w, ok := t.p.(DormantWaker); ok {
+		return w.WakeDormant()
+	}
+	for _, s := range []struct {
+		bits int
+		data []byte
+	}{
+		{8, []byte{0xFF}},
+		{128, selectionAlert},
+		{4, []byte{0x00}},
+		{8, []byte{activationSWD}},
+	} {
+		if err := t.p.SWJSequence(s.bits, s.data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// lineUp sends the line reset and JTAG-to-SWD switch and reads DPIDR.
+func (t *Target) lineUp() error {
 	ones := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 	for _, s := range []struct {
 		bits int
@@ -204,10 +285,7 @@ func (t *Target) Reinit() error {
 	if t.DPIDR == 0 || t.DPIDR == 0xFFFFFFFF {
 		return fmt.Errorf("DPIDR is 0x%08X: no debug port on the line", t.DPIDR)
 	}
-	if err := t.p.WriteABORT(abortClearAll); err != nil {
-		return err
-	}
-	return t.powerUp()
+	return nil
 }
 
 func (t *Target) powerUp() error {

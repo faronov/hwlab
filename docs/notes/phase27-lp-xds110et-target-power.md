@@ -129,7 +129,14 @@ EnergyTrace capture is still gated by `allow_target_power` at open time. That is
 documented as a conservative choice: the effect of the unknown start commands is not
 established, but the pin is not switched by them.
 
-## SWD outage after the P9 change (resolved, cause unknown)
+## SWD outage after the P9 change (resolved: dormant SW-DP)
+
+**Update:** the cause was later identified. The CC2340 SW-DP v2 is dormant after
+power-on and ignores JTAG-to-SWD; re-seating the wires only occasionally produced
+the wake sequence by chance. hwlab now runs the ADIv5.2 dormant-to-SWD wake-up
+automatically, see [cc2340-dormant-swd-wake.md](cc2340-dormant-swd-wake.md). The
+original record follows.
+
 
 After the jumper changes (P9 moved XDS -> EXT -> XDS, USB re-plugged) SWD did not
 answer on either backend (XDS110 -615, CMSIS-DAP "no target answered"), including

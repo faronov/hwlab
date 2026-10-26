@@ -193,6 +193,31 @@ func TestNoTargetConnectIsExplicit(t *testing.T) {
 	}
 }
 
+func TestDormantDPIsWokenThroughPathMove(t *testing.T) {
+	p, s := simProbe(t)
+	s.SetDormant(true)
+	tgt, err := adiv5.Connect(NewSWDLink(p), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tgt.WokeFromDormant {
+		t.Fatal("connected without the wake-up")
+	}
+	if _, err := tgt.ReadMem(0x20000000, 4); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPathMoveRejectsNonAdjacentStates(t *testing.T) {
+	p, _ := simProbe(t)
+	if err := p.GotoState(StReset); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.PathMove([]uint32{StShiftDR}); err == nil {
+		t.Fatal("Reset -> Shift-DR accepted as one step")
+	}
+}
+
 func TestSWJSequenceRefusesArbitraryBits(t *testing.T) {
 	p, _ := simProbe(t)
 	if err := NewSWDLink(p).SWJSequence(13, []byte{0x55, 0x15}); err == nil {

@@ -6,7 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/faronov/hwlab/internal/adiv5"
 	"github.com/faronov/hwlab/internal/cortexm"
+	"github.com/faronov/hwlab/internal/jtag"
 	"github.com/faronov/hwlab/internal/ti/cc23xx/ccsim"
 )
 
@@ -51,6 +53,9 @@ type Sim struct {
 	// Test hooks.
 	waitNext int
 	noTarget bool
+	// dormant models a dormant-capable DP after power-on: SWD stays silent
+	// until a PATHMOVE clocks the dormant-to-SWD wake-up on TMS/SWDIO.
+	dormant bool
 	// ignoreSRST models an SRST line that is not wired to the target.
 	ignoreSRST bool
 	pinResets  int
@@ -117,6 +122,9 @@ func (s *Sim) Resets() int { s.mu.Lock(); defer s.mu.Unlock(); return s.pinReset
 
 // InjectWait makes the next n SWD queues answer WAIT.
 func (s *Sim) InjectWait(n int) { s.mu.Lock(); s.waitNext = n; s.mu.Unlock() }
+
+// SetDormant puts the simulated DP in the dormant state.
+func (s *Sim) SetDormant(v bool) { s.mu.Lock(); s.dormant = v; s.mu.Unlock() }
 
 // SetNoTarget makes SWD answer with a device-id error, as an unwired line.
 func (s *Sim) SetNoTarget(v bool) { s.mu.Lock(); s.noTarget = v; s.mu.Unlock() }
@@ -206,7 +214,7 @@ func (s *Sim) Exchange(req []byte, _ time.Duration) ([]byte, error) {
 	case CmdSWDDisconnect:
 		s.swd, s.cmapi = false, false
 	case CmdCMAPIConnect:
-		if s.noTarget || !s.swd {
+		if s.noTarget || s.dormant || !s.swd {
 			return status(StatusSWDDevID), nil
 		}
 		s.cmapi = true
@@ -229,12 +237,64 @@ func (s *Sim) Exchange(req []byte, _ time.Duration) ([]byte, error) {
 		s.tapState = int(binary.LittleEndian.Uint32(a))
 	case CmdJTAGScan:
 		return s.jtagScan(a), nil
+	case CmdPathMove:
+		return s.pathMove(a), nil
 	case CmdDapRequest:
 		return s.dapRequest(a), nil
 	default:
 		return status(StatusFail), nil
 	}
 	return status(0), nil
+}
+
+// pathMove follows OCD_PATHMOVE: a count and one state id per TCK. The TMS
+// level of each step is recovered from the TAP transition.
+func (s *Sim) pathMove(a []byte) []byte {
+	if len(a) < 4 {
+		return status(StatusFail)
+	}
+	n := int(binary.LittleEndian.Uint32(a))
+	if len(a) < 4+n {
+		return status(StatusFail)
+	}
+	byID := map[uint32]jtag.State{}
+	for st, id := range xdsAnyState {
+		byID[id] = st
+	}
+	cur, ok := byID[uint32(s.tapState)]
+	if !ok {
+		return status(StatusFail)
+	}
+	tms := make([]bool, 0, n)
+	for _, b := range a[4 : 4+n] {
+		next, ok := byID[uint32(b)]
+		switch {
+		case !ok:
+			return status(StatusFail)
+		case jtag.Next(cur, true) == next:
+			tms = append(tms, true)
+		case jtag.Next(cur, false) == next:
+			tms = append(tms, false)
+		default:
+			return status(StatusFail)
+		}
+		cur = next
+	}
+	s.tapState = int(xdsAnyState[cur])
+	wake := adiv5.DormantWakeTMS()[:148]
+	for i := 0; i+len(wake) <= len(tms); i++ {
+		match := true
+		for j := range wake {
+			if tms[i+j] != wake[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			s.dormant = false
+		}
+	}
+	return status(0)
 }
 
 // JTAG model: the chain shifts IDCODEs (or BYPASS bits) after reset.

@@ -3,6 +3,8 @@ package xds
 import (
 	"encoding/binary"
 	"fmt"
+
+	"github.com/faronov/hwlab/internal/jtag"
 )
 
 // XDS110 JTAG state ids used by GOTO_STATE and JTAG_SCAN.
@@ -37,6 +39,45 @@ func (p *Probe) GotoState(state uint32) error {
 	args := append(le32(state), le32(transitQuickest)...)
 	_, err := p.Do(CmdGotoState, args)
 	return err
+}
+
+// PathMove walks the TAP through states, one TCK per state; each state must
+// follow the previous one on a single TMS level (OCD_PATHMOVE, firmware
+// 2.3.0.17 and later).
+func (p *Probe) PathMove(states []uint32) error {
+	if len(states) == 0 {
+		return nil
+	}
+	if len(states) > maxPayload-64 {
+		return fmt.Errorf("xds110: path of %d states is too long", len(states))
+	}
+	a := le32(uint32(len(states)))
+	for _, s := range states {
+		a = append(a, byte(s))
+	}
+	_, err := p.Do(CmdPathMove, a)
+	return err
+}
+
+// tmsPath turns TMS levels clocked from Test-Logic-Reset into the XDS110
+// state ids PathMove needs.
+func tmsPath(tms []bool) []uint32 {
+	st := jtag.TestLogicReset
+	out := make([]uint32, 0, len(tms))
+	for _, b := range tms {
+		st = jtag.Next(st, b)
+		out = append(out, xdsAnyState[st])
+	}
+	return out
+}
+
+// xdsAnyState maps every TAP state to its XDS110 id.
+var xdsAnyState = map[jtag.State]uint32{
+	jtag.TestLogicReset: StReset, jtag.RunTestIdle: StIdle,
+	jtag.SelectDRScan: StSelectDR, jtag.CaptureDR: StCaptureDR, jtag.ShiftDR: StShiftDR,
+	jtag.Exit1DR: StExit1DR, jtag.PauseDR: StPauseDR, jtag.Exit2DR: StExit2DR, jtag.UpdateDR: StUpdateDR,
+	jtag.SelectIRScan: StSelectIR, jtag.CaptureIR: StCaptureIR, jtag.ShiftIR: StShiftIR,
+	jtag.Exit1IR: StExit1IR, jtag.PauseIR: StPauseIR, jtag.Exit2IR: StExit2IR, jtag.UpdateIR: StUpdateIR,
 }
 
 // Scan shifts nbits through the IR (ir true) or DR from the current TAP state

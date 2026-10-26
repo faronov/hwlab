@@ -55,6 +55,18 @@ func TestAttachNoTarget(t *testing.T) {
 	}
 }
 
+func TestAttachWakesDormantDP(t *testing.T) {
+	p, s, _ := SimProbe()
+	s.SetDormant(true)
+	tg, err := Attach(p, AttachOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tg.WokeFromDormant {
+		t.Fatal("the attach did not go through the dormant wake-up")
+	}
+}
+
 func TestAttachMissingAP(t *testing.T) {
 	p, _, _ := SimProbe()
 	_, err := Attach(p, AttachOptions{AP: 3})

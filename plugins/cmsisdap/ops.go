@@ -63,6 +63,9 @@ func (d *device) connectInfo(ctx context.Context) (map[string]any, error) {
 	}
 	res := stateMap(st)
 	res["dpidr"], res["ap_idr"] = hex32(d.tgt.DPIDR), hex32(d.tgt.APIDR)
+	if d.tgt.WokeFromDormant {
+		res["woke_from_dormant"] = true
+	}
 	res["core"], res["cpuid"] = ci.Name, hex32(ci.CPUID)
 	res["part"] = fmt.Sprintf("0x%03x", ci.PartNo)
 	res["revision"] = fmt.Sprintf("r%dp%d", ci.Variant, ci.Revision)

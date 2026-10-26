@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/faronov/hwlab/internal/adiv5"
 	"github.com/faronov/hwlab/internal/cortexm"
 	"github.com/faronov/hwlab/internal/ti/cc23xx/ccsim"
 )
@@ -33,6 +34,8 @@ type Sim struct {
 	// DAP state.
 	connected bool
 	switched  bool // JTAG-to-SWD sequence seen
+	dormant   bool // DP in the dormant state; only the wake-up selects SWD
+	swjBits   []bool
 	dpSelect  uint32
 	ctrlReq   uint32
 	sticky    uint32
@@ -116,6 +119,15 @@ func SimProbe() (*Probe, *Sim, error) {
 
 // InjectWait makes the next n transfers answer WAIT.
 func (s *Sim) InjectWait(n int) { s.mu.Lock(); s.waitNext = n; s.mu.Unlock() }
+
+// SetDormant puts the DP in the dormant state, as a dormant-capable DP after
+// power-on: the JTAG-to-SWD switch is ignored until the dormant-to-SWD
+// wake-up.
+func (s *Sim) SetDormant(v bool) {
+	s.mu.Lock()
+	s.dormant, s.switched = v, false
+	s.mu.Unlock()
+}
 
 // SetNoTarget makes every transfer answer "no ACK", as with an unwired line.
 func (s *Sim) SetNoTarget(v bool) { s.mu.Lock(); s.noTarget = v; s.mu.Unlock() }
@@ -231,10 +243,39 @@ func (s *Sim) sequence(req []byte) []byte {
 	if len(data) != (bits+7)/8 {
 		return []byte{cmdSWJSequence, 0xFF}
 	}
-	if bits == 16 && data[0] == 0x9E && data[1] == 0xE7 {
+	for i := 0; i < bits; i++ {
+		s.swjBits = append(s.swjBits, data[i/8]>>(i%8)&1 == 1)
+	}
+	if n := len(s.swjBits); n > 512 {
+		s.swjBits = append([]bool(nil), s.swjBits[n-256:]...)
+	}
+	switch {
+	case s.dormant:
+		if endsWith(s.swjBits, dormantWake) {
+			s.dormant = false
+		}
+	case bits == 16 && data[0] == 0x9E && data[1] == 0xE7:
 		s.switched = true
+	case bits == 16 && data[0] == 0xBC && data[1] == 0xE3:
+		s.dormant, s.switched = true, false
 	}
 	return []byte{cmdSWJSequence, 0}
+}
+
+// dormantWake is the wake-up without its trailing line reset.
+var dormantWake = adiv5.DormantWakeTMS()[:148]
+
+func endsWith(h, tail []bool) bool {
+	if len(h) < len(tail) {
+		return false
+	}
+	h = h[len(h)-len(tail):]
+	for i := range tail {
+		if h[i] != tail[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Sim) pins(req []byte) []byte {

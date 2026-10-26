@@ -77,6 +77,23 @@ func (l *SWDLink) SWJSequence(bits int, data []byte) error {
 	return fmt.Errorf("the XDS110 cannot clock an arbitrary %d-bit SWJ sequence", bits)
 }
 
+// WakeDormant implements adiv5.DormantWaker. The probe cannot clock arbitrary
+// SWJ bits in SWD mode, but in JTAG mode SWDIO is TMS and OCD_PATHMOVE drives
+// any TMS pattern as a walk through the TAP states. The SWD interface is
+// released first; the following JTAG-to-SWD switch selects it again.
+func (l *SWDLink) WakeDormant() error {
+	if l.P.Info.Firmware != 0 && l.P.Info.Firmware < FWOptimizedDAP {
+		return fmt.Errorf("XDS110 firmware %s has no OCD_PATHMOVE for the dormant wake-up", l.P.Info.FirmwareText)
+	}
+	_ = l.P.SWDDisconnect()
+	if err := l.P.GotoState(StReset); err != nil {
+		return err
+	}
+	return l.P.PathMove(tmsPath(adiv5.DormantWakeTMS()))
+}
+
+var _ adiv5.DormantWaker = (*SWDLink)(nil)
+
 func (l *SWDLink) attachSWD() error {
 	if l.P.Info.Firmware != 0 && l.P.Info.Firmware < FWOptimizedDAP {
 		return fmt.Errorf("XDS110 firmware %s is older than %s, which introduced the SWD queue", l.P.Info.FirmwareText, FirmwareString(FWOptimizedDAP))

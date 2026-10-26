@@ -16,6 +16,8 @@ type fakeLink struct {
 	tar      uint32
 	csw      uint32
 	noACK    bool
+	dormant  bool
+	swjBits  []bool
 	waits    int
 	seq      [][]byte
 	aborts   int
@@ -35,14 +37,33 @@ func newFake() *fakeLink {
 
 func (f *fakeLink) SWJSequence(bits int, data []byte) error {
 	f.seq = append(f.seq, append([]byte(nil), data...))
+	for i := 0; i < bits; i++ {
+		f.swjBits = append(f.swjBits, data[i/8]>>(i%8)&1 == 1)
+	}
+	if f.dormant && hasSuffix(f.swjBits, DormantWakeTMS()[:148]) {
+		f.dormant = false
+	}
 	return nil
+}
+
+func hasSuffix(h, tail []bool) bool {
+	if len(h) < len(tail) {
+		return false
+	}
+	h = h[len(h)-len(tail):]
+	for i := range tail {
+		if h[i] != tail[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (f *fakeLink) WriteABORT(uint32) error { f.aborts++; return nil }
 
 func (f *fakeLink) Transfer(ops []Op) ([]uint32, error) {
 	f.transfer++
-	if f.noACK {
+	if f.noACK || f.dormant {
 		return nil, &TransferError{Ack: 7, Err: ErrNoACK}
 	}
 	var out []uint32
@@ -141,6 +162,39 @@ func TestConnectNoTargetIsExplicit(t *testing.T) {
 	_, err := Connect(f, 0)
 	if !errors.Is(err, ErrNoACK) {
 		t.Fatalf("want ErrNoACK, got %v", err)
+	}
+}
+
+func TestConnectWakesDormantDP(t *testing.T) {
+	f := newFake()
+	f.dormant = true
+	tg, err := Connect(f, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tg.WokeFromDormant || tg.DPIDR != 0x2BA01477 {
+		t.Fatalf("woke %v dpidr %#x", tg.WokeFromDormant, tg.DPIDR)
+	}
+	if tg2, err := Connect(f, 0); err != nil || tg2.WokeFromDormant {
+		t.Fatalf("an awake DP was woken again: %v %v", err, tg2)
+	}
+}
+
+type wakerLink struct {
+	*fakeLink
+	wakes int
+}
+
+func (w *wakerLink) WakeDormant() error { w.wakes++; w.dormant = false; return nil }
+
+func TestConnectUsesLinkDormantWaker(t *testing.T) {
+	w := &wakerLink{fakeLink: newFake()}
+	w.dormant = true
+	if _, err := Connect(w, 0); err != nil {
+		t.Fatal(err)
+	}
+	if w.wakes != 1 || len(w.swjBits) != 2*(56+16+56+8) {
+		t.Fatalf("wakes %d, %d SWJ bits", w.wakes, len(w.swjBits))
 	}
 }
 
