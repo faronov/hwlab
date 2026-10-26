@@ -97,8 +97,9 @@ func TestESPUSBJTAGCapabilityGrades(t *testing.T) {
 // listed as unverified until a protection map is verified and a sacrificial
 // board is used.
 // TestTelinkClaimsMatchHardwareEvidence keeps the telink claims at what
-// docs/notes/phase15-telink-flash-hardware-results.md and
-// docs/notes/telink-debug-hardware-results.md show on the real board.
+// docs/notes/phase15-telink-flash-hardware-results.md,
+// docs/notes/telink-debug-hardware-results.md and
+// docs/notes/telink-watch-retention-hardware-results.md show on the real board.
 func TestTelinkClaimsMatchHardwareEvidence(t *testing.T) {
 	e, _ := Lookup("telink")
 	b := e.Backends[0]
@@ -106,17 +107,17 @@ func TestTelinkClaimsMatchHardwareEvidence(t *testing.T) {
 		t.Fatalf("%+v", b)
 	}
 	join := func(l []string) string { return strings.Join(l, "\n") }
-	for _, want := range []string{"full-flash backup", "refused without a board-matched backup", "erase and program of one application sector", "restore of application sectors", "single-step", "three hardware breakpoints"} {
+	for _, want := range []string{"full-flash backup", "refused without a board-matched backup", "erase and program of one application sector", "restore of application sectors", "single-step", "three hardware breakpoints", "whole application image programmed", "restore with allow_journals", "SRAM memory write", "MemoryAccess.watch"} {
 		if !strings.Contains(join(b.Verified), want) {
 			t.Errorf("%q should be listed as verified", want)
 		}
 	}
-	for _, want := range []string{"whole application image", "memory write", "PC write"} {
+	for _, want := range []string{"memory write while the core runs", "PC write"} {
 		if !strings.Contains(join(b.Unverified), want) {
 			t.Errorf("%q must stay unverified", want)
 		}
 	}
-	for _, note := range []string{"phase15-telink-flash-hardware-results.md", "telink-debug-hardware-results.md"} {
+	for _, note := range []string{"phase15-telink-flash-hardware-results.md", "telink-debug-hardware-results.md", "telink-watch-retention-hardware-results.md"} {
 		if _, err := os.Stat(filepath.Join("..", "..", "docs", "notes", note)); err != nil {
 			t.Errorf("hardware evidence note missing: %v", err)
 		}

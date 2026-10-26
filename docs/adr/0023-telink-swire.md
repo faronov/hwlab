@@ -29,11 +29,19 @@ development host. Nothing here has met real hardware.
 | Capability | SAFE | CONFIRM |
 |---|---|---|
 | DebugProbe | info, connect, status, read_registers, chip_info, list_breakpoints | attach (pulses RST), halt, resume, step, reset, set_breakpoint, clear_breakpoint, wait_halt |
-| MemoryAccess | read | write |
+| MemoryAccess | read | write, watch |
 | FlashProgramming | read, verify, info | erase, program, backup, restore |
 
 `connect` never activates the target; a target that does not answer is a result,
 not an error. There is no chip erase and no UART baud switching.
+
+`watch` samples one SRAM window back-to-back for up to 300 s and reports
+awake/unreachable segments, so a deep-retention sleeper's short wakes can be
+seen (a CLI invocation per sample is far too slow). Its optional `prime`
+writes and verifies up to four SRAM blocks on the first awake sample; with
+`halt_on_wake` the core is stalled for the writes and always resumed. It is
+CONFIRM because `prime` writes memory and halts the core. Results:
+`docs/notes/telink-watch-retention-hardware-results.md`.
 
 ### Flash safety
 

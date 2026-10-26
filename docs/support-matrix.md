@@ -554,11 +554,13 @@ Code, fixtures and passing tests are not hardware validation.
   - single-step from a stall and from a breakpoint stop
   - three hardware breakpoints (set, list, hit detection, step-over on resume, clear)
   - halt reason (request vs breakpoint) from the 0x610 stopped bit
+  - whole application image programmed (782 pages, readback verified) and booted, twice
+  - restore with allow_journals (46 sectors, flash hash equals the backup, firmware boots)
+  - SRAM memory write with readback verify on a stalled core (MemoryAccess.watch prime, same SWWrite path as MemoryAccess.write)
+  - MemoryAccess.watch: sleep/wake segments of a deep-retention sleeper (~5 s cadence, 10-17 ms awake windows) and priming on the first wake with halt_on_wake
 - unverified:
   - the exact TLSR825x variant (chip id 0x5562 does not distinguish them)
-  - programming a whole application image on the board
-  - restore with allow_journals on the board
-  - memory write
+  - memory write while the core runs (only stalled-core writes were checked)
   - PC write (the board ignored writes to 0x6bc; not offered)
   - the cause of the rare malformed first answer after opening the CH340 port (mitigated by settle, flush, resync and retry)
 - known gaps:

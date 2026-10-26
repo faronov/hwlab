@@ -78,6 +78,8 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 				`{"type":"object","required":["address","length"],"properties":{`+optProps+`,"address":{},"length":{"type":"number"},"allow_registers":{"type":"boolean"}}}`),
 			spec(M, confirm, "write", "write target SRAM (0x840000-0x84ffff); other addresses (peripheral registers, the CPU debug block) need allow_registers=true. Max 4096 bytes, verified by readback for SRAM",
 				`{"type":"object","required":["address","data"],"properties":{`+optProps+`,"address":{},"data":{"type":"string"},"verify":{"type":"boolean"},"allow_registers":{"type":"boolean"}}}`),
+			spec(M, confirm, "watch", "poll address/length (max 256 B, from 0x800000) every interval_ms (default 5) for duration_ms (default 10000, max 300000) on a running target and report awake/unreachable segments (a target in deep sleep does not answer SWire), the number of wakes and every value change. prime: up to 4 {address, data} SRAM writes (max 64 B each) made and verified at the first sample that answers, e.g. sentinels for a retention test; a sleepy target may be awake too briefly for them, halt_on_wake=true stalls the CPU for the writes and then resumes it",
+				`{"type":"object","required":["address","length"],"properties":{`+optProps+`,"address":{},"length":{"type":"number"},"duration_ms":{"type":"number"},"interval_ms":{"type":"number"},"halt_on_wake":{"type":"boolean"},"prime":{"type":"array","items":{"type":"object","required":["address","data"],"properties":{"address":{},"data":{"type":"string"}}}}}}`),
 			spec(F, safe, "read", "read flash; args: address, length (max 64 KiB inline; with path, writes up to the whole flash to a new file). Also lists the layout regions touched",
 				`{"type":"object","required":["address","length"],"properties":{`+optProps+`,"address":{},"length":{"type":"number"},"path":{"type":"string"}}}`),
 			spec(F, safe, "verify", "compare flash with a file or hex data without changing it; args: address, path or data", `{"type":"object","required":["address"],"properties":{`+optProps+`,"address":{},"path":{"type":"string"},"data":{"type":"string"}}}`),
@@ -216,7 +218,7 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 	case "DebugProbe.info", "DebugProbe.connect", "DebugProbe.attach", "DebugProbe.status", "DebugProbe.halt", "DebugProbe.resume",
 		"DebugProbe.step", "DebugProbe.reset", "DebugProbe.read_registers", "DebugProbe.set_breakpoint", "DebugProbe.clear_breakpoint",
 		"DebugProbe.list_breakpoints", "DebugProbe.wait_halt", "DebugProbe.chip_info", "MemoryAccess.read", "MemoryAccess.write",
-		"FlashProgramming.read", "FlashProgramming.verify", "FlashProgramming.erase", "FlashProgramming.program",
+		"MemoryAccess.watch", "FlashProgramming.read", "FlashProgramming.verify", "FlashProgramming.erase", "FlashProgramming.program",
 		"FlashProgramming.info", "FlashProgramming.backup", "FlashProgramming.restore":
 	default:
 		return nil, status.Errorf(codes.Unimplemented, "method %s", method)
@@ -275,6 +277,8 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 		res, err = d.readMemory(args)
 	case "MemoryAccess.write":
 		res, err = d.writeMemory(args)
+	case "MemoryAccess.watch":
+		res, err = d.watch(args)
 	case "FlashProgramming.read":
 		res, err = d.flashRead(args)
 	case "FlashProgramming.verify":

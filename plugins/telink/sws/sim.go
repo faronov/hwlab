@@ -25,6 +25,10 @@ type Sim struct {
 	StuckProtect    bool   // status-register writes have no effect (hardware write protect)
 	JunkNext        []byte // stray bytes sent ahead of the next answer
 	IgnoreCtlWrites int    // ignore this many writes to the CPU control byte (capture lost)
+	// Schedule, if set, runs before every request with the request count,
+	// the SRAM contents and the CPU control byte and sets Asleep: a test's
+	// model of sleep/wake cycles.
+	Schedule func(req int, mem map[uint32]byte, ctl byte) (asleep bool)
 
 	// Observations for tests.
 	Requests   int
@@ -112,6 +116,9 @@ func (s *Sim) Write(frame []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Requests++
+	if s.Schedule != nil {
+		s.Asleep = s.Schedule(s.Requests, s.mem, s.ctl)
+	}
 	if s.DropNext > 0 {
 		s.DropNext--
 		return len(frame), nil

@@ -375,6 +375,95 @@ func TestMemoryReadWriteRules(t *testing.T) {
 	}
 }
 
+func TestWatchSeesSleepWakeCyclesAndPrimesOnce(t *testing.T) {
+	p, sim := newPlugin(t)
+	must(t, p, D, "attach", fast())
+	base := -1
+	sim.Schedule = func(req int, mem map[uint32]byte, _ byte) bool {
+		if base < 0 {
+			base = req
+		}
+		k := (req - base) % 20
+		if k == 0 && req != base {
+			mem[0x840200]++ // a wake: the firmware counts it
+		}
+		return k >= 6
+	}
+	r := must(t, p, M, "watch", map[string]any{
+		"address": "0x840200", "length": float64(32), "duration_ms": float64(30), "interval_ms": float64(0),
+		"prime": []any{map[string]any{"address": "0x840210", "data": "c35aa5"}},
+	})
+	sim.Schedule = nil
+	pr, _ := r["prime"].(map[string]any)
+	if pr["ok"] != true || pr["attempts"] != float64(1) {
+		t.Fatalf("prime: %v", r["prime"])
+	}
+	if r["wakes"].(float64) < 2 {
+		t.Fatalf("wakes: %v", r)
+	}
+	segs := r["segments"].([]any)
+	if segs[0].(map[string]any)["state"] != "awake" || segs[1].(map[string]any)["state"] != "unreachable" {
+		t.Fatalf("segments: %v", segs)
+	}
+	last := r["last_hex"].(string)
+	if last[32:38] != "c35aa5" || last[:2] == "00" {
+		t.Fatalf("last: %s", last)
+	}
+	// One change for the first value, one for the primed sentinel, one per
+	// wake; past the cap they are only counted.
+	dropped, _ := r["changes_dropped"].(float64)
+	if got := len(r["changes"].([]any)) + int(dropped); got != int(r["wakes"].(float64))+2 {
+		t.Fatalf("changes %d, wakes %v", got, r["wakes"])
+	}
+
+	// Awake for two requests per cycle: too short for the writes unless the
+	// CPU is held, which also keeps it awake until resumed.
+	base = -1
+	sim.Schedule = func(req int, _ map[uint32]byte, ctl byte) bool {
+		if base < 0 {
+			base = req
+		}
+		return (req-base)%10 >= 2 && ctl != 0x06
+	}
+	prime := []any{map[string]any{"address": "0x840220", "data": "3cc35a"}}
+	r = must(t, p, M, "watch", map[string]any{"address": "0x840200", "length": float64(4), "duration_ms": float64(20), "interval_ms": float64(0), "prime": prime})
+	if r["prime"].(map[string]any)["ok"] == true {
+		t.Fatalf("prime without halt: %v", r["prime"])
+	}
+	r = must(t, p, M, "watch", map[string]any{"address": "0x840200", "length": float64(4), "duration_ms": float64(20), "interval_ms": float64(0), "prime": prime, "halt_on_wake": true})
+	sim.Schedule = nil
+	pr = r["prime"].(map[string]any)
+	if pr["ok"] != true || pr["halted"] == nil || pr["resumed_ms"] == nil {
+		t.Fatalf("prime with halt: %v", pr)
+	}
+	if ctl, _, _, _ := sim.Stats(); ctl != 0x08 {
+		t.Fatalf("CPU left at 0x%02x after the watch", ctl)
+	}
+	if _, err := inv(t, p, M, "watch", map[string]any{"address": "0x840200", "length": float64(4), "halt_on_wake": true}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("halt_on_wake without prime: %v", err)
+	}
+
+	sim.Asleep = true
+	r = must(t, p, M, "watch", map[string]any{"address": "0x840200", "length": float64(4), "duration_ms": float64(20),
+		"prime": []any{map[string]any{"address": "0x840210", "data": "00"}}})
+	if r["awake_samples"] != float64(0) || r["prime"].(map[string]any)["ok"] != false || len(r["segments"].([]any)) != 1 {
+		t.Fatalf("asleep: %v", r)
+	}
+	sim.Asleep = false
+
+	for _, bad := range []map[string]any{
+		{"address": "0x602", "length": float64(1)},
+		{"address": "0x840000", "length": float64(257)},
+		{"address": "0x840000", "length": float64(4), "duration_ms": float64(300001)},
+		{"address": "0x840000", "length": float64(4), "prime": []any{map[string]any{"address": "0x800000", "data": "00"}}},
+		{"address": "0x840000", "length": float64(4), "prime": "c35aa5"},
+	} {
+		if _, err := inv(t, p, M, "watch", bad); status.Code(err) != codes.InvalidArgument {
+			t.Fatalf("%v: %v", bad, err)
+		}
+	}
+}
+
 func TestFlashReadToNewFileOnly(t *testing.T) {
 	p, sim := armed(t)
 	path := filepath.Join(t.TempDir(), "dump.bin")
@@ -531,7 +620,7 @@ func TestMethodSpecsDangerLevels(t *testing.T) {
 	safe := []string{"DebugProbe.info", "DebugProbe.connect", "DebugProbe.status", "DebugProbe.read_registers", "DebugProbe.chip_info", "DebugProbe.list_breakpoints", "MemoryAccess.read",
 		"FlashProgramming.read", "FlashProgramming.verify", "FlashProgramming.info"}
 	confirm := []string{"DebugProbe.attach", "DebugProbe.halt", "DebugProbe.resume", "DebugProbe.step", "DebugProbe.reset", "DebugProbe.set_breakpoint",
-		"DebugProbe.clear_breakpoint", "DebugProbe.wait_halt", "MemoryAccess.write", "FlashProgramming.erase", "FlashProgramming.program", "FlashProgramming.backup", "FlashProgramming.restore"}
+		"DebugProbe.clear_breakpoint", "DebugProbe.wait_halt", "MemoryAccess.write", "MemoryAccess.watch", "FlashProgramming.erase", "FlashProgramming.program", "FlashProgramming.backup", "FlashProgramming.restore"}
 	for _, n := range safe {
 		if danger[n] != pluginv1.Danger_DANGER_SAFE {
 			t.Errorf("%s should be SAFE", n)
