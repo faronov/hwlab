@@ -30,7 +30,10 @@ type Sim struct {
 	Requests   int
 	FlashOps   []FlashOp
 	ResetLevel bool
-	Activated  bool
+	// StuckPC models a core parked in a hardware stall (waiting for an
+	// interrupt): steps are accepted but retire nothing.
+	StuckPC   bool
+	Activated bool
 
 	fw       uint16
 	swdiv    byte
@@ -328,6 +331,12 @@ func (s *Sim) readByte(a uint32) byte {
 		return byte(v >> (8 * ((a - RegCPURegs) % 4)))
 	case a == RegCPUCtl:
 		return s.ctl
+	case a == RegBkpt+3:
+		v := s.mem[a] &^ 0x80
+		if s.ctl == cpuStall || s.atBkpt {
+			v |= 0x80
+		}
+		return v
 	}
 	return s.mem[a]
 }
@@ -341,17 +350,18 @@ func (s *Sim) writeByte(a uint32, v byte) {
 			return
 		}
 		s.ctl = v
-		if v == cpuGoBkpt {
-			if s.mem[RegBkpt+7] == 0x01 {
-				s.bkpt = uint32(s.mem[RegBkpt+4]) | uint32(s.mem[RegBkpt+5])<<8 | uint32(s.mem[RegBkpt+6])<<16
-				s.bkptSet, s.atBkpt = true, true
-				s.pc = s.bkpt
-			}
-		} else {
-			s.atBkpt = false
+		s.atBkpt = false
+		if v == cpuGoBkpt || v == cpuGo {
+			s.ctl = cpuGo
+			s.fireComparator()
+		}
+	case a > RegBkpt+3 && a < RegBkpt+4*(BreakpointSlots+1) && (a-RegBkpt)%4 == 3:
+		// Comparators are live as soon as they are written.
+		if s.ctl == cpuGo && !s.atBkpt {
+			s.fireComparator()
 		}
 	case a == RegStep && v == stepAction:
-		if s.ctl == cpuStop || s.ctl == cpuStall {
+		if (s.ctl == cpuStop || s.ctl == cpuStall) && !s.StuckPC {
 			s.pc += 2
 			s.stepped++
 		}
@@ -359,5 +369,21 @@ func (s *Sim) writeByte(a uint32, v byte) {
 		s.rebooted++
 		s.Activated = false
 		s.pc, s.ctl, s.atBkpt = 0, cpuGo, false
+	}
+}
+
+// fireComparator models a running program reaching the first armed comparator
+// at once. Like the core, the control byte then reads back 0x08 and only the
+// status word says the CPU is stopped.
+func (s *Sim) fireComparator() {
+	for i := 1; i <= BreakpointSlots; i++ {
+		o := RegBkpt + uint32(4*i)
+		if s.mem[o+3] != 0x01 {
+			continue
+		}
+		s.bkpt = uint32(s.mem[o]) | uint32(s.mem[o+1])<<8 | uint32(s.mem[o+2])<<16
+		s.bkptSet, s.atBkpt = true, true
+		s.pc = s.bkpt
+		return
 	}
 }

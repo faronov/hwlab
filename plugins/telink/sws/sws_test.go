@@ -254,7 +254,7 @@ func TestDebugCycle(t *testing.T) {
 	if err := p.SetBreakpoint(0x2468); err != nil {
 		t.Fatal(err)
 	}
-	pc, hit, err := p.WaitPC(0x2468, 200*time.Millisecond)
+	pc, hit, err := p.WaitHit(200 * time.Millisecond)
 	if err != nil || !hit || pc != 0x2468 {
 		t.Fatalf("breakpoint pc=0x%x hit=%v err=%v", pc, hit, err)
 	}

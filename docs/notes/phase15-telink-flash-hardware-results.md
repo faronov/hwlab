@@ -45,5 +45,6 @@ and bounded retries of idempotent reads after draining the line. After them:
 
 ## Not validated
 
-Programming a whole application image, restore with `allow_journals`, memory
-write, single-step and breakpoints.
+Programming a whole application image, restore with `allow_journals` and memory
+write. Single-step and breakpoints were validated later, see
+`telink-debug-hardware-results.md`.

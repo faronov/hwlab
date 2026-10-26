@@ -28,7 +28,7 @@ development host. Nothing here has met real hardware.
 
 | Capability | SAFE | CONFIRM |
 |---|---|---|
-| DebugProbe | info, connect, status, read_registers, chip_info | attach (pulses RST), halt, resume, step, reset, set_breakpoint, clear_breakpoint |
+| DebugProbe | info, connect, status, read_registers, chip_info, list_breakpoints | attach (pulses RST), halt, resume, step, reset, set_breakpoint, clear_breakpoint, wait_halt |
 | MemoryAccess | read | write |
 | FlashProgramming | read, verify, info | erase, program, backup, restore |
 
@@ -107,8 +107,15 @@ come from `HWLAB_TELINK_PORTS=name=/dev/ttyUSB0[@baud]`, plus the SYNTHETIC
 ## Consequences
 
 - Capability sets differ by backend: no RTT, no chip erase.
-- `halted` is inferred from the CPU control byte (0x05/0x06). The state after a
-  breakpoint hit on real silicon is unknown; the simulator keeps 0x84.
+- `halted` is the control byte 0x05/0x06 or bit 31 of 0x610 dword 0 (set while
+  the core is stopped in debug). A comparator stop keeps control 0x08, so it is
+  reported as halt_reason=breakpoint; step and flash operations first put it in
+  stall (0x06). 0x05 holds the core at the reset vector (PC reads 0, resume
+  reboots); attach leaves the core there. Three comparators (0x610 dwords 1..3,
+  `addr | 0x01000000`) are live as soon as written. PC write (0x6bc) is not
+  accepted by the hardware and is not offered. Reads below 0x800000 hit the
+  core register block, so `MemoryAccess.read` requires `allow_registers` there.
+  Details: `docs/notes/telink-debug-hardware-results.md`.
 - The simulator (`sws.Sim`) is synthetic. `testdata/synthetic-telink` proves
   guards and replay only. It is compiled in but only enabled by
   `HWLAB_TELINK_SIM=1`; `TestSimulatorOnlyWhenRequested` checks that it never
@@ -125,8 +132,9 @@ come from `HWLAB_TELINK_PORTS=name=/dev/ttyUSB0[@baud]`, plus the SYNTHETIC
 - Discovery lists USB-UART VID/PID candidates without opening them.
 - Real validation: see `docs/notes/phase14-telink-real-hardware-results.md`,
   `docs/notes/phase15-telink-flash-hardware-results.md` and
-  `testdata/real-telink`. Memory write, step and breakpoints remain unvalidated
-  on hardware.
+  `testdata/real-telink`; step and breakpoints in
+  `docs/notes/telink-debug-hardware-results.md`. Memory write remains
+  unvalidated on hardware.
 - Erase running from XIP can hang the bus on real hardware; recovery is untested.
 
 ## Deferred

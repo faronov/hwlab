@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,6 +74,12 @@ const (
 )
 
 func fast() map[string]any { return map[string]any{"reset_ms": float64(5), "activate_ms": float64(10)} }
+
+func halted() map[string]any {
+	a := fast()
+	a["halt"] = true
+	return a
+}
 
 func TestParsePorts(t *testing.T) {
 	es := parsePorts("a=/dev/ttyUSB0, b=/dev/ttyUSB1@921600,bad,=x,c=,d=/dev/x@12")
@@ -157,6 +164,105 @@ func TestAttachHardThenDebug(t *testing.T) {
 	}
 	if w := must(t, p, D, "read_registers", nil); w["warning"] == nil {
 		t.Fatal("registers of a running CPU must carry a warning")
+	}
+}
+
+// A comparator stop leaves the control byte at 0x08: only the status word
+// says the CPU is halted, and stepping needs stall mode first.
+func TestBreakpointStopIsHaltedAndSteppable(t *testing.T) {
+	p, _ := newPlugin(t)
+	must(t, p, D, "attach", fast())
+	bp := must(t, p, D, "set_breakpoint", map[string]any{"address": "0x2468", "run_wait_ms": float64(200)})
+	if bp["hit"] != true || bp["pc"] != "0x00002468" {
+		t.Fatalf("%v", bp)
+	}
+	st := must(t, p, D, "status", nil)
+	if st["halted"] != true || st["halt_reason"] != "breakpoint" || st["cpu_control"] != "0x08" || st["pc_stable"] != true {
+		t.Fatalf("%v", st)
+	}
+	if r := must(t, p, D, "read_registers", nil); r["halted"] != true || r["warning"] != nil {
+		t.Fatalf("%v", r)
+	}
+	s := must(t, p, D, "step", map[string]any{"count": float64(2)})
+	if s["pc_before"] != "0x00002468" || s["pc_after"] != "0x0000246c" || s["pc_unchanged"] != nil {
+		t.Fatalf("%v", s)
+	}
+	r := must(t, p, D, "resume", nil)
+	if r["breakpoints"] == nil || r["stepped_over"] != nil {
+		t.Fatalf("%v", r)
+	}
+	must(t, p, D, "clear_breakpoint", map[string]any{"all": true})
+}
+
+func TestResumeStepsOverBreakpointAtPC(t *testing.T) {
+	p, _ := newPlugin(t)
+	must(t, p, D, "attach", fast())
+	must(t, p, D, "set_breakpoint", map[string]any{"address": "0x2468", "wait_ms": float64(200)})
+	r := must(t, p, D, "resume", nil)
+	if r["stepped_over"] != "0x002468" {
+		t.Fatalf("%v", r)
+	}
+	w := must(t, p, D, "wait_halt", map[string]any{"wait_ms": float64(200)})
+	if w["halted"] != true || w["halt_reason"] != "breakpoint" || w["timeout"] != false {
+		t.Fatalf("%v", w)
+	}
+}
+
+func TestThreeBreakpointSlots(t *testing.T) {
+	p, _ := newPlugin(t)
+	must(t, p, D, "attach", halted())
+	for _, a := range []string{"0x1100", "0x1200", "0x1300"} {
+		r := must(t, p, D, "set_breakpoint", map[string]any{"address": a})
+		if r["note"] == nil || r["hit"] != nil {
+			t.Fatalf("%v", r)
+		}
+	}
+	if r := must(t, p, D, "set_breakpoint", map[string]any{"address": "0x1200"}); r["already_armed"] != true {
+		t.Fatalf("%v", r)
+	}
+	if _, err := inv(t, p, D, "set_breakpoint", map[string]any{"address": "0x1400"}); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("%v", err)
+	}
+	l := must(t, p, D, "list_breakpoints", nil)
+	if fmt.Sprint(l["breakpoints"]) != "[0x001100 0x001200 0x001300]" || l["stopped"] != true || l["halted"] != true {
+		t.Fatalf("%v", l)
+	}
+	if st := must(t, p, D, "status", nil); st["halt_reason"] != "request" {
+		t.Fatalf("%v", st)
+	}
+	c := must(t, p, D, "clear_breakpoint", map[string]any{"address": "0x1200"})
+	if fmt.Sprint(c["breakpoints"]) != "[0x001100 0x001300]" || c["halted"] != true {
+		t.Fatalf("%v", c)
+	}
+	if _, err := inv(t, p, D, "clear_breakpoint", map[string]any{"address": "0x1200"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("%v", err)
+	}
+	must(t, p, D, "clear_breakpoint", nil)
+	if l := must(t, p, D, "list_breakpoints", nil); len(l["breakpoints"].([]any)) != 0 {
+		t.Fatalf("%v", l)
+	}
+}
+
+func TestStepInHardwareStallReportsUnchangedPC(t *testing.T) {
+	p, sim := newPlugin(t)
+	must(t, p, D, "attach", halted())
+	sim.StuckPC = true
+	s := must(t, p, D, "step", map[string]any{"count": float64(3)})
+	if s["pc_unchanged"] != true || s["hint"] == nil || s["pc_before"] != s["pc_after"] {
+		t.Fatalf("%v", s)
+	}
+}
+
+func TestMemoryReadBelowRegisterSpaceNeedsOptIn(t *testing.T) {
+	p, _ := newPlugin(t)
+	must(t, p, D, "attach", fast())
+	_, err := inv(t, p, M, "read", map[string]any{"address": "0x4d570", "length": float64(4)})
+	if status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "FlashProgramming.read") {
+		t.Fatalf("%v", err)
+	}
+	r := must(t, p, M, "read", map[string]any{"address": "0x7d", "length": float64(3), "allow_registers": true})
+	if r["hex"] != "036255" {
+		t.Fatalf("%v", r)
 	}
 }
 
@@ -422,10 +528,10 @@ func TestMethodSpecsDangerLevels(t *testing.T) {
 	for _, m := range p.Info().Methods {
 		danger[m.Capability+"."+m.Name] = m.Danger
 	}
-	safe := []string{"DebugProbe.info", "DebugProbe.connect", "DebugProbe.status", "DebugProbe.read_registers", "DebugProbe.chip_info", "MemoryAccess.read",
+	safe := []string{"DebugProbe.info", "DebugProbe.connect", "DebugProbe.status", "DebugProbe.read_registers", "DebugProbe.chip_info", "DebugProbe.list_breakpoints", "MemoryAccess.read",
 		"FlashProgramming.read", "FlashProgramming.verify", "FlashProgramming.info"}
 	confirm := []string{"DebugProbe.attach", "DebugProbe.halt", "DebugProbe.resume", "DebugProbe.step", "DebugProbe.reset", "DebugProbe.set_breakpoint",
-		"DebugProbe.clear_breakpoint", "MemoryAccess.write", "FlashProgramming.erase", "FlashProgramming.program", "FlashProgramming.backup", "FlashProgramming.restore"}
+		"DebugProbe.clear_breakpoint", "DebugProbe.wait_halt", "MemoryAccess.write", "FlashProgramming.erase", "FlashProgramming.program", "FlashProgramming.backup", "FlashProgramming.restore"}
 	for _, n := range safe {
 		if danger[n] != pluginv1.Danger_DANGER_SAFE {
 			t.Errorf("%s should be SAFE", n)

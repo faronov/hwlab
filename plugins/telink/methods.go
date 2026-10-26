@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,9 @@ const (
 	maxSteps      = 1000
 
 	swireTop = 0x1000000
+	// regSpaceBase is where peripheral registers start in SWire space; below
+	// it is the core/debug block (control 0x602, PC 0x6bc, ...).
+	regSpaceBase = 0x800000
 
 	defaultResetMs    = 500 // the reset+activate timing the zigbee-rs lab flow uses (-t 500 -a 200)
 	defaultActivateMs = 200
@@ -55,20 +59,23 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 		Methods: []*pluginv1.MethodSpec{
 			spec(D, safe, "info", "identify the programmer (firmware, chip family, SWire settings); does not touch the target", obj(optProps)),
 			spec(D, safe, "connect", "read the target chip id and flash JEDEC id if the target already answers over SWire; never resets or activates it (use attach for that)", obj(optProps)),
-			spec(D, confirm, "attach", "take control of the target: mode hard (default) pulses RST then activates SWire; mode soft reboots through SWire then activates. Interrupts the running firmware; halt=true leaves the CPU stalled",
+			spec(D, confirm, "attach", "take control of the target: mode hard (default) pulses RST then activates SWire; mode soft reboots through SWire then activates. Interrupts the running firmware: activation leaves the core held at the reset vector (control 0x05); halt=true switches it to stall (0x06); resume boots the firmware",
 				obj(optProps+`,"mode":{"enum":["hard","soft"]},`+timing+`,"halt":{"type":"boolean"}`)),
-			spec(D, safe, "status", "CPU control byte, PC, whether the PC is moving; reports unreachable instead of failing when the target does not answer", obj(optProps)),
-			spec(D, confirm, "halt", "capture the CPU: mode stall (default, control 0x06) or stop (0x05)", obj(optProps+`,"mode":{"enum":["stall","stop"]}`)),
-			spec(D, confirm, "resume", "let a captured CPU run (control 0x08)", obj(optProps)),
-			spec(D, confirm, "step", "execute count instructions (default 1, max 1000) of a captured CPU", obj(optProps+`,"count":{"type":"number"}`)),
+			spec(D, safe, "status", "CPU control byte, PC, whether the PC is moving, halted and halt_reason (request: control 0x05/0x06; breakpoint: stopped by a comparator while the control byte reads 0x08); reports unreachable instead of failing when the target does not answer", obj(optProps)),
+			spec(D, confirm, "halt", "capture the CPU: mode stall (default, control 0x06) keeps PC and registers; mode stop (0x05) holds the core at the reset vector (PC and registers read 0, resume reboots the firmware)", obj(optProps+`,"mode":{"enum":["stall","stop"]}`)),
+			spec(D, confirm, "resume", "let a halted CPU run: control 0x84 with the armed breakpoints (stepping over one at the current PC first), otherwise 0x08", obj(optProps)),
+			spec(D, confirm, "step", "execute count instructions (default 1, max 1000) of a halted CPU (halted by request or stopped at a breakpoint; a breakpoint stop is switched to stall mode first). Reports pc_before/pc_after and pc_unchanged when the core is parked in a hardware stall where nothing retires", obj(optProps+`,"count":{"type":"number"}`)),
 			spec(D, confirm, "reset", "reset the target and let it run: kind hard (default, pulses RST) or soft (SWire reboot register); SWire must be re-activated afterwards with attach",
 				obj(optProps+`,"kind":{"enum":["hard","soft"]},"reset_ms":{"type":"number"}`)),
-			spec(D, safe, "read_registers", "read r0-r15 (r11 fp, r12 ip, r13 sp, r14 lr, r15 pc) and psr; meaningful only while the CPU is captured", obj(optProps)),
+			spec(D, safe, "read_registers", "read r0-r15 (r11 fp, r12 ip, r13 sp, r14 lr, r15 pc) and psr; meaningful only while the CPU is halted", obj(optProps)),
 			spec(D, safe, "chip_info", "target chip id, revision, family and (CPU halted) flash JEDEC id and unique id", obj(optProps)),
-			spec(D, confirm, "set_breakpoint", "arm the single hardware breakpoint at an address and let the CPU run; wait_ms>0 waits for the PC to reach it", `{"type":"object","required":["address"],"properties":{`+optProps+`,"address":{},"wait_ms":{"type":"number"}}}`),
-			spec(D, confirm, "clear_breakpoint", "disarm the hardware breakpoint", obj(optProps)),
-			spec(M, safe, "read", "read target memory over SWire (peripheral registers from 0x800000, SRAM from 0x840000); args: address, length (max 64 KiB; over 4 KiB returns a preview and sha256). Register reads can have side effects",
-				`{"type":"object","required":["address","length"],"properties":{`+optProps+`,"address":{},"length":{"type":"number"}}}`),
+			spec(D, confirm, "set_breakpoint", "arm a hardware breakpoint (3 comparators) at an address. A running CPU keeps running with breakpoints enabled (control 0x84); a halted CPU stays halted until resume. run_wait_ms>0 (alias wait_ms) resumes and waits for a breakpoint hit",
+				`{"type":"object","required":["address"],"properties":{`+optProps+`,"address":{},"run_wait_ms":{"type":"number","description":"resume and wait this long for a breakpoint to hit"},"wait_ms":{"type":"number","description":"alias of run_wait_ms"}}}`),
+			spec(D, confirm, "clear_breakpoint", "disarm the breakpoint at address, or all of them (all=true, or no address). A CPU stopped at a breakpoint is kept halted (stall mode)", obj(optProps+`,"address":{},"all":{"type":"boolean"}`)),
+			spec(D, safe, "list_breakpoints", "read the 3 hardware comparators and the status word (bit 31 stopped: stalled or stopped by a comparator)", obj(optProps)),
+			spec(D, confirm, "wait_halt", "wait (wait_ms, default 2000) for the CPU to halt and report the cause (breakpoint or request)", obj(optProps+`,"wait_ms":{"type":"number"}`)),
+			spec(M, safe, "read", "read target memory over SWire (peripheral registers from 0x800000, SRAM from 0x840000); args: address, length (max 64 KiB; over 4 KiB returns a preview and sha256). Register reads can have side effects. Below 0x800000 SWire reaches the core/debug register block, not flash: that needs allow_registers=true; read code with FlashProgramming.read",
+				`{"type":"object","required":["address","length"],"properties":{`+optProps+`,"address":{},"length":{"type":"number"},"allow_registers":{"type":"boolean"}}}`),
 			spec(M, confirm, "write", "write target SRAM (0x840000-0x84ffff); other addresses (peripheral registers, the CPU debug block) need allow_registers=true. Max 4096 bytes, verified by readback for SRAM",
 				`{"type":"object","required":["address","data"],"properties":{`+optProps+`,"address":{},"data":{"type":"string"},"verify":{"type":"boolean"},"allow_registers":{"type":"boolean"}}}`),
 			spec(F, safe, "read", "read flash; args: address, length (max 64 KiB inline; with path, writes up to the whole flash to a new file). Also lists the layout regions touched",
@@ -208,7 +215,7 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 	switch method {
 	case "DebugProbe.info", "DebugProbe.connect", "DebugProbe.attach", "DebugProbe.status", "DebugProbe.halt", "DebugProbe.resume",
 		"DebugProbe.step", "DebugProbe.reset", "DebugProbe.read_registers", "DebugProbe.set_breakpoint", "DebugProbe.clear_breakpoint",
-		"DebugProbe.chip_info", "MemoryAccess.read", "MemoryAccess.write",
+		"DebugProbe.list_breakpoints", "DebugProbe.wait_halt", "DebugProbe.chip_info", "MemoryAccess.read", "MemoryAccess.write",
 		"FlashProgramming.read", "FlashProgramming.verify", "FlashProgramming.erase", "FlashProgramming.program",
 		"FlashProgramming.info", "FlashProgramming.backup", "FlashProgramming.restore":
 	default:
@@ -251,9 +258,11 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 	case "DebugProbe.set_breakpoint":
 		res, err = d.setBreakpoint(args)
 	case "DebugProbe.clear_breakpoint":
-		if err = d.prog.ClearBreakpoint(); err == nil {
-			res = map[string]any{"breakpoint": "cleared"}
-		}
+		res, err = d.clearBreakpoint(args)
+	case "DebugProbe.list_breakpoints":
+		res, err = d.listBreakpoints()
+	case "DebugProbe.wait_halt":
+		res, err = d.waitHalt(args)
 	case "DebugProbe.chip_info":
 		res, err = d.chipInfo()
 	case "FlashProgramming.info":
@@ -323,7 +332,7 @@ func (d *device) info() (map[string]any, error) {
 		"baud": float64(d.o.baud), "layout": d.o.layout, "validated": false, "backend": "native-go-swire",
 	}
 	if d.entry.Sim == nil {
-		res["validated"] = "read-only operations only (info, connect, memory/flash read, halt, resume); erase, program, step, breakpoints and memory write are unvalidated on hardware"
+		res["validated"] = "one TLSR825x board: info, connect, memory/flash read, halt/resume, step, 3 hardware breakpoints, backup, sector erase/program/verify and restore; memory write, whole-image programming and PC write are not validated"
 	}
 	return res, nil
 }
@@ -426,15 +435,61 @@ func (d *device) merge(res map[string]any) map[string]any {
 // captured reports whether the control byte says the CPU is halted by us.
 func captured(ctl byte) bool { return ctl == 0x05 || ctl == 0x06 }
 
-func (d *device) status() map[string]any {
+// cpuState is the halt evidence of the core. A comparator stop leaves the
+// control byte at 0x08 (go); only the breakpoint status word shows it.
+type cpuState struct {
+	ctl   byte
+	bp    sws.Breakpoints
+	bpErr error
+}
+
+func (s cpuState) halted() bool { return captured(s.ctl) || (s.bpErr == nil && s.bp.Stopped) }
+
+func (s cpuState) reason() string {
+	switch {
+	case captured(s.ctl):
+		return "request"
+	case s.bpErr == nil && s.bp.Stopped:
+		return "breakpoint"
+	}
+	return ""
+}
+
+func (d *device) cpuState() (cpuState, error) {
 	ctl, err := d.prog.CPUControl()
+	if err != nil {
+		return cpuState{}, err
+	}
+	st := cpuState{ctl: ctl}
+	st.bp, st.bpErr = d.prog.ReadBreakpoints()
+	return st, nil
+}
+
+func hexList(v []uint32) []any {
+	out := make([]any, len(v))
+	for i, a := range v {
+		out[i] = hex24(a)
+	}
+	return out
+}
+
+func (d *device) status() map[string]any {
+	st, err := d.cpuState()
 	if err != nil {
 		return map[string]any{
 			"reachable": false, "error": err.Error(), "halted": false,
 			"hint": "the target does not answer over SWire: it may be asleep, not activated or powered off; run attach",
 		}
 	}
-	res := map[string]any{"reachable": true, "cpu_control": fmt.Sprintf("0x%02x", ctl), "halted": captured(ctl)}
+	res := map[string]any{"reachable": true, "cpu_control": fmt.Sprintf("0x%02x", st.ctl), "halted": st.halted()}
+	if r := st.reason(); r != "" {
+		res["halt_reason"] = r
+	}
+	if st.bpErr != nil {
+		res["breakpoint_error"] = st.bpErr.Error()
+	} else if act := st.bp.Active(); len(act) > 0 {
+		res["breakpoints"] = hexList(act)
+	}
 	pc1, err := d.prog.PC()
 	if err != nil {
 		res["pc_error"] = err.Error()
@@ -465,16 +520,15 @@ func (d *device) halt(a map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return d.merge(map[string]any{"mode": mode}), nil
-}
-
-func (d *device) resume() (map[string]any, error) {
-	if err := d.prog.Go(); err != nil {
-		return nil, err
+	res := map[string]any{"mode": mode}
+	if mode == "stop" {
+		res["warning"] = "stop mode holds the core at the reset vector: the firmware state is lost and resume reboots it"
 	}
-	return d.status(), nil
+	return d.merge(res), nil
 }
 
+// requireCaptured fails unless the CPU is captured by us (control 0x05/0x06).
+// Flash operations require it: a breakpoint stop is not enough.
 func (d *device) requireCaptured() error {
 	ctl, err := d.prog.CPUControl()
 	if err != nil {
@@ -486,12 +540,100 @@ func (d *device) requireCaptured() error {
 	return nil
 }
 
+// requireHalted fails unless the CPU is halted by request or by a breakpoint.
+// With capture set, a breakpoint stop is switched to stall mode: the step
+// register only works on a captured core.
+func (d *device) requireHalted(capture bool) (cpuState, error) {
+	st, err := d.cpuState()
+	if err != nil {
+		return st, err
+	}
+	if !st.halted() {
+		return st, fmt.Errorf("the CPU is not halted (control 0x%02x): halt it first", st.ctl)
+	}
+	if capture && !captured(st.ctl) {
+		if err := d.prog.Stall(); err != nil {
+			return st, fmt.Errorf("capture the CPU stopped at a breakpoint: %w", err)
+		}
+		st.ctl = 0x06
+	}
+	return st, nil
+}
+
+// run lets the CPU go. With armed comparators it uses control 0x84 and, when
+// the CPU is stopped on one of them, first steps one instruction so the same
+// comparator does not stop it again at once.
+func (d *device) run() (map[string]any, error) {
+	st, err := d.cpuState()
+	if err != nil {
+		return nil, err
+	}
+	if st.bpErr != nil {
+		return nil, fmt.Errorf("read breakpoints: %w", st.bpErr)
+	}
+	res := map[string]any{}
+	act := st.bp.Active()
+	if len(act) > 0 && st.halted() && !captured(st.ctl) {
+		// The step register needs a captured core.
+		if err := d.prog.Stall(); err != nil {
+			return nil, err
+		}
+		st.ctl = 0x06
+	}
+	if len(act) > 0 && st.halted() {
+		pc, err := d.prog.PC()
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range act {
+			if a == pc&0xffffff {
+				if err := d.prog.StepOne(); err != nil {
+					return nil, fmt.Errorf("step over the breakpoint at 0x%06x: %w", a, err)
+				}
+				after, err := d.prog.PC()
+				if err != nil {
+					return nil, err
+				}
+				res["stepped_over"] = hex24(a)
+				if after == pc {
+					res["warning"] = "the step over the breakpoint did not move the PC; the same breakpoint may stop the CPU again at once"
+				}
+				break
+			}
+		}
+	}
+	if len(act) > 0 {
+		err = d.prog.GoBreakpoints()
+		res["breakpoints"] = hexList(act)
+	} else {
+		err = d.prog.Go()
+	}
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+func (d *device) resume() (map[string]any, error) {
+	res, err := d.run()
+	if err != nil {
+		return nil, err
+	}
+	return d.merge(res), nil
+}
+
+const stallHint = "the step register was written but the PC did not move: the core is most likely parked in a hardware MCU stall (waiting for an interrupt), where no instruction retires; set a breakpoint after the wait and resume instead"
+
 func (d *device) step(a map[string]any) (map[string]any, error) {
 	n, err := msArg(a, "count", 1, 1, maxSteps)
 	if err != nil {
 		return nil, argErr(err)
 	}
-	if err := d.requireCaptured(); err != nil {
+	if _, err := d.requireHalted(true); err != nil {
+		return nil, err
+	}
+	before, err := d.prog.PC()
+	if err != nil {
 		return nil, err
 	}
 	for i := 0; i < n; i++ {
@@ -499,7 +641,16 @@ func (d *device) step(a map[string]any) (map[string]any, error) {
 			return nil, fmt.Errorf("step %d of %d: %w", i+1, n, err)
 		}
 	}
-	return d.merge(map[string]any{"steps": float64(n)}), nil
+	after, err := d.prog.PC()
+	if err != nil {
+		return nil, err
+	}
+	res := map[string]any{"steps": float64(n), "pc_before": hex32(before), "pc_after": hex32(after)}
+	if after == before {
+		res["pc_unchanged"] = true
+		res["hint"] = stallHint
+	}
+	return d.merge(res), nil
 }
 
 func (d *device) reset(a map[string]any) (map[string]any, error) {
@@ -532,7 +683,7 @@ func (d *device) reset(a map[string]any) (map[string]any, error) {
 }
 
 func (d *device) readRegisters() (map[string]any, error) {
-	ctl, err := d.prog.CPUControl()
+	st, err := d.cpuState()
 	if err != nil {
 		return nil, err
 	}
@@ -545,11 +696,22 @@ func (d *device) readRegisters() (map[string]any, error) {
 	for i, n := range names {
 		regs[n] = hex32(r.R[i])
 	}
-	res := map[string]any{"registers": regs, "halted": captured(ctl), "pc": hex32(r.R[15])}
-	if !captured(ctl) {
+	res := map[string]any{"registers": regs, "halted": st.halted(), "pc": hex32(r.R[15])}
+	if why := st.reason(); why != "" {
+		res["halt_reason"] = why
+	}
+	if !st.halted() {
 		res["warning"] = "the CPU is running; the register block is an arbitrary instant"
 	}
 	return res, nil
+}
+
+// waitArg reads run_wait_ms, or its alias wait_ms.
+func waitArg(a map[string]any) (int, error) {
+	if v, ok := a["run_wait_ms"]; ok && v != nil {
+		return msArg(a, "run_wait_ms", 0, 0, 30000)
+	}
+	return msArg(a, "wait_ms", 0, 0, 30000)
 }
 
 func (d *device) setBreakpoint(a map[string]any) (map[string]any, error) {
@@ -557,22 +719,164 @@ func (d *device) setBreakpoint(a map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, argErr(err)
 	}
-	wait, err := msArg(a, "wait_ms", 0, 0, 30000)
+	wait, err := waitArg(a)
 	if err != nil {
 		return nil, argErr(err)
 	}
-	if err := d.prog.SetBreakpoint(addr); err != nil {
+	st, err := d.cpuState()
+	if err != nil {
 		return nil, err
 	}
-	res := map[string]any{"breakpoint": hex24(addr)}
-	if wait > 0 {
-		pc, hit, err := d.prog.WaitPC(addr, time.Duration(wait)*time.Millisecond)
+	if st.bpErr != nil {
+		return nil, fmt.Errorf("read breakpoints: %w", st.bpErr)
+	}
+	act := st.bp.Active()
+	res := map[string]any{"breakpoint": hex24(addr), "capacity": float64(sws.BreakpointSlots)}
+	if slices.Contains(act, addr) {
+		res["already_armed"] = true
+	} else {
+		if len(act) >= sws.BreakpointSlots {
+			return nil, status.Errorf(codes.ResourceExhausted, "all %d breakpoint comparators are armed (%v); clear one first", sws.BreakpointSlots, hexList(act))
+		}
+		act = append(act, addr)
+		if st.halted() && !captured(st.ctl) {
+			if err := d.prog.Stall(); err != nil {
+				return nil, err
+			}
+		}
+		if err := d.prog.WriteBreakpoints(act); err != nil {
+			return nil, err
+		}
+	}
+	res["breakpoints"] = hexList(act)
+	switch {
+	case wait > 0:
+		r, err := d.run()
+		if err != nil {
+			return nil, err
+		}
+		if so, ok := r["stepped_over"]; ok {
+			res["stepped_over"] = so
+		}
+		pc, hit, err := d.prog.WaitHit(time.Duration(wait) * time.Millisecond)
 		if err != nil {
 			return nil, err
 		}
 		res["hit"], res["pc"] = hit, hex32(pc)
+		res["halted"] = hit
+	case st.halted():
+		res["note"] = "the CPU stays halted; the breakpoint takes effect on resume"
+	default:
+		// A running core only compares in breakpoint-go mode.
+		if err := d.prog.GoBreakpoints(); err != nil {
+			return nil, err
+		}
+		res["note"] = "the CPU keeps running with breakpoints enabled; use wait_halt"
 	}
 	return res, nil
+}
+
+func (d *device) clearBreakpoint(a map[string]any) (map[string]any, error) {
+	all, err := optBool(a, "all")
+	if err != nil {
+		return nil, argErr(err)
+	}
+	var addr uint32
+	byAddr := false
+	if v, ok := a["address"]; ok && v != nil && !all {
+		if addr, err = addr24(a, "address"); err != nil {
+			return nil, argErr(err)
+		}
+		byAddr = true
+	}
+	st, err := d.cpuState()
+	if err != nil {
+		return nil, err
+	}
+	if st.bpErr != nil {
+		return nil, fmt.Errorf("read breakpoints: %w", st.bpErr)
+	}
+	act := st.bp.Active()
+	keep := []uint32{}
+	if byAddr {
+		if !slices.Contains(act, addr) {
+			return nil, status.Errorf(codes.NotFound, "no breakpoint is armed at 0x%06x (armed: %v)", addr, hexList(act))
+		}
+		for _, x := range act {
+			if x != addr {
+				keep = append(keep, x)
+			}
+		}
+	}
+	halted := st.halted()
+	if halted && !captured(st.ctl) {
+		// Disarming the comparator that holds the core may release it; keep
+		// the core captured.
+		if err := d.prog.Stall(); err != nil {
+			return nil, err
+		}
+	}
+	if err := d.prog.WriteBreakpoints(keep); err != nil {
+		return nil, err
+	}
+	if !halted && len(keep) == 0 {
+		if err := d.prog.Go(); err != nil {
+			return nil, err
+		}
+	}
+	res := map[string]any{"cleared": hexList(act), "breakpoints": hexList(keep)}
+	if byAddr {
+		res["cleared"] = []any{hex24(addr)}
+	}
+	return d.merge(res), nil
+}
+
+func (d *device) listBreakpoints() (map[string]any, error) {
+	st, err := d.cpuState()
+	if err != nil {
+		return nil, err
+	}
+	if st.bpErr != nil {
+		return nil, fmt.Errorf("read breakpoints: %w", st.bpErr)
+	}
+	slots := make([]any, sws.BreakpointSlots)
+	for i := range slots {
+		e := map[string]any{"slot": float64(i), "armed": st.bp.Armed[i]}
+		if st.bp.Armed[i] {
+			e["address"] = hex24(st.bp.Addr[i])
+		}
+		slots[i] = e
+	}
+	raw := make([]any, len(st.bp.Raw))
+	for i, v := range st.bp.Raw {
+		raw[i] = hex32(v)
+	}
+	res := map[string]any{"capacity": float64(sws.BreakpointSlots), "slots": slots, "breakpoints": hexList(st.bp.Active()),
+		"stopped": st.bp.Stopped, "status_word": hex32(st.bp.Status), "raw": raw, "halted": st.halted()}
+	if why := st.reason(); why != "" {
+		res["halt_reason"] = why
+	}
+	return res, nil
+}
+
+func (d *device) waitHalt(a map[string]any) (map[string]any, error) {
+	wait, err := msArg(a, "wait_ms", 2000, 0, 30000)
+	if err != nil {
+		return nil, argErr(err)
+	}
+	deadline := time.Now().Add(time.Duration(wait) * time.Millisecond)
+	for {
+		st, err := d.cpuState()
+		if err != nil {
+			return nil, err
+		}
+		if st.halted() || time.Now().After(deadline) {
+			res := d.status()
+			res["timeout"] = !st.halted()
+			return res, nil
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 }
 
 func readResult(addr uint32, data []byte) map[string]any {
@@ -599,6 +903,13 @@ func (d *device) readMemory(a map[string]any) (map[string]any, error) {
 	}
 	if uint64(addr)+uint64(n) > swireTop {
 		return nil, argErr(fmt.Errorf("0x%x+%d runs past the 24-bit SWire address space", addr, n))
+	}
+	allowRegs, err := optBool(a, "allow_registers")
+	if err != nil {
+		return nil, argErr(err)
+	}
+	if addr < regSpaceBase && !allowRegs {
+		return nil, argErr(fmt.Errorf("0x%06x: SWire addresses below 0x%06x are the core/debug register block, not flash; read code with FlashProgramming.read, or pass allow_registers=true to read the registers", addr, regSpaceBase))
 	}
 	data, err := d.prog.SWRead(addr, n)
 	if err != nil {

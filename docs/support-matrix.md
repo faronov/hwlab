@@ -551,12 +551,15 @@ Code, fixtures and passing tests are not hardware validation.
   - layout tb04-512k-nofactory on a board whose factory block is blank
   - hard reset and soft attach on the board
   - transport recovery: bounded read retries, stray-byte resync, capture retry
+  - single-step from a stall and from a breakpoint stop
+  - three hardware breakpoints (set, list, hit detection, step-over on resume, clear)
+  - halt reason (request vs breakpoint) from the 0x610 stopped bit
 - unverified:
   - the exact TLSR825x variant (chip id 0x5562 does not distinguish them)
   - programming a whole application image on the board
   - restore with allow_journals on the board
   - memory write
-  - single-step and breakpoints on the board
+  - PC write (the board ignored writes to 0x6bc; not offered)
   - the cause of the rare malformed first answer after opening the CH340 port (mitigated by settle, flush, resync and retry)
 - known gaps:
   - only the TLSR825x family driver exists (TLSR826x/8208 chip ids are recognised but have no target driver)
