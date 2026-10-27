@@ -1,6 +1,6 @@
 // Package ftdiplugin is the hwlab plugin for FTDI MPSSE JTAG adapters, with
 // the Sipeed RV-Debugger-BL702 (an FT2232D emulator) as a built-in profile.
-// It talks to the adapter natively: Linux usbfs, the FTDI control/bulk
+// It talks to the adapter natively: Linux usbfs or macOS IOKit, the FTDI control/bulk
 // protocol, an MPSSE command engine and a JTAG TAP driver. There is no
 // libusb, no cgo, no OpenOCD and no Python.
 //

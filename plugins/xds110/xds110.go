@@ -1,7 +1,7 @@
 // Package xds110plugin is the hwlab plugin for TI XDS110 debug probes (the
 // stand-alone LP-XDS110ET, LaunchPad on-board XDS110 and the XDS110 firmware
-// family). It speaks the XDS110 vendor protocol natively over USB (usbfs on
-// internal/usb) and reaches a Cortex-M target through the shared internal/adiv5
+// family). It speaks the XDS110 vendor protocol natively over USB (Linux usbfs
+// or macOS IOKit, through internal/usb) and reaches a Cortex-M target through the shared internal/adiv5
 // and internal/cortexm layers; JTAG chain scans use the shared internal/jtag
 // driver. It claims only the vendor debug interface, so the CDC UART ports,
 // the CMSIS-DAP HID interface and the second vendor interface stay with the

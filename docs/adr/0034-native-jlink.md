@@ -67,7 +67,10 @@ implementations of it (libjaylink, OpenOCD's J-Link driver) are GPL.
   or whose reply is read short, can fall into its bootloader (VID:PID
   1366:0101) and then needs a physical replug. Every exchange therefore reads
   the complete reply; a short or garbled reply is an error and the transport
-  drains before the next command.
+  drains before the next command. On macOS the same state was reached after a
+  timeout, most likely through the host-side data-toggle reset that
+  IOUSBInterfaceInterface 245 and older perform on abort; the darwin transport requires version 300 or later
+  ([ADR 0035](0035-macos-iokit-usb.md)).
 * **SWD** runs through the probe's bit-sequence command: each DP/AP
   transaction (and runs of them) is built host-side with parity, ACK and data
   checks. WAIT is retried, FAULT is cleared, and a non-OK ACK inside a batch

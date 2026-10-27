@@ -1,5 +1,5 @@
 // Package stlink implements the ST-Link/V2 USB debug protocol natively over
-// internal/usb (Linux usbfs, no libusb, no cgo).
+// internal/usb (Linux usbfs or macOS IOKit, no libusb, no cgo).
 //
 // The command set and the quirks that matter (the DFU-exit step, stall
 // recovery, the 16-byte command frame, the version word layout, the SWD

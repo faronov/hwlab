@@ -1,4 +1,4 @@
-//go:build hardware && linux
+//go:build hardware && (linux || darwin)
 
 package jlinknativeplugin
 
@@ -392,6 +392,9 @@ func TestHWRead64KAt4MHz(t *testing.T) {
 	}
 	defer p.CloseDevice(context.Background(), id)
 	if _, err := hwInvoke(p, id, "DebugProbe", "connect", map[string]any{"clock_hz": 4e6}); err != nil {
+		if strings.Contains(err.Error(), "above the probe's maximum") {
+			t.Skip(err)
+		}
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {

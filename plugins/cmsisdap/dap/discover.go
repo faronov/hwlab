@@ -7,11 +7,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/faronov/hwlab/internal/usb"
 )
 
 // Version of the CMSIS-DAP transport a probe offers.
 const (
-	// V1 is CMSIS-DAP over USB HID reports (hidraw on Linux).
+	// V1 is CMSIS-DAP over USB HID reports (hidraw on Linux; not implemented
+	// on macOS).
 	V1 = 1
 	// V2 is CMSIS-DAP over vendor-class bulk endpoints.
 	V2 = 2
@@ -30,6 +33,9 @@ type UsbDevice struct {
 	EPIn, EPOut  uint8
 	MaxPacket    int
 	HIDRaw       string // /dev/hidrawN for V1
+	// registryID is the macOS IORegistry entry the device was found at
+	// (diagnostics and reopening only, never an identity); 0 on Linux.
+	registryID uint64
 }
 
 // ID is a stable, path-free identifier: vid:pid plus the serial, or the bus
@@ -65,12 +71,16 @@ func readDec(path string) int {
 	return v
 }
 
-// Scan lists CMSIS-DAP interfaces below sysfs root (normally "/sys"). A
-// CMSIS-DAP interface is recognised by "CMSIS-DAP" in its interface string,
-// which the specification requires of both v1 and v2 probes. Nothing is
-// opened and nothing is written. Where the probe offers both a v2 bulk and a
-// v1 HID interface, the v2 one is listed.
+// Scan lists CMSIS-DAP interfaces below sysfs root (normally "/sys"; on macOS
+// that root is served from the IORegistry). A CMSIS-DAP interface is
+// recognised by "CMSIS-DAP" in its interface string, which the specification
+// requires of both v1 and v2 probes. Nothing is opened and nothing is
+// written. Where the probe offers both a v2 bulk and a v1 HID interface, the
+// v2 one is listed.
 func Scan(root string) []UsbDevice {
+	if usb.UsesIOKit(root) {
+		return fromUSB(usb.Scan(root, nil))
+	}
 	devRoot := filepath.Join(root, "bus", "usb", "devices")
 	entries, err := os.ReadDir(devRoot)
 	if err != nil {
@@ -118,6 +128,53 @@ func Scan(root string) []UsbDevice {
 				}
 				cand.MaxPacket = 64
 				fillInterrupt(idir, &cand)
+			default:
+				continue
+			}
+			if best == nil || cand.Version > best.Version {
+				c := cand
+				best = &c
+			}
+		}
+		if best != nil {
+			out = append(out, *best)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID() < out[j].ID() })
+	return out
+}
+
+// fromUSB picks the CMSIS-DAP interface of each device by the same rules as
+// the sysfs scan, from devices already enumerated by internal/usb.
+func fromUSB(devs []usb.Device) []UsbDevice {
+	var out []UsbDevice
+	for _, d := range devs {
+		dev := UsbDevice{
+			Bus: d.Bus, Address: d.Address, VID: fmt.Sprintf("%04x", d.VID), PID: fmt.Sprintf("%04x", d.PID),
+			Manufacturer: d.Manufacturer, Product: d.Product, Serial: d.Serial, SysName: d.SysName, registryID: d.RegistryID,
+		}
+		var best *UsbDevice
+		for _, i := range d.Interfaces {
+			if !strings.Contains(strings.ToLower(i.Name), "cmsis-dap") {
+				continue
+			}
+			cand := dev
+			cand.Interface = i.Number
+			switch i.Class {
+			case 0xFF:
+				cand.Version = V2
+				cand.EPIn, cand.EPOut, cand.MaxPacket = i.BulkEndpoints()
+				if cand.EPIn == 0 || cand.EPOut == 0 {
+					continue
+				}
+			case 0x03:
+				cand.Version, cand.MaxPacket = V1, 64
+				for _, e := range i.Endpoints {
+					if e.MaxPacket > 0 {
+						cand.MaxPacket = e.MaxPacket
+						break
+					}
+				}
 			default:
 				continue
 			}

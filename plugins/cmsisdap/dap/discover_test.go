@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/faronov/hwlab/internal/usb"
 )
 
 func put(t *testing.T, path, content string) {
@@ -130,5 +132,43 @@ func TestScanCompositeClaimsOnlyDAPInterface(t *testing.T) {
 	}
 	if p.HIDRaw != "" {
 		t.Fatalf("no HID interface exists: %+v", p)
+	}
+}
+
+// TestFromUSB covers the macOS path, which picks the DAP interface from devices
+// enumerated by internal/usb instead of sysfs.
+func TestFromUSB(t *testing.T) {
+	bulk := []usb.Endpoint{{Address: 0x02, Type: "Bulk", MaxPacket: 64}, {Address: 0x83, Type: "Bulk", MaxPacket: 64}}
+	devs := []usb.Device{
+		{ // DAPLink: CDC + v1 HID + v2 bulk; v2 wins, CDC is ignored.
+			Bus: 20, Address: 5, VID: 0x0d28, PID: 0x0204, Serial: "ABC", SysName: "20-1", RegistryID: 77,
+			Interfaces: []usb.Interface{
+				{Number: 0, Class: 0x02, Name: "mbed Serial Port"},
+				{Number: 3, Class: 0x03, Name: "CMSIS-DAP v1", Endpoints: []usb.Endpoint{{Address: 0x81, Type: "Interrupt", MaxPacket: 64}}},
+				{Number: 4, Class: 0xff, Name: "CMSIS-DAP v2", Endpoints: bulk},
+			},
+		},
+		{ // v1 only, 1024-byte reports.
+			Bus: 20, Address: 6, VID: 0xc251, PID: 0xf001, SysName: "20-3",
+			Interfaces: []usb.Interface{{Number: 0, Class: 0x03, Name: "X CMSIS-DAP", Endpoints: []usb.Endpoint{{Address: 0x81, Type: "Interrupt", MaxPacket: 1024}}}},
+		},
+		{ // vendor interface without "CMSIS-DAP" in its name, and a DAP one without bulk OUT.
+			Bus: 20, Address: 7, VID: 0x1366, PID: 0x1061, Serial: "J",
+			Interfaces: []usb.Interface{
+				{Number: 4, Class: 0xff, Name: "BULK interface", Endpoints: bulk},
+				{Number: 5, Class: 0xff, Name: "CMSIS-DAP", Endpoints: bulk[1:]},
+			},
+		},
+	}
+	got := fromUSB(devs)
+	if len(got) != 2 {
+		t.Fatalf("got %+v", got)
+	}
+	v2, v1 := got[0], got[1]
+	if v2.ID() != "0d28:0204:ABC" || v2.Version != V2 || v2.Interface != 4 || v2.EPIn != 0x83 || v2.EPOut != 0x02 || v2.MaxPacket != 64 || v2.registryID != 77 {
+		t.Errorf("v2: %+v", v2)
+	}
+	if v1.ID() != "c251:f001@20-3" || v1.Version != V1 || v1.Interface != 0 || v1.MaxPacket != 1024 {
+		t.Errorf("v1: %+v", v1)
 	}
 }

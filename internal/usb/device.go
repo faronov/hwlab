@@ -1,6 +1,8 @@
-// Package usb is the small USB layer shared by native plugins: sysfs discovery of
-// devices, interfaces and endpoints, and a Linux usbfs transport that claims
-// exactly one interface. It has no libusb and no cgo dependency.
+// Package usb is the small USB layer shared by native plugins: discovery of
+// devices, interfaces and endpoints (sysfs on Linux, the IORegistry on macOS)
+// and a transport that claims exactly one interface (Linux usbfs; IOKit
+// IOUSBInterfaceInterface on macOS, called through purego). It has no libusb
+// and no cgo dependency.
 //
 // A USB device with several interfaces (an FT2232 has two) is opened one
 // interface at a time. Opening interface A never touches interface B, so a
@@ -30,7 +32,7 @@ var (
 	// ErrPermission means the user may not open the device node.
 	ErrPermission = errors.New("usb: permission denied")
 	// ErrUnsupported is returned on platforms without a native transport.
-	ErrUnsupported = errors.New("usb: native transport is available on Linux only")
+	ErrUnsupported = errors.New("usb: native transport is available on Linux and macOS only")
 	// ErrClosed is an operation on a closed interface.
 	ErrClosed = errors.New("usb: interface is closed")
 )
@@ -74,7 +76,7 @@ func (i Interface) BulkEndpoints() (in, out uint8, maxPacket int) {
 	return
 }
 
-// Device is a USB device as seen in sysfs.
+// Device is a USB device as seen in sysfs (Linux) or the IORegistry (macOS).
 type Device struct {
 	Bus, Address int
 	VID, PID     uint16
@@ -85,10 +87,16 @@ type Device struct {
 	// SerialRaw is Serial without whitespace trimming. Some probes (ST-Link
 	// clones) report a binary serial whose bytes may be spaces.
 	SerialRaw     string
-	SysName       string // e.g. "2-2"
+	SysName       string // e.g. "2-2"; on macOS derived from the locationID
 	Configuration int    // active bConfigurationValue
 	SpeedMbps     int
 	Interfaces    []Interface
+	// LocationID and RegistryID are set on macOS only: the IOKit port
+	// location and the IORegistry entry the transport reopens. Both change
+	// with the port or at every re-enumeration and are never an identity
+	// (the identity is VID:PID plus Serial, as on Linux).
+	LocationID uint32
+	RegistryID uint64
 }
 
 // Iface returns interface n.
@@ -101,7 +109,7 @@ func (d Device) Iface(n int) (Interface, bool) {
 	return Interface{}, false
 }
 
-// Path is the usbfs device node.
+// Path is the Linux usbfs device node.
 func (d Device) Path() string { return fmt.Sprintf("/dev/bus/usb/%03d/%03d", d.Bus, d.Address) }
 
 // Port is a transport bound to one claimed interface.

@@ -51,8 +51,8 @@ func Registry() []Entry {
 				"every call is a new Commander session, so a halt does not outlive the call (halt and register reads are one script in read_registers)"},
 		}}},
 		{Plugin: "jlinknative", Title: "Native J-Link (jlink-native): pure-Go USB + SWD, no SEGGER software; real probe: one SAM-ICE class J-Link (V9, HW 9.70) on an EFR32MG1P", Backends: []Backend{{
-			Name: "native Go J-Link over Linux usbfs + SWD bit sequences + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + target-memory RTT (internal/rtt) + JTAG chain scan (internal/jtag)", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
-			Dependency: DepNative, Dependencies: "Linux usbfs access to the probe (udev rule in docs/hardware.md); JLinkExe, libjlinkarm, the SEGGER SDK, libusb, OpenOCD and Python are not used; no fallback to jlink-segger", Cgo: "no",
+			Name: "native Go J-Link over Linux usbfs or macOS IOKit + SWD bit sequences + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + target-memory RTT (internal/rtt) + JTAG chain scan (internal/jtag)", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
+			Dependency: DepNative, Dependencies: "Linux usbfs access to the probe (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo (no setup; ADR 0035); JLinkExe, libjlinkarm, the SEGGER SDK, libusb, OpenOCD and Python are not used; no fallback to jlink-segger", Cgo: "no",
 			Capabilities: []Capability{
 				{"USB discovery", CapRealHW, "1366:0105 \"J-Link_jlinkv9\", vendor interface 2 (bulk OUT 0x03, IN 0x83, 64 B, full speed); identity = USB serial, bus/device numbers (124 then 125 across a replug) are never identity"},
 				{"serial selection", CapRealHW, "opened by serial; the opened device's serial is compared with the requested one"},
@@ -69,6 +69,8 @@ func Registry() []Entry {
 				{"nRF52840 target", CapUntested, "deferred: the nRF52840 is in use as a sniffer"},
 				{"trace/SWO", CapNotImplemented, "not implemented"},
 				{"flash programming", CapNotImplemented, "deliberately not part of the J-Link transport: it belongs to the target-family layers"},
+				{"macOS IOKit transport", CapRealHW, "darwin/amd64, CGO_ENABLED=0: a J-Link OB-nRF5340 (1366:1061, CDC + mass-storage + vendor interface 4, bulk 0x85/0x03) on a Nordic DK. Discovery from the IORegistry by serial; probe info (firmware, VTref 3.3 V); SWD identify (DPIDR 0x2BA01477, AP IDR 0x24770011, Cortex-M4 r0p1); memory reads (SCS, ROM table, vector table, 16 KiB at 400 kHz-2 MHz); halt/resume; a second open is PROBE_BUSY; 10 open/connect/close rounds; both CDC ttys stay usable while interface 4 is claimed. Read-only: nothing was written, erased or reset. docs/notes/phase-macos-iokit-results.md"},
+				{"macOS: recovery after a transfer timeout", CapUntested, "with the first build (IOUSBInterfaceInterface190) a timed-out read was followed by an overrun and the probe fell into its bootloader (1366:0101, needs a physical replug). Probable cause (from libusb, not proven by a trace): interface versions up to 245 clear the host data toggle on abort. The transport now requires version 300 or later (942 preferred); that fix is not yet re-run on hardware"},
 			},
 			Verified:   []string{"native SWD debugger end to end on a real EFR32MG1P through a SAM-ICE class probe, with no SEGGER process or library", "the same stable values as jlink-segger (DPIDR, AP IDR, CPUID, memory bytes, RTT output)", "physical unplug/replug", "speed ladder 100 kHz-8 MHz"},
 			Unverified: []string{"nRF52840 and any second probe", "multi-probe isolation", "JTAG on a real chain", "reset pin", "rtt_write on hardware", "probe generations other than V9/9.70 (their command set is not assumed)"},
@@ -133,9 +135,11 @@ func Registry() []Entry {
 			},
 		}},
 		{Plugin: "cmsisdap", Title: "CMSIS-DAP v2 (bulk) / v1 (HID) probe: native SWD + generic Cortex-M; real probes BL702-DAPLink (no target) and the LP-XDS110ET HID interface (CC2340 target)", Backends: []Backend{{
-			Name: "native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt, simulator-tested)", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
-			Dependency: DepNative, Dependencies: "Linux usbfs access to the probe's DAP interface (udev rule in docs/hardware.md); OpenOCD, probe-rs, libusb, Python are not used", Cgo: "no",
+			Name: "native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1), or macOS IOKit bulk (v2 only) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt, simulator-tested)", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
+			Dependency: DepNative, Dependencies: "Linux usbfs access to the probe's DAP interface (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo (no setup, v2 only; ADR 0035); OpenOCD, probe-rs, libusb, Python are not used", Cgo: "no",
 			Capabilities: []Capability{
+				{"macOS IOKit transport (v2 bulk)", CapUntested, "implemented on the shared internal/usb IOKit transport (run read-only with one J-Link on macOS); discovery from the IORegistry is unit-tested; never run against a CMSIS-DAP probe on macOS"},
+				{"macOS v1 HID transport", CapNotImplemented, "CMSIS-DAP v1 (HID reports) would need IOHIDManager; such probes are listed with a warning and refused on macOS"},
 				{"discovery", CapRealHW, "BL702-DAPLink d6e7:3507 (Bouffalo / RV CMSIS-DAP), identity = USB serial 012345ABCDEF (a firmware placeholder, so two such probes cannot be told apart); the interface is found by its sysfs string, bus/device numbers (088, 093, 095 across replugs) are never identity"},
 				{"v2 bulk transport", CapRealHW, "interface 0 (vendor 0xff, OUT 0x01, IN 0x82, 64 B); 2000 DAP_Info round trips, 25 open/close rounds, oversize request refused host-side, undefined command times out without hanging and stale replies are drained"},
 				{"v1 HID transport", CapRealHW, "LP-XDS110ET HID interface 5 (/dev/hidraw0, 64 B reports, protocol 1.2.0, capabilities 0x33): DAP_Info, DAP_Connect, SWJ sequences, transfers and block reads against a real CC2340 target. The BL702-DAPLink itself offers no HID interface"},
@@ -191,9 +195,10 @@ func Registry() []Entry {
 			},
 		}}},
 		{Plugin: "xds110", Title: "TI XDS110 probe: native SWD + JTAG chain scan + generic Cortex-M; real probe LP-XDS110ET with a user-owned CC2340 target; EnergyTrace range 0 (protocol partial)", Backends: []Backend{{
-			Name: "native Go XDS110 vendor protocol over Linux usbfs (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
-			Dependency: DepNative, Dependencies: "Linux usbfs access to the probe's debug interface (udev rule in docs/hardware.md); OpenOCD, Code Composer Studio, DSLite, xdsdfu, Python and libusb are not used", Cgo: "no",
+			Name: "native Go XDS110 vendor protocol over Linux usbfs or macOS IOKit (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
+			Dependency: DepNative, Dependencies: "Linux usbfs access to the probe's debug interface (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo (no setup; ADR 0035); OpenOCD, Code Composer Studio, DSLite, xdsdfu, Python and libusb are not used", Cgo: "no",
 			Capabilities: []Capability{
+				{"macOS IOKit transport", CapUntested, "implemented on the shared internal/usb IOKit transport (run read-only with one J-Link on macOS); never run against an XDS110 on macOS (the probe is on the Linux bench)"},
 				{"discovery", CapRealHW, "LP-XDS110ET 0451:bef3 (Texas Instruments, \"XDS110 (03.00.00.22) Embed with CMSIS-DAP\"), identity = USB serial (never bus/device numbers); 7 interfaces mapped"},
 				{"XDS110 protocol (connect, version, framing)", CapRealHW, "interface 2 (vendor, OUT 0x02 / IN 0x83, 512 B): firmware 3.0.0.22, hardware id 0x23; XDS_VERSION round trip median 80 us over 500 calls"},
 				{"JTAG chain scan transport", CapRealHW, "CJTAG_CONNECT + 320-bit scan ends in Idle; with nothing attached TDO reads all zeros and the scan reports stuck-low with no device. No TAP was ever found on hardware"},
@@ -304,8 +309,8 @@ func Registry() []Entry {
 			},
 		}}},
 		{Plugin: "ftdi", Title: "FTDI / MPSSE / JTAG probe (generic, with a Sipeed BL702 profile)", Backends: []Backend{{
-			Name: "native Go usbfs FTDI protocol + MPSSE + JTAG", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
-			Dependency: DepNative, Dependencies: "Linux usbfs access to the device (udev rule in docs/hardware.md); OpenOCD, libusb and Python are not used", Cgo: "no",
+			Name: "native Go FTDI protocol (Linux usbfs or macOS IOKit) + MPSSE + JTAG", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
+			Dependency: DepNative, Dependencies: "Linux usbfs access to the device (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo, with channel A not bound to AppleUSBFTDI (ADR 0035); OpenOCD, libusb and Python are not used", Cgo: "no",
 			Verified: []string{
 				"USB discovery of 0403:6010 SIPEED JTAG Debugger (a BL702 emulating an FT2232D), strings, endpoints, companion tty",
 				"claim of interface 0 only; ftdi_sio detached from interface 0 only and re-bound on close; interface 1 stayed bound and openable as a UART",
@@ -314,12 +319,14 @@ func Registry() []Entry {
 				"close and re-open (4 cycles); a second open is refused without disturbing the first",
 			},
 			Unverified: []string{
+				"macOS IOKit transport: implemented on the shared internal/usb layer (run read-only with one J-Link on macOS), never run against an FTDI device on macOS",
 				"JTAG target scan: no target was attached, so no IDCODE and no chain was ever read from real hardware (IMPLEMENTED_UNTESTED; verified only against a synthetic TAP model)",
 				"IR/DR shifts against a real TAP",
 				"unplug/replug while open on real hardware (only on the simulator)",
 				"real FT2232 silicon and other adapters (no other profile exists)",
 			},
 			Gaps: []string{
+				"macOS cannot detach a kernel driver: if AppleUSBFTDI (or a vendor VCP driver) is bound to channel A, opening reports busy instead of detaching it as Linux does",
 				"this firmware ignores MPSSE loopback and the clock divisor (fixed at about 6 MHz) and GPIO opcodes are unconfirmed",
 				"nSRST/nTRST are not driven: the board wiring is unknown",
 				"transport only: no RISC-V DM / ARM DP layer, so no memory, flash, halt or register access",
@@ -328,9 +335,10 @@ func Registry() []Entry {
 			},
 		}}},
 		{Plugin: "espusbjtag", Title: "Espressif native USB Serial/JTAG (ESP32-C6) + generic RISC-V Debug Module + ESP flash", Backends: []Backend{{
-			Name: "native Go usbfs Espressif USB-JTAG transport + JTAG + RISC-V DM (spec 0.13) + SPI1 flash driver over system bus access", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
-			Dependency: DepNative, Dependencies: "Linux usbfs access to the device (udev rule in docs/hardware.md); OpenOCD, esptool, ESP-IDF, libusb and Python are not used", Cgo: "no",
+			Name: "native Go Espressif USB-JTAG transport (Linux usbfs or macOS IOKit) + JTAG + RISC-V DM (spec 0.13) + SPI1 flash driver over system bus access", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
+			Dependency: DepNative, Dependencies: "Linux usbfs access to the device (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo (no setup; ADR 0035); OpenOCD, esptool, ESP-IDF, libusb and Python are not used", Cgo: "no",
 			Capabilities: []Capability{
+				{"macOS IOKit transport", CapUntested, "implemented on the shared internal/usb IOKit transport (run read-only with one J-Link on macOS); never run against an ESP32 on macOS"},
 				{"ESP USB transport", CapRealHW, "303a:1001, interface 2 only (OUT 0x02/IN 0x83), cdc_acm stays bound; docs/notes/phase18, phase19"},
 				{"JTAG transport", CapRealHW, "stable scan: 1 TAP, IDCODE 0x0000dc25, IR length 5 (observed evidence, not an identity proof)"},
 				{"RISC-V DM", CapRealHW, "Debug Module 0.13, 2 harts, progbuf 16, SBA v1 32-bit"},
@@ -381,9 +389,10 @@ func Registry() []Entry {
 			},
 		}}},
 		{Plugin: "stlink", Title: "ST-LINK/V2 (V2J39S7) native SWD + generic Cortex-M + STM32 F1 flash (real) and F4 flash (simulated)", Backends: []Backend{{
-			Name: "native Go usbfs ST-Link V2 protocol + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 (real silicon) and F4 (simulator only) flash layers", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
-			Dependency: DepNative, Dependencies: "Linux usbfs access to the probe (udev rule in docs/hardware.md); OpenOCD, STM32CubeProgrammer, st-flash, libusb and Python are not used. stlink-org is a BSD-3 protocol reference only", Cgo: "no",
+			Name: "native Go ST-Link V2 protocol (Linux usbfs or macOS IOKit) + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 (real silicon) and F4 (simulator only) flash layers", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
+			Dependency: DepNative, Dependencies: "Linux usbfs access to the probe (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo (no setup; ADR 0035); OpenOCD, STM32CubeProgrammer, st-flash, libusb and Python are not used. stlink-org is a BSD-3 protocol reference only", Cgo: "no",
 			Capabilities: []Capability{
+				{"macOS IOKit transport", CapUntested, "implemented on the shared internal/usb IOKit transport (run read-only with one J-Link on macOS); never run against an ST-Link on macOS. A DFU-mode exit that re-enumerates relies on rediscovery by serial, as on Linux"},
 				{"ST-Link USB transport", CapRealHW, "0483:3748, interface 0 (OUT 0x02, IN 0x81 replies, IN 0x83 SWO); DFU exit, stall/ClearHalt recovery; found by USB serial"},
 				{"multi-probe selection by serial", CapSimulatedOnly, "only one ST-Link was attached; ambiguity refusal and selection are tested against the simulator and shared code paths"},
 				{"SWD transport", CapRealHW, "DP IDCODE 0x2BA01477 (nRF52840 DK) and 0x1BA01477 (STM32F1); 12 clocks listed; 100 kHz requested gives 100, 400 gives 480, 1000 gives 950 kHz"},

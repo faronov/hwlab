@@ -49,3 +49,14 @@ usbfs ioctls directly (no libusb); the CAN plugin uses raw SocketCAN sockets.
 - On darwin without cgo, serial-port listing lacks VID/PID; opening a port by
   name works.
 - Nothing was run on macOS or Windows; these are cross-compilation results.
+
+## Addendum: native USB on macOS (ADR 0035)
+
+The native USB layer (`internal/usb`) gained a darwin backend for discovery and
+transfers. It calls IOKit and CoreFoundation through
+`github.com/ebitengine/purego` (run-time `dlopen`, no cgo), so `jlinknative`,
+`xds110`, `cmsisdap`, `stlink`, `espusbjtag` and `ftdi` stay cgo-free on
+darwin, and `make check-cgo` builds them with `CGO_ENABLED=0`. The two
+exceptions above are unchanged; they could move to the same IORegistry scan
+later. The J-Link native backend was run on a real probe on macOS
+([results](../notes/phase-macos-iokit-results.md)).

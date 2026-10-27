@@ -76,8 +76,16 @@ Plugins are separate executables named `hwlab-plugin-<id>`. They are found in
 > I/O itself is pure Go. `uart`, `modbus`, `scpi` and `telink` used to inherit
 > that through a shared helper and no longer do (without cgo, darwin port
 > listing is a `/dev/cu.*` glob without VID/PID). Modbus TCP and SCPI TCP never
-> needed it. `make check-cgo` cross-compiles all of this; none of it has been
-> run on macOS. Details: [ADR 0026](docs/adr/0026-cgo-audit.md).
+> needed it. `make check-cgo` cross-compiles all of this. Details:
+> [ADR 0026](docs/adr/0026-cgo-audit.md).
+>
+> Native USB probes on macOS: `internal/usb` reaches IOKit through purego
+> (no cgo, no libusb), so `jlinknative`, `xds110`, `cmsisdap` (v2 bulk only),
+> `stlink`, `espusbjtag` and `ftdi` build and run there. Only `jlinknative` has
+> been run on macOS, on one J-Link OB (discovery, probe info, SWD identify,
+> memory reads, halt/resume); the others are untested on macOS. CMSIS-DAP v1
+> (HID) and the native CC-Debugger stay Linux only. Details:
+> [ADR 0035](docs/adr/0035-macos-iokit-usb.md).
 
 ## Workflow
 

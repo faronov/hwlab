@@ -2,7 +2,7 @@
 //
 // Layers, bottom to top, each in its own package:
 //
-//	internal/usb                 Linux usbfs, one claimed interface, no libusb, no cgo
+//	internal/usb                 Linux usbfs or macOS IOKit, one claimed interface, no libusb, no cgo
 //	plugins/stlink/stlink        ST-Link/V2 USB protocol (probe commands, status codes)
 //	internal/cortexm             generic Arm Cortex-M debug (DHCSR/DFSR, registers, FPB, DWT)
 //	plugins/stlink/stm32         STM32 identity profiles and the flash controller driver

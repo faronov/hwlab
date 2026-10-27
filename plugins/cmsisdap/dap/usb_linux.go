@@ -6,12 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/faronov/hwlab/internal/usb"
 	"golang.org/x/sys/unix"
 )
 
@@ -26,23 +24,6 @@ func OpenUSB(d UsbDevice) (Transport, error) {
 		return openHID(d)
 	}
 	return nil, fmt.Errorf("unknown CMSIS-DAP transport version %d", d.Version)
-}
-
-func openBulk(d UsbDevice) (Transport, error) {
-	vid, err1 := strconv.ParseUint(d.VID, 16, 16)
-	pid, err2 := strconv.ParseUint(d.PID, 16, 16)
-	if err1 != nil || err2 != nil {
-		return nil, fmt.Errorf("bad USB id %s:%s", d.VID, d.PID)
-	}
-	ud := usb.Device{
-		Bus: d.Bus, Address: d.Address, VID: uint16(vid), PID: uint16(pid), Serial: d.Serial, SysName: d.SysName,
-		Interfaces: []usb.Interface{{Number: d.Interface, Class: 0xff}},
-	}
-	port, err := usb.Open(ud, d.Interface, usb.OpenOptions{})
-	if err != nil {
-		return nil, err
-	}
-	return newBulk(port, d), nil
 }
 
 type hidTransport struct {

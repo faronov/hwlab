@@ -1,12 +1,12 @@
 // Package jlinknativeplugin is the hwlab plugin for the NATIVE J-Link backend
 // (jlink-native): a pure-Go driver for SEGGER J-Link and SAM-ICE class probes
-// over Linux usbfs. It runs no SEGGER process or library, no libusb and no
-// CGO, and it never falls back to the SEGGER backend (jlink-segger,
+// over Linux usbfs or macOS IOKit. It runs no SEGGER process or library, no
+// libusb and no CGO, and it never falls back to the SEGGER backend (jlink-segger,
 // plugins/jlink): selecting one or the other is the caller's explicit choice.
 //
 // Layering (the probe only supplies the wire):
 //
-//	usbfs -> internal/usb -> plugins/jlinknative/usb (framing, errors)
+//	usbfs/IOKit -> internal/usb -> plugins/jlinknative/usb (framing, errors)
 //	      -> plugins/jlinknative/protocol (probe commands)
 //	      -> plugins/jlinknative/swd (SWD bit sequences, adiv5.Link)
 //	      -> internal/adiv5 (DP/AP) -> internal/cortexm (core debug)

@@ -3,7 +3,7 @@
 //
 // Layers, bottom to top, each in its own package:
 //
-//	internal/usb            Linux usbfs, one claimed interface, no libusb, no cgo
+//	internal/usb            Linux usbfs or macOS IOKit, one claimed interface, no libusb, no cgo
 //	espusb                  Espressif vendor protocol -> jtag.Port
 //	internal/jtag           generic IEEE 1149.1 TAP driver and chain scan
 //	internal/riscv          RISC-V debug transport + debug module (spec 0.13)

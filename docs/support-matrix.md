@@ -16,12 +16,12 @@ Code, fixtures and passing tests are not hardware validation.
 | cc2340: internal/ti/cc23xx over internal/adiv5 + internal/cortexm; reached through native XDS110 and CMSIS-DAP HID | partial | real-hardware-partial | real | native | no |
 | ccdebugger: native Go USB (0451:16a2) | partial | real-hardware-partial | real | native | no |
 | ccdebugger: cc-tool fallback | complete | synthetic | none | optional-external-tool | no |
-| cmsisdap: native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt, simulator-tested) | partial | real-hardware-partial | real | native | no |
-| espusbjtag: native Go usbfs Espressif USB-JTAG transport + JTAG + RISC-V DM (spec 0.13) + SPI1 flash driver over system bus access | partial | real-hardware-partial | real | native | no |
+| cmsisdap: native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1), or macOS IOKit bulk (v2 only) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt, simulator-tested) | partial | real-hardware-partial | real | native | no |
+| espusbjtag: native Go Espressif USB-JTAG transport (Linux usbfs or macOS IOKit) + JTAG + RISC-V DM (spec 0.13) + SPI1 flash driver over system bus access | partial | real-hardware-partial | real | native | no |
 | fake: in-process simulation | complete | synthetic | synthetic | native | no |
-| ftdi: native Go usbfs FTDI protocol + MPSSE + JTAG | partial | real-hardware-partial | real | native | no |
+| ftdi: native Go FTDI protocol (Linux usbfs or macOS IOKit) + MPSSE + JTAG | partial | real-hardware-partial | real | native | no |
 | jlink: J-Link Commander + RTT telnet (jlink-segger) | complete | real-hardware-partial | real | external-tool | no |
-| jlinknative: native Go J-Link over Linux usbfs + SWD bit sequences + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + target-memory RTT (internal/rtt) + JTAG chain scan (internal/jtag) | partial | real-hardware-partial | real | native | no |
+| jlinknative: native Go J-Link over Linux usbfs or macOS IOKit + SWD bit sequences + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + target-memory RTT (internal/rtt) + JTAG chain scan (internal/jtag) | partial | real-hardware-partial | real | native | no |
 | modbus: native Modbus (RTU over serial, TCP) | complete | synthetic | synthetic | native | no (was inherited from plugins/uart on darwin; split by build tags) |
 | nrf802154: nRF Sniffer for 802.15.4 over serial | complete | real-hardware-partial | real | native | linux/windows: no; darwin: only for VID/PID discovery |
 | picoscope: simulated device | complete | synthetic | synthetic | native | no |
@@ -31,12 +31,12 @@ Code, fixtures and passing tests are not hardware validation.
 | scpi: generic SCPI over TCP/serial | complete | synthetic | synthetic | native | no (TCP never needed cgo; serial is pure Go since the uart split) |
 | scpi: Rigol profile | partial | synthetic | synthetic | native | no |
 | scpi: Siglent profile | partial | synthetic | synthetic | native | no |
-| stlink: native Go usbfs ST-Link V2 protocol + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 (real silicon) and F4 (simulator only) flash layers | partial | real-hardware-partial | real | native | no |
+| stlink: native Go ST-Link V2 protocol (Linux usbfs or macOS IOKit) + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 (real silicon) and F4 (simulator only) flash layers | partial | real-hardware-partial | real | native | no |
 | telink: native SWS/SWire over UART | complete | real-hardware-partial | real | native | no (was inherited from plugins/uart on darwin) |
 | uart: serial (go.bug.st/serial) | complete | real-hardware-partial | real | native | no (device listing on darwin without cgo is a /dev/cu.* glob without VID/PID) |
 | usbcap: usbmon text input | partial | synthetic | synthetic | native | no |
 | usbcap: physical USB bus analyzer | missing | untested | none | vendor-sdk | n/a |
-| xds110: native Go XDS110 vendor protocol over Linux usbfs (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only | partial | real-hardware-partial | real | native | no |
+| xds110: native Go XDS110 vendor protocol over Linux usbfs or macOS IOKit (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only | partial | real-hardware-partial | real | native | no |
 
 ## Details
 
@@ -153,13 +153,15 @@ Code, fixtures and passing tests are not hardware validation.
 
 ### cmsisdap — CMSIS-DAP v2 (bulk) / v1 (HID) probe: native SWD + generic Cortex-M; real probes BL702-DAPLink (no target) and the LP-XDS110ET HID interface (CC2340 target)
 
-**native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt, simulator-tested)**
+**native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1), or macOS IOKit bulk (v2 only) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt, simulator-tested)**
 
-- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe's DAP interface (udev rule in docs/hardware.md); OpenOCD, probe-rs, libusb, Python are not used)
+- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe's DAP interface (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo (no setup, v2 only; ADR 0035); OpenOCD, probe-rs, libusb, Python are not used)
 - capabilities:
 
   | Capability | Status | Evidence |
   |---|---|---|
+  | macOS IOKit transport (v2 bulk) | IMPLEMENTED_UNTESTED | implemented on the shared internal/usb IOKit transport (run read-only with one J-Link on macOS); discovery from the IORegistry is unit-tested; never run against a CMSIS-DAP probe on macOS |
+  | macOS v1 HID transport | NOT_IMPLEMENTED | CMSIS-DAP v1 (HID reports) would need IOHIDManager; such probes are listed with a warning and refused on macOS |
   | discovery | REAL_HW_VERIFIED | BL702-DAPLink d6e7:3507 (Bouffalo / RV CMSIS-DAP), identity = USB serial 012345ABCDEF (a firmware placeholder, so two such probes cannot be told apart); the interface is found by its sysfs string, bus/device numbers (088, 093, 095 across replugs) are never identity |
   | v2 bulk transport | REAL_HW_VERIFIED | interface 0 (vendor 0xff, OUT 0x01, IN 0x82, 64 B); 2000 DAP_Info round trips, 25 open/close rounds, oversize request refused host-side, undefined command times out without hanging and stale replies are drained |
   | v1 HID transport | REAL_HW_VERIFIED | LP-XDS110ET HID interface 5 (/dev/hidraw0, 64 B reports, protocol 1.2.0, capabilities 0x33): DAP_Info, DAP_Connect, SWJ sequences, transfers and block reads against a real CC2340 target. The BL702-DAPLink itself offers no HID interface |
@@ -213,13 +215,14 @@ Code, fixtures and passing tests are not hardware validation.
 
 ### espusbjtag — Espressif native USB Serial/JTAG (ESP32-C6) + generic RISC-V Debug Module + ESP flash
 
-**native Go usbfs Espressif USB-JTAG transport + JTAG + RISC-V DM (spec 0.13) + SPI1 flash driver over system bus access**
+**native Go Espressif USB-JTAG transport (Linux usbfs or macOS IOKit) + JTAG + RISC-V DM (spec 0.13) + SPI1 flash driver over system bus access**
 
-- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the device (udev rule in docs/hardware.md); OpenOCD, esptool, ESP-IDF, libusb and Python are not used)
+- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the device (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo (no setup; ADR 0035); OpenOCD, esptool, ESP-IDF, libusb and Python are not used)
 - capabilities:
 
   | Capability | Status | Evidence |
   |---|---|---|
+  | macOS IOKit transport | IMPLEMENTED_UNTESTED | implemented on the shared internal/usb IOKit transport (run read-only with one J-Link on macOS); never run against an ESP32 on macOS |
   | ESP USB transport | REAL_HW_VERIFIED | 303a:1001, interface 2 only (OUT 0x02/IN 0x83), cdc_acm stays bound; docs/notes/phase18, phase19 |
   | JTAG transport | REAL_HW_VERIFIED | stable scan: 1 TAP, IDCODE 0x0000dc25, IR length 5 (observed evidence, not an identity proof) |
   | RISC-V DM | REAL_HW_VERIFIED | Debug Module 0.13, 2 harts, progbuf 16, SBA v1 32-bit |
@@ -278,9 +281,9 @@ Code, fixtures and passing tests are not hardware validation.
 
 ### ftdi — FTDI / MPSSE / JTAG probe (generic, with a Sipeed BL702 profile)
 
-**native Go usbfs FTDI protocol + MPSSE + JTAG**
+**native Go FTDI protocol (Linux usbfs or macOS IOKit) + MPSSE + JTAG**
 
-- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the device (udev rule in docs/hardware.md); OpenOCD, libusb and Python are not used)
+- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the device (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo, with channel A not bound to AppleUSBFTDI (ADR 0035); OpenOCD, libusb and Python are not used)
 - verified:
   - USB discovery of 0403:6010 SIPEED JTAG Debugger (a BL702 emulating an FT2232D), strings, endpoints, companion tty
   - claim of interface 0 only; ftdi_sio detached from interface 0 only and re-bound on close; interface 1 stayed bound and openable as a UART
@@ -288,11 +291,13 @@ Code, fixtures and passing tests are not hardware validation.
   - MPSSE sync (bad-command echo) and clocked TMS/TDI shifts; TAP reset; scan of an empty chain (TDO all ones, stable over 5 scans)
   - close and re-open (4 cycles); a second open is refused without disturbing the first
 - unverified:
+  - macOS IOKit transport: implemented on the shared internal/usb layer (run read-only with one J-Link on macOS), never run against an FTDI device on macOS
   - JTAG target scan: no target was attached, so no IDCODE and no chain was ever read from real hardware (IMPLEMENTED_UNTESTED; verified only against a synthetic TAP model)
   - IR/DR shifts against a real TAP
   - unplug/replug while open on real hardware (only on the simulator)
   - real FT2232 silicon and other adapters (no other profile exists)
 - known gaps:
+  - macOS cannot detach a kernel driver: if AppleUSBFTDI (or a vendor VCP driver) is bound to channel A, opening reports busy instead of detaching it as Linux does
   - this firmware ignores MPSSE loopback and the clock divisor (fixed at about 6 MHz) and GPIO opcodes are unconfirmed
   - nSRST/nTRST are not driven: the board wiring is unknown
   - transport only: no RISC-V DM / ARM DP layer, so no memory, flash, halt or register access
@@ -327,9 +332,9 @@ Code, fixtures and passing tests are not hardware validation.
 
 ### jlinknative — Native J-Link (jlink-native): pure-Go USB + SWD, no SEGGER software; real probe: one SAM-ICE class J-Link (V9, HW 9.70) on an EFR32MG1P
 
-**native Go J-Link over Linux usbfs + SWD bit sequences + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + target-memory RTT (internal/rtt) + JTAG chain scan (internal/jtag)**
+**native Go J-Link over Linux usbfs or macOS IOKit + SWD bit sequences + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + target-memory RTT (internal/rtt) + JTAG chain scan (internal/jtag)**
 
-- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe (udev rule in docs/hardware.md); JLinkExe, libjlinkarm, the SEGGER SDK, libusb, OpenOCD and Python are not used; no fallback to jlink-segger)
+- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo (no setup; ADR 0035); JLinkExe, libjlinkarm, the SEGGER SDK, libusb, OpenOCD and Python are not used; no fallback to jlink-segger)
 - capabilities:
 
   | Capability | Status | Evidence |
@@ -349,6 +354,8 @@ Code, fixtures and passing tests are not hardware validation.
   | nRF52840 target | IMPLEMENTED_UNTESTED | deferred: the nRF52840 is in use as a sniffer |
   | trace/SWO | NOT_IMPLEMENTED | not implemented |
   | flash programming | NOT_IMPLEMENTED | deliberately not part of the J-Link transport: it belongs to the target-family layers |
+  | macOS IOKit transport | REAL_HW_VERIFIED | darwin/amd64, CGO_ENABLED=0: a J-Link OB-nRF5340 (1366:1061, CDC + mass-storage + vendor interface 4, bulk 0x85/0x03) on a Nordic DK. Discovery from the IORegistry by serial; probe info (firmware, VTref 3.3 V); SWD identify (DPIDR 0x2BA01477, AP IDR 0x24770011, Cortex-M4 r0p1); memory reads (SCS, ROM table, vector table, 16 KiB at 400 kHz-2 MHz); halt/resume; a second open is PROBE_BUSY; 10 open/connect/close rounds; both CDC ttys stay usable while interface 4 is claimed. Read-only: nothing was written, erased or reset. docs/notes/phase-macos-iokit-results.md |
+  | macOS: recovery after a transfer timeout | IMPLEMENTED_UNTESTED | with the first build (IOUSBInterfaceInterface190) a timed-out read was followed by an overrun and the probe fell into its bootloader (1366:0101, needs a physical replug). Probable cause (from libusb, not proven by a trace): interface versions up to 245 clear the host data toggle on abort. The transport now requires version 300 or later (942 preferred); that fix is not yet re-run on hardware |
 
 - verified:
   - native SWD debugger end to end on a real EFR32MG1P through a SAM-ICE class probe, with no SEGGER process or library
@@ -475,13 +482,14 @@ Code, fixtures and passing tests are not hardware validation.
 
 ### stlink — ST-LINK/V2 (V2J39S7) native SWD + generic Cortex-M + STM32 F1 flash (real) and F4 flash (simulated)
 
-**native Go usbfs ST-Link V2 protocol + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 (real silicon) and F4 (simulator only) flash layers**
+**native Go ST-Link V2 protocol (Linux usbfs or macOS IOKit) + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 (real silicon) and F4 (simulator only) flash layers**
 
-- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe (udev rule in docs/hardware.md); OpenOCD, STM32CubeProgrammer, st-flash, libusb and Python are not used. stlink-org is a BSD-3 protocol reference only)
+- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo (no setup; ADR 0035); OpenOCD, STM32CubeProgrammer, st-flash, libusb and Python are not used. stlink-org is a BSD-3 protocol reference only)
 - capabilities:
 
   | Capability | Status | Evidence |
   |---|---|---|
+  | macOS IOKit transport | IMPLEMENTED_UNTESTED | implemented on the shared internal/usb IOKit transport (run read-only with one J-Link on macOS); never run against an ST-Link on macOS. A DFU-mode exit that re-enumerates relies on rediscovery by serial, as on Linux |
   | ST-Link USB transport | REAL_HW_VERIFIED | 0483:3748, interface 0 (OUT 0x02, IN 0x81 replies, IN 0x83 SWO); DFU exit, stall/ClearHalt recovery; found by USB serial |
   | multi-probe selection by serial | SIMULATED_ONLY | only one ST-Link was attached; ambiguity refusal and selection are tested against the simulator and shared code paths |
   | SWD transport | REAL_HW_VERIFIED | DP IDCODE 0x2BA01477 (nRF52840 DK) and 0x1BA01477 (STM32F1); 12 clocks listed; 100 kHz requested gives 100, 400 gives 480, 1000 gives 950 kHz |
@@ -604,13 +612,14 @@ Code, fixtures and passing tests are not hardware validation.
 
 ### xds110 — TI XDS110 probe: native SWD + JTAG chain scan + generic Cortex-M; real probe LP-XDS110ET with a user-owned CC2340 target; EnergyTrace range 0 (protocol partial)
 
-**native Go XDS110 vendor protocol over Linux usbfs (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only**
+**native Go XDS110 vendor protocol over Linux usbfs or macOS IOKit (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only**
 
-- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe's debug interface (udev rule in docs/hardware.md); OpenOCD, Code Composer Studio, DSLite, xdsdfu, Python and libusb are not used)
+- implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe's debug interface (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo (no setup; ADR 0035); OpenOCD, Code Composer Studio, DSLite, xdsdfu, Python and libusb are not used)
 - capabilities:
 
   | Capability | Status | Evidence |
   |---|---|---|
+  | macOS IOKit transport | IMPLEMENTED_UNTESTED | implemented on the shared internal/usb IOKit transport (run read-only with one J-Link on macOS); never run against an XDS110 on macOS (the probe is on the Linux bench) |
   | discovery | REAL_HW_VERIFIED | LP-XDS110ET 0451:bef3 (Texas Instruments, "XDS110 (03.00.00.22) Embed with CMSIS-DAP"), identity = USB serial (never bus/device numbers); 7 interfaces mapped |
   | XDS110 protocol (connect, version, framing) | REAL_HW_VERIFIED | interface 2 (vendor, OUT 0x02 / IN 0x83, 512 B): firmware 3.0.0.22, hardware id 0x23; XDS_VERSION round trip median 80 us over 500 calls |
   | JTAG chain scan transport | REAL_HW_VERIFIED | CJTAG_CONNECT + 320-bit scan ends in Idle; with nothing attached TDO reads all zeros and the scan reports stuck-low with no device. No TAP was ever found on hardware |

@@ -1,7 +1,7 @@
 // Package cmsisdapplugin is the hwlab plugin for CMSIS-DAP debug probes
 // (DAPLink, Raspberry Pi Debug Probe, BL702-DAPLink, ...). It drives the probe
-// natively over USB (v2 bulk through usbfs on internal/usb, v1 HID through
-// hidraw) and speaks SWD to a Cortex-M target through the shared internal/adiv5
+// natively over USB (v2 bulk through internal/usb: Linux usbfs or macOS IOKit;
+// v1 HID through Linux hidraw, not available on macOS) and speaks SWD to a Cortex-M target through the shared internal/adiv5
 // and internal/cortexm layers; JTAG is available for chain scans through the
 // shared internal/jtag driver. It claims only the DAP interface, so the CDC
 // UART of a composite probe stays with the kernel. The plugin advertises the
@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -135,7 +136,10 @@ func (p *Plugin) ListDevices(context.Context) ([]*pluginv1.Device, error) {
 				"vid": u.VID, "pid": u.PID, "manufacturer": u.Manufacturer, "transport_version": ver,
 				"usb_address": fmt.Sprintf("%d:%d", u.Bus, u.Address), "validated": "false",
 			}
-			if u.Version == dap.V1 && u.HIDRaw == "" {
+			switch {
+			case u.Version == dap.V1 && runtime.GOOS == "darwin":
+				d.Properties["warning"] = "CMSIS-DAP v1 (HID) is not implemented on macOS"
+			case u.Version == dap.V1 && u.HIDRaw == "":
 				d.Properties["warning"] = "no hidraw node found"
 			}
 		}

@@ -248,8 +248,11 @@ func ftdiNativeChecks(installed bool, openocd string) []DoctorCheck {
 	if openocd != "" {
 		oc.Detail = openocd + " found; hwlab does not call it, the native backend is used"
 	}
+	if runtime.GOOS == "darwin" {
+		return append(iokitChecks(name, iokitFTDI, iokitDevices()), oc)
+	}
 	if runtime.GOOS != "linux" {
-		return []DoctorCheck{{name, CheckWarn, "native USB backend is Linux-only"}, oc}
+		return []DoctorCheck{{name, CheckWarn, "native USB backend is Linux and macOS only"}, oc}
 	}
 	ents, _ := filepath.Glob("/sys/bus/usb/devices/*/idProduct")
 	read := func(dir, f string) string {
@@ -329,8 +332,11 @@ func espUSBJTAGChecks(installed bool, openocd string) []DoctorCheck {
 	if openocd != "" {
 		oc.Detail = openocd + " found; hwlab does not call it, the native backend is used"
 	}
+	if runtime.GOOS == "darwin" {
+		return append(iokitChecks(name, iokitESP, iokitDevices()), oc)
+	}
 	if runtime.GOOS != "linux" {
-		return []DoctorCheck{{name, CheckWarn, "native USB backend is Linux-only"}, oc}
+		return []DoctorCheck{{name, CheckWarn, "native USB backend is Linux and macOS only"}, oc}
 	}
 	ents, _ := filepath.Glob("/sys/bus/usb/devices/*/idProduct")
 	read := func(dir, f string) string {
@@ -391,8 +397,11 @@ func stlinkChecks(installed bool) []DoctorCheck {
 	if !installed {
 		return []DoctorCheck{{name, CheckWarn, "stlink plugin not installed"}}
 	}
+	if runtime.GOOS == "darwin" {
+		return iokitChecks(name, iokitSTLink, iokitDevices())
+	}
 	if runtime.GOOS != "linux" {
-		return []DoctorCheck{{name, CheckWarn, "native USB backend is Linux-only"}}
+		return []DoctorCheck{{name, CheckWarn, "native USB backend is Linux and macOS only"}}
 	}
 	checks := []DoctorCheck{{name, CheckOK, "available (Go usbfs; platform Linux; CGO no; no libusb, OpenOCD, STM32CubeProgrammer, st-flash or Python needed)"}}
 	read := func(dir, f string) string {
@@ -446,8 +455,11 @@ func cmsisdapChecks(installed bool) []DoctorCheck {
 	if !installed {
 		return []DoctorCheck{{name, CheckWarn, "cmsisdap plugin not installed"}}
 	}
+	if runtime.GOOS == "darwin" {
+		return iokitChecks(name, iokitCMSISDAP, iokitDevices())
+	}
 	if runtime.GOOS != "linux" {
-		return []DoctorCheck{{name, CheckWarn, "native USB backend is Linux-only"}}
+		return []DoctorCheck{{name, CheckWarn, "native USB backend is Linux and macOS only"}}
 	}
 	checks := []DoctorCheck{{name, CheckOK, "available (Go usbfs bulk v2 + hidraw v1; platform Linux; CGO no; no libusb, OpenOCD, probe-rs or Python needed)"}}
 	read := func(dir, f string) string {
@@ -531,8 +543,11 @@ func jlinkNativeChecks(installed bool) []DoctorCheck {
 	if !installed {
 		return []DoctorCheck{{name, CheckWarn, "jlinknative plugin not installed"}}
 	}
+	if runtime.GOOS == "darwin" {
+		return iokitChecks(name, iokitJLink, iokitDevices())
+	}
 	if runtime.GOOS != "linux" {
-		return []DoctorCheck{{name, CheckWarn, "native USB backend is Linux-only"}}
+		return []DoctorCheck{{name, CheckWarn, "native USB backend is Linux and macOS only"}}
 	}
 	checks := []DoctorCheck{{name, CheckOK, "available (Go usbfs; platform Linux; CGO no; no JLinkExe, libjlinkarm, libusb, OpenOCD or Python; never falls back to jlink-segger)"}}
 	read := func(dir, f string) string {
@@ -550,7 +565,7 @@ func jlinkNativeChecks(installed bool) []DoctorCheck {
 		serial := read(dir, "serial")
 		serial = strings.TrimLeft(serial, "0")
 		if pid == "0101" {
-			checks = append(checks, DoctorCheck{"J-Link: detected", CheckWarn, "1366:0101 runs its bootloader and answers no commands: unplug and replug it"})
+			checks = append(checks, DoctorCheck{"J-Link: detected", CheckWarn, "1366:0101 runs its bootloader and answers no commands: unplug and replug it, or run JLinkExe (it reinstalls the probe firmware)"})
 			continue
 		}
 		checks = append(checks, DoctorCheck{"J-Link: detected", CheckOK, fmt.Sprintf("1366:%s %s; the native id is jlink-native:%s (USB serial; bus/device numbers are never identity)", pid, read(dir, "product"), serial)})

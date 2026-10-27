@@ -18,7 +18,7 @@ source originality or a public-release license clearance.
 |---|---|
 | modelcontextprotocol/go-sdk, google/jsonschema-go, segmentio/asm, segmentio/encoding | MIT |
 | gopkg.in/yaml.v3 | MIT (+ Apache-2.0 for the libyaml port, see its NOTICE) |
-| spf13/cobra, google.golang.org/grpc, genproto googleapis/rpc | Apache-2.0 |
+| spf13/cobra, google.golang.org/grpc, genproto googleapis/rpc, ebitengine/purego | Apache-2.0 |
 | spf13/pflag, yosida95/uritemplate, go.bug.st/serial, golang.org/x/{image,net,oauth2,sync,sys,text,time}, google.golang.org/protobuf | BSD-3-Clause |
 
 Binary redistribution must carry these notices (Apache-2.0/BSD/MIT attribution);

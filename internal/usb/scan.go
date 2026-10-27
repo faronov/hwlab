@@ -38,9 +38,22 @@ func readNum(path string, base int) int {
 // Match decides whether a device is wanted.
 type Match func(vid, pid uint16) bool
 
-// Scan lists USB devices below sysfs root (normally "/sys") for which match
-// returns true. Nothing is opened and nothing is written.
+// DefaultRoot is the sysfs root plugins scan. On macOS, which has no sysfs,
+// Scan serves this root from the IORegistry instead.
+const DefaultRoot = "/sys"
+
+// Scan lists USB devices for which match returns true: below sysfs root on
+// Linux (root is normally DefaultRoot; tests pass a fixture tree), and from
+// the IORegistry on macOS when root is DefaultRoot. Nothing is opened and
+// nothing is written.
 func Scan(root string, match Match) []Device {
+	if devs, ok := platformScan(root, match); ok {
+		return devs
+	}
+	return scanSysfs(root, match)
+}
+
+func scanSysfs(root string, match Match) []Device {
 	devRoot := filepath.Join(root, "bus", "usb", "devices")
 	entries, err := os.ReadDir(devRoot)
 	if err != nil {

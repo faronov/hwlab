@@ -1,6 +1,6 @@
 // Command hwlab-plugin-jlinknative serves SEGGER J-Link / SAM-ICE class debug
-// probes natively (pure Go over Linux usbfs: no SEGGER software, no libusb,
-// no CGO) over the hwlab plugin protocol.
+// probes natively (pure Go over Linux usbfs or macOS IOKit: no SEGGER
+// software, no libusb, no CGO) over the hwlab plugin protocol.
 package main
 
 import (

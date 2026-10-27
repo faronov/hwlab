@@ -1,8 +1,9 @@
 // Package usb is the USB transport of the native J-Link backend: discovery of
-// SEGGER probes through sysfs, opening one probe by its serial number, and a
-// command/reply exchange over the vendor bulk interface. It sits on
-// internal/usb (Linux usbfs, no libusb, no cgo) and knows nothing about the
-// meaning of the bytes it carries.
+// SEGGER probes (sysfs on Linux, the IORegistry on macOS), opening one probe
+// by its serial number, and a command/reply exchange over the vendor bulk
+// interface. It sits on internal/usb (Linux usbfs or macOS IOKit through
+// purego; no libusb, no cgo) and knows nothing about the meaning of the bytes
+// it carries.
 //
 // A probe is identified by its USB serial number only. The bus and device
 // numbers are reported for diagnostics and are never used as identity: they
@@ -39,7 +40,8 @@ func NormalizeSerial(s string) string {
 	return t
 }
 
-// Info is one attached probe as seen in sysfs. Nothing is opened to build it.
+// Info is one attached probe as seen in sysfs or the IORegistry. Nothing is
+// opened to build it.
 type Info struct {
 	Device    iusb.Device
 	Serial    string // normalized USB serial: the stable identity

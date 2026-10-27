@@ -3,6 +3,7 @@ module github.com/faronov/hwlab
 go 1.27.1
 
 require (
+	github.com/ebitengine/purego v0.11.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/spf13/cobra v1.10.2
 	go.bug.st/serial v1.8.0
