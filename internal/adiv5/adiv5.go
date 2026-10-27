@@ -312,6 +312,17 @@ func (t *Target) powerUp() error {
 	}
 }
 
+// ReleasePower clears the CDBGPWRUPREQ/CSYSPWRUPREQ requests set by powerUp.
+// Without it a low-power target stays debug-powered (clocks held on in its
+// sleep modes) after the probe detaches, until the next power-on reset.
+func (t *Target) ReleasePower() error {
+	if err := t.WriteDP(dpSelect, 0); err != nil {
+		return err
+	}
+	t.selected, t.selOK = 0, true
+	return t.WriteDP(dpCtrl, 0)
+}
+
 // AP returns the MEM-AP index in use.
 func (t *Target) AP() uint8 { return t.ap }
 

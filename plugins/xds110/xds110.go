@@ -303,6 +303,9 @@ func (d *device) closeLocked(restore bool) error {
 		if restore {
 			err = d.trig.restoreAll(ctx, d.core)
 		}
+		// Best effort: do not leave the target debug-powered (it would not
+		// reach its real sleep current, e.g. for EnergyTrace).
+		_ = d.tgt.ReleasePower()
 		err = errors.Join(err, d.probe.SWDDisconnect())
 		d.tgt, d.core, d.cc = nil, nil, nil
 	}
@@ -325,6 +328,7 @@ func (d *device) detach() error {
 		if err := d.trig.restoreAll(ctx, d.core); err != nil {
 			return err
 		}
+		_ = d.tgt.ReleasePower() // best effort, see closeLocked
 		if err := d.probe.SWDDisconnect(); err != nil {
 			return err
 		}

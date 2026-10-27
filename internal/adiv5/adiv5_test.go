@@ -156,6 +156,24 @@ func TestConnectSequenceAndIDs(t *testing.T) {
 	}
 }
 
+func TestReleasePowerClearsPowerUpRequests(t *testing.T) {
+	f := newFake()
+	tg, err := Connect(f, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.ctrl&(ctrlCDBGPwrReq|ctrlCSYSPwrReq) == 0 {
+		t.Fatalf("connect did not request power-up: ctrl %#x", f.ctrl)
+	}
+	f.sel = 0xFFFFFFFF
+	if err := tg.ReleasePower(); err != nil {
+		t.Fatal(err)
+	}
+	if f.ctrl != 0 || f.sel != 0 {
+		t.Fatalf("ctrl %#x sel %#x after release, want 0/0", f.ctrl, f.sel)
+	}
+}
+
 func TestConnectNoTargetIsExplicit(t *testing.T) {
 	f := newFake()
 	f.noACK = true
