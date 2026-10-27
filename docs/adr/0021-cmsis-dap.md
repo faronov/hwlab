@@ -26,7 +26,9 @@ host, so nothing in this ADR has met a real probe.
   names and result shapes as J-Link.
 - **Scope: SWD only.** JTAG is reported as a probe capability bit but never
   driven. Flash programming, RTT and SWO are **not implemented and not
-  advertised**; a backend advertises only what it does.
+  advertised**; a backend advertises only what it does. (Superseded in part:
+  CC23xx flash programming and target-memory RTT were added later, see the
+  addenda.)
 - **Discovery through sysfs**, not by parsing USB descriptors: the interface
   string must contain "CMSIS-DAP" and `bInterfaceClass` selects v2 (0xff, bulk)
   or v1 (0x03, HID). v2 is preferred when both exist. This is testable with a
@@ -79,3 +81,18 @@ logic moved out of `plugins/cmsisdap/dap` into `internal/adiv5` and
 opener drains stale replies and any out-of-sync reply triggers a drain;
 `DAP_Delay(0)` is never sent (it wedges this firmware). The statement above that
 no probe is available is historical.
+
+## Addendum: target-memory RTT
+
+The plugin now offers SEGGER-compatible RTT read from target SRAM, using the
+probe-independent engine `internal/rtt` and the plugin glue shared with
+`jlinknative` and `xds110` (`internal/rtt/rttplugin`): `DebugProbe.rtt_info`
+(safe), `DebugProbe.rtt_write` (confirm) and `StartCapture` as an RTT capture
+(Log events on stream `rtt`, source `cmsisdap-rtt`; `stream: rtt` is optional).
+The capability list gains `RTT` and `LiveRawStream` (`rtt: target-memory`).
+The device lock is held per poll, so debug calls interleave with a capture. On a
+CC23xx every RTT access leaves SACI exactly like `MemoryAccess.read`, and a
+capture re-locates the control block after a target reset. **Status: simulator-
+tested (synthetic Cortex-M and the CC23xx SACI model); not yet verified on any
+real probe or target.** A debug-only device in `hwlab run` now needs
+`control: true`, because the probe advertises a capture stream.

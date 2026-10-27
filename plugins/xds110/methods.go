@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/faronov/hwlab/internal/cortexm"
+	"github.com/faronov/hwlab/internal/rtt/rttplugin"
 	"github.com/faronov/hwlab/internal/ti/cc23xx"
 	"github.com/faronov/hwlab/internal/ti/cc23xx/service"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
@@ -76,6 +77,8 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 			spec(D, confirm, "set_watchpoint", "install a DWT data watchpoint (kind read|write|access, mask_bits) on an address (needs an open device)", obj(optProps+`,"address":{},"kind":{"enum":["read","write","access"]},"mask_bits":{"type":"number"}`)),
 			spec(D, confirm, "clear_watchpoint", "remove a watchpoint installed by this device (address) or all=true; DWT and DEMCR are restored", clr),
 			spec(D, safe, "list_watchpoints", "enumerate the DWT comparators", obj(optProps)),
+			spec(D, safe, "rtt_info", "find the RTT control block in target SRAM (rtt_address, or a search of rtt_search_start/rtt_search_size, default the first 32 KiB of SRAM at 0x20000000) and list its up/down channels; reads target memory only and consumes no data. On a CC23xx waiting in SACI it leaves SACI first, like MemoryAccess.read. SIMULATOR-TESTED only", obj(optProps+rttplugin.Props)),
+			spec(D, confirm, "rtt_write", "write text to an RTT down channel (rtt_channel); only the free space is used, the count written is reported. SIMULATOR-TESTED only", req(`"data"`, optProps+rttplugin.Props+`,"data":{"type":"string"}`)),
 			spec(M, safe, "read", "read target memory; args: address, length (bytes, max 64 KiB; more than 4 KiB returns a preview and sha256 only). Peripheral registers can have read side effects",
 				req(`"address","length"`, optProps+`,"address":{},"length":{"type":"number"}`)),
 			spec(M, confirm, "write", "write target memory; args: address, data (hex string, max 4096 bytes); verifies by reading back unless verify=false. Flash is not writable this way",
@@ -317,6 +320,10 @@ func (d *device) coreMethod(ctx context.Context, method string, args map[string]
 		return d.step(ctx, args)
 	case "DebugProbe.wait_halt":
 		return d.waitHalt(ctx, args)
+	case "DebugProbe.rtt_info":
+		return rttplugin.Info(ctx, rttMem{d}, args)
+	case "DebugProbe.rtt_write":
+		return rttplugin.Write(ctx, rttMem{d}, args)
 	case "DebugProbe.reset":
 		return d.reset(ctx, args)
 	case "DebugProbe.read_registers":

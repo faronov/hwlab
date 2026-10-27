@@ -133,7 +133,7 @@ func Registry() []Entry {
 			},
 		}},
 		{Plugin: "cmsisdap", Title: "CMSIS-DAP v2 (bulk) / v1 (HID) probe: native SWD + generic Cortex-M; real probes BL702-DAPLink (no target) and the LP-XDS110ET HID interface (CC2340 target)", Backends: []Backend{{
-			Name: "native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag)", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
+			Name: "native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt, simulator-tested)", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
 			Dependency: DepNative, Dependencies: "Linux usbfs access to the probe's DAP interface (udev rule in docs/hardware.md); OpenOCD, probe-rs, libusb, Python are not used", Cgo: "no",
 			Capabilities: []Capability{
 				{"discovery", CapRealHW, "BL702-DAPLink d6e7:3507 (Bouffalo / RV CMSIS-DAP), identity = USB serial 012345ABCDEF (a firmware placeholder, so two such probes cannot be told apart); the interface is found by its sysfs string, bus/device numbers (088, 093, 095 across replugs) are never identity"},
@@ -166,6 +166,7 @@ func Registry() []Entry {
 				{"performance: DAP_Info round trip", CapRealHW, "110-126 us average over 2000 round trips"},
 				{"performance: target memory throughput", CapRealHW, "CC2340 over the HID interface at 400 kHz, medians of 15: register block 61 ms, 16 B read 1.6 ms, 2 KiB read 44 ms, 256 B write 15 ms verified / 7.5 ms unverified, 100 steps 1.3 s. The BL702-DAPLink was never attached to a target. XDS110 is 2-3x faster on the same target"},
 				{"flash programming", CapRealHW, "FlashProgramming is served for TI CC23xx targets by the shared SACI layer (see the cc2340 entry; restore of the original 512 KiB through this probe verified exactly); other targets are refused with a clear error, flash belongs to target-specific layers"},
+				{"RTT (target memory)", CapSimulatedOnly, "SEGGER-compatible RTT read from target SRAM through the shared engine (internal/rtt, no SEGGER software): DebugProbe.rtt_info, DebugProbe.rtt_write and an RTT capture (Log events on stream rtt), the same code path as the hardware-validated jlinknative RTT. On a CC23xx every access leaves SACI like MemoryAccess.read, and a capture re-attaches after a target reset. Exercised only against the simulated Cortex-M and the CC23xx SACI model; never run on a real probe"},
 				{"SWO / UART / COM port", CapNotImplemented, "not implemented; this probe does not report them either"},
 			},
 			Verified: []string{
@@ -180,6 +181,7 @@ func Registry() []Entry {
 				"BL702-DAPLink with a target attached (the CC2340 was reached through the LP-XDS110ET's HID interface instead)",
 				"BL702-DAPLink DAP_ResetTarget and SYSRESETREQ followed by a debug reconnect (no target was attached to it; the CC2340 SACI reset layer was verified through the LP-XDS110ET HID interface)",
 				"effective SWD clock precision, DAP_ResetTarget on a probe that implements it",
+				"RTT (rtt_info, rtt_write, RTT capture) on any real probe and target",
 			},
 			Gaps: []string{
 				"the probe's USB serial 012345ABCDEF is a firmware placeholder, so identity by serial is ambiguous with several boards",
@@ -189,7 +191,7 @@ func Registry() []Entry {
 			},
 		}}},
 		{Plugin: "xds110", Title: "TI XDS110 probe: native SWD + JTAG chain scan + generic Cortex-M; real probe LP-XDS110ET with a user-owned CC2340 target; EnergyTrace range 0 (protocol partial)", Backends: []Backend{{
-			Name: "native Go XDS110 vendor protocol over Linux usbfs (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
+			Name: "native Go XDS110 vendor protocol over Linux usbfs (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
 			Dependency: DepNative, Dependencies: "Linux usbfs access to the probe's debug interface (udev rule in docs/hardware.md); OpenOCD, Code Composer Studio, DSLite, xdsdfu, Python and libusb are not used", Cgo: "no",
 			Capabilities: []Capability{
 				{"discovery", CapRealHW, "LP-XDS110ET 0451:bef3 (Texas Instruments, \"XDS110 (03.00.00.22) Embed with CMSIS-DAP\"), identity = USB serial (never bus/device numbers); 7 interfaces mapped"},
@@ -228,6 +230,8 @@ func Registry() []Entry {
 				{"EnergyTrace: replay of the real stream", CapReplayVerified, "sanitized fixture plugins/xds110/energytrace/testdata/real-lpxds110et: parser and command sequence tests run without the probe"},
 				{"EnergyTrace: unplug during capture", CapRealHW, "probe removed during a 30 min capture: the capture ended in under a second, no hang, the 7.08M samples already stored stayed readable, no stop commands were sent to the missing probe, same serial rediscovered after replug and a new capture ran"},
 				{"flash programming", CapRealHW, "FlashProgramming is served for TI CC23xx targets by the shared SACI layer (see the cc2340 entry; erase, program, verify and backup through this probe on the real chip); other targets are refused with a clear error, flash belongs to target-specific layers"},
+				{"RTT (target memory)", CapRealHW, "SEGGER-compatible RTT read from target SRAM through the shared engine (internal/rtt, no SEGGER software): DebugProbe.rtt_info and an RTT capture (StartCapture with stream=rtt or any rtt_* setting; Log events on stream rtt), the same code path as the hardware-validated jlinknative RTT. On the CC2340 running zigbee-rs firmware: rtt_info found the control block at 0x20004bd0 with rtt_search_size=0x9000 (2048 B up buffer); captures recorded 28 boot lines (20 s) and a 338-line Zigbee join log (140 s) without loss or corruption. On a CC23xx every access leaves SACI like MemoryAccess.read. RTT and EnergyTrace captures exclude each other on one probe. rtt_write and re-attach after a reset during a capture are simulator-tested only"},
+				{"RTT down channel (rtt_write)", CapSimulatedOnly, "exercised against the simulated Cortex-M and the CC23xx SACI model; the CC2340 firmware has no down channel"},
 			},
 			Verified: []string{
 				"USB discovery of the composite LP-XDS110ET by serial; only the debug interface 2 is claimed",
@@ -239,12 +243,15 @@ func Registry() []Entry {
 				"the 3V3 pin voltage",
 				"the mapping of status -617 to a no-ACK error",
 				"EnergyTrace: absolute accuracy, ranges other than 0, voltage/energy, the voltage actually on the 3V3 pin",
+				"RTT: rtt_write, and a capture re-attaching after a target reset that happens during the capture",
 			},
 			Gaps: []string{
 				"the same physical probe is listed by both the xds110 and cmsisdap plugins (different USB interfaces); they can be open together",
 				"no JTAG-DP link and no ICEPick routing, so no TI target can be debugged over JTAG yet",
 				"EnergyTrace uses a synchronous bulk read per packet; no loss was seen at 256 kSPS, but there is no pending URB between reads",
 				"the LP-XDS110ET cannot switch its 3V3 pin by software (measured, phase 27), so power-cycle recovery was NOT exercised; earlier notes that a 10 s supply-off recovered the target are superseded by SACI reset",
+				"rtt_info lists the CC2340 RTT channels with empty names (cause not yet investigated)",
+				"while an RTT capture holds interface 2, another process cannot invoke the probe (BUSY): reset the target before starting the capture",
 				"Linux only (usbfs)",
 			},
 		}}},

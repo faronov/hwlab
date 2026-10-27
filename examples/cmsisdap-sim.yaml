@@ -23,6 +23,7 @@ devices:
   dbg:
     plugin: cmsisdap
     device: sim-cmsisdap
+    control: true        # debug only: never start the RTT capture stream
 
 steps:
   - {name: probe-info, at: 100ms, device: dbg, call: DebugProbe.info}

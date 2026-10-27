@@ -21,6 +21,7 @@ duration: 12s
 devices:
   dbg:
     plugin: cmsisdap
+    control: true        # debug only: never start the RTT capture stream
 
 steps:
   - {name: info,        at: 100ms, device: dbg, call: DebugProbe.info}

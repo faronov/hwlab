@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/faronov/hwlab/internal/cortexm"
+	"github.com/faronov/hwlab/internal/rtt/rttplugin"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
 )
@@ -35,7 +36,7 @@ func spec(c string, d pluginv1.Danger, name, desc, schema string) *pluginv1.Meth
 }
 
 // RTTProps are the RTT location options shared by the RTT methods and capture.
-const RTTProps = `,"rtt_address":{},"rtt_search_start":{},"rtt_search_size":{"type":"number"},"rtt_channel":{"type":"number"}`
+const RTTProps = rttplugin.Props
 
 const optProps = `"clock_hz":{"type":"number","description":"SWD clock in Hz (whole kHz), default 1000000"},"ap":{"type":"number","description":"MEM-AP index, default 0"},"timeout_ms":{"type":"number","description":"per-command probe timeout"}`
 

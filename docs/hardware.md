@@ -14,8 +14,8 @@
 | generic serial (any port) | `uart` | **TX validated on a real port; RX over pty/fakes only** | see below, [ADR 0017](adr/0017-generic-uart.md), [results](notes/phase5-uart-results.md) |
 | CAN / CAN-FD (SocketCAN, virtual bus) | `can` | **unvalidated on real hardware** (synthetic virtual bus + socketpair tests, tshark-decoded pcapng, replay) | see below, [ADR 0019](adr/0019-generic-can.md), [results](notes/phase6-can-results.md) |
 | SCPI oscilloscopes (Rigol, Siglent, generic) | `scpi` | **unvalidated on real hardware** (synthetic fake instrument, replay) | see below, [ADR 0020](adr/0020-generic-scpi.md), [results](notes/phase7-scpi-results.md) |
-| TI XDS110 (LP-XDS110ET, LaunchPad on-board XDS110) | `xds110` | probe side **real-hardware verified** on one standalone LP-XDS110ET; native SWD debug (attach, identify, halt/resume, registers read/write, SRAM write/restore, 100 steps, 4 hardware breakpoints, reset via SACI, flash backup/erase/program/verify/restore) verified on a user-owned CC2340 (Cortex-M0+), with results matching the same probe's HID CMSIS-DAP interface; DWT absent on that core (UNSUPPORTED_BY_ATTACHED_HW); target power switch UNSUPPORTED_BY_ATTACHED_HW (3V3 pin = probe rail, jumper P9; see [phase 27](notes/phase27-lp-xds110et-target-power.md)); EnergyTrace range 0 PROTOCOL_PARTIAL (current only, accuracy unverified) | [docs/xds110.md](xds110.md), [phase 24 results](notes/phase24-xds110-results.md), [phase 25 results](notes/phase25-cc2340-m0plus-acceptance.md), [phase 26 results](notes/phase26-cc2340-saci-flash.md) |
-| CMSIS-DAP probes (DAPLink, Pi Debug Probe, BL702-DAPLink, ...) | `cmsisdap` | probe side **real-hardware verified** on one BL702-DAPLink (v2 bulk, no target attached) and, for the target side (SWD, identify, halt/resume, registers read/write, memory read/write, 100 steps, hardware breakpoints, reset, CC23xx flash) and v1 HID, on a CC2340 through the LP-XDS110ET's HID interface; no SWO/JTAG debug | see below, [ADR 0021](adr/0021-cmsis-dap.md), [phase 22 results](notes/phase22-cmsisdap-results.md) |
+| TI XDS110 (LP-XDS110ET, LaunchPad on-board XDS110) | `xds110` | probe side **real-hardware verified** on one standalone LP-XDS110ET; native SWD debug (attach, identify, halt/resume, registers read/write, SRAM write/restore, 100 steps, 4 hardware breakpoints, reset via SACI, flash backup/erase/program/verify/restore) verified on a user-owned CC2340 (Cortex-M0+), with results matching the same probe's HID CMSIS-DAP interface; DWT absent on that core (UNSUPPORTED_BY_ATTACHED_HW); target power switch UNSUPPORTED_BY_ATTACHED_HW (3V3 pin = probe rail, jumper P9; see [phase 27](notes/phase27-lp-xds110et-target-power.md)); EnergyTrace range 0 PROTOCOL_PARTIAL (current only, accuracy unverified); target-memory RTT **verified on hardware** on the CC2340 (`rtt_info` and capture; `rtt_write` simulator-only) | [docs/xds110.md](xds110.md), [phase 24 results](notes/phase24-xds110-results.md), [phase 25 results](notes/phase25-cc2340-m0plus-acceptance.md), [phase 26 results](notes/phase26-cc2340-saci-flash.md) |
+| CMSIS-DAP probes (DAPLink, Pi Debug Probe, BL702-DAPLink, ...) | `cmsisdap` | probe side **real-hardware verified** on one BL702-DAPLink (v2 bulk, no target attached) and, for the target side (SWD, identify, halt/resume, registers read/write, memory read/write, 100 steps, hardware breakpoints, reset, CC23xx flash) and v1 HID, on a CC2340 through the LP-XDS110ET's HID interface; target-memory RTT implemented and simulator-tested, **not yet verified on hardware**; no SWO/JTAG debug | see below, [ADR 0021](adr/0021-cmsis-dap.md), [phase 22 results](notes/phase22-cmsisdap-results.md) |
 | Modbus RTU / TCP devices | `modbus` | **unvalidated on real hardware** (synthetic slave, replay) | see below, [ADR 0022](adr/0022-modbus.md), [results](notes/phase9-modbus-results.md) |
 | Telink SWire programmer + TLSR8258 | `telink` | **unvalidated on real hardware** (simulator, replay); no chip erase | see below, [ADR 0023](adr/0023-telink-swire.md), [results](notes/phase13-telink-results.md) |
 | PicoScope oscilloscopes | `picoscope` | **no real driver, never connected** (synthetic scope, replay); contract only | see below, [ADR 0024](adr/0024-picoscope.md), [results](notes/phase10-picoscope-results.md) |
@@ -282,7 +282,7 @@ tried:** the profiles come from public programming guides and are reported
 
 The `cmsisdap` plugin drives a CMSIS-DAP probe over SWD with a pure-Go stack
 (no libusb, no CGO, no OpenOCD/probe-rs/Python) and exposes `DebugProbe` and
-`MemoryAccess`. Layers: `internal/usb` -> `plugins/cmsisdap/dap` ->
+`MemoryAccess` (plus CC23xx `FlashProgramming` and target-memory RTT). Layers: `internal/usb` -> `plugins/cmsisdap/dap` ->
 `internal/adiv5` -> `internal/cortexm` (shared with ST-Link). See
 [ADR 0021](adr/0021-cmsis-dap.md) and [phase 22 results](notes/phase22-cmsisdap-results.md).
 
@@ -315,8 +315,17 @@ memory, step, breakpoint, watchpoint, reset) and CMSIS-DAP v1 HID.
 - Device config: `clock_hz` (default 1 MHz), `ap` (default 0), `timeout_ms`.
 - Reads (`info`, `pins`, `connect`, `status`, `MemoryAccess.read`) are safe. Halt,
   resume, step, reset, register access and memory writes need `--yes`.
-- Not implemented: flash (belongs to target-specific layers), SWO, UART/COM port,
-  JTAG core debugging.
+- RTT (target memory, `internal/rtt`; **simulator-tested only, not yet verified
+  on hardware**): `DebugProbe.rtt_info` (safe), `DebugProbe.rtt_write` (`--yes`)
+  and an RTT capture (stream `rtt`, source `cmsisdap-rtt`). Keys: `rtt_address`,
+  `rtt_search_start` / `rtt_search_size` (default `0x20000000` + 32 KiB),
+  `rtt_channel`, and for the capture `rtt_wait_ms`, `rtt_poll_min_ms`,
+  `rtt_poll_max_ms`; `stream: rtt` is accepted and optional (it is the only
+  stream). On a CC23xx each access leaves SACI like `MemoryAccess.read`. Because
+  the probe now advertises `LiveRawStream`, a debug-only device in `hwlab run`
+  needs `control: true`. Same rules as [xds110 RTT](xds110.md#rtt-target-memory).
+- Not implemented: flash outside CC23xx (belongs to target-specific layers), SWO,
+  UART/COM port, JTAG core debugging.
 - Wiring a target to the BL702-DAPLink (3.3 V logic only, common GND):
   SWD: SWDIO = GPIO2, SWCLK = GPIO15, nRESET = GPIO24.
   JTAG: TDI = GPIO0, TDO = GPIO1, TMS = GPIO2, TCK = GPIO15.
@@ -328,7 +337,7 @@ memory, step, breakpoint, watchpoint, reset) and CMSIS-DAP v1 HID.
 
 ## TI XDS110 probes
 
-The `xds110` plugin drives the XDS110 vendor interface natively (see [xds110.md](xds110.md)): device id `xds110/<vid>:<pid>:<usb serial>`, only the debug interface is claimed, CDC and HID interfaces keep their drivers. udev: `SUBSYSTEM=="usb", ATTRS{idVendor}=="0451", ATTRS{idProduct}=="bef3", MODE="0660", GROUP="hwlab"`. The same probe is also listed by the `cmsisdap` plugin through its HID interface; the two use different interfaces and can be open together. Hardware tests (opt in): `HWLAB_XDS110_HW=1 go test -tags hardware -count=1 -v ./plugins/xds110/`; unplug (needs a person): `HWLAB_XDS110_UNPLUG=1 -run HWUnplugReplug`.
+The `xds110` plugin drives the XDS110 vendor interface natively (see [xds110.md](xds110.md)): device id `xds110/<vid>:<pid>:<usb serial>`, only the debug interface is claimed, CDC and HID interfaces keep their drivers. Target-memory RTT (`rtt_info`, `rtt_write`, RTT capture with `stream: rtt`) is simulator-tested only, see [xds110.md](xds110.md#rtt-target-memory). udev: `SUBSYSTEM=="usb", ATTRS{idVendor}=="0451", ATTRS{idProduct}=="bef3", MODE="0660", GROUP="hwlab"`. The same probe is also listed by the `cmsisdap` plugin through its HID interface; the two use different interfaces and can be open together. Hardware tests (opt in): `HWLAB_XDS110_HW=1 go test -tags hardware -count=1 -v ./plugins/xds110/`; unplug (needs a person): `HWLAB_XDS110_UNPLUG=1 -run HWUnplugReplug`.
 
 ## Telink SWire programmer
 

@@ -5,8 +5,10 @@
 // and internal/cortexm layers; JTAG is available for chain scans through the
 // shared internal/jtag driver. It claims only the DAP interface, so the CDC
 // UART of a composite probe stays with the kernel. The plugin advertises the
-// generic DebugProbe and MemoryAccess capabilities only: vendor flash
-// programming, RTT and SWO are not implemented, so they are not offered.
+// generic DebugProbe and MemoryAccess capabilities, CC23xx flash programming
+// and target-memory RTT (internal/rtt: DebugProbe.rtt_info/rtt_write and an
+// RTT capture; simulator-tested, not yet verified on hardware). SWO is not
+// implemented, so it is not offered.
 //
 // STATUS: the v2 bulk transport and the probe commands were validated on a
 // real BL702-DAPLink (CherryUSB) with NO target attached; target operations
@@ -28,11 +30,11 @@ import (
 
 	"github.com/faronov/hwlab/internal/adiv5"
 	"github.com/faronov/hwlab/internal/cortexm"
+	"github.com/faronov/hwlab/internal/rtt/rttplugin"
 	"github.com/faronov/hwlab/internal/ti/cc23xx"
 	"github.com/faronov/hwlab/internal/ti/cc23xx/service"
 	"github.com/faronov/hwlab/internal/usb"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
-	"github.com/faronov/hwlab/pkg/pluginsdk"
 	"github.com/faronov/hwlab/plugins/cmsisdap/dap"
 )
 
@@ -98,7 +100,7 @@ func defaultOpen(e Entry) (dap.Transport, error) {
 }
 
 func caps(attrs map[string]string) []*pluginv1.Capability {
-	ids := []string{pluginv1.CapDebugProbe, pluginv1.CapMemoryAccess, pluginv1.CapFlashProgramming}
+	ids := []string{pluginv1.CapDebugProbe, pluginv1.CapMemoryAccess, pluginv1.CapFlashProgramming, pluginv1.CapRTT, pluginv1.CapLiveRawStream}
 	out := make([]*pluginv1.Capability, len(ids))
 	for i, id := range ids {
 		out[i] = &pluginv1.Capability{Id: id, Version: 1, Attributes: attrs}
@@ -107,7 +109,7 @@ func caps(attrs map[string]string) []*pluginv1.Capability {
 }
 
 func deviceCaps() []*pluginv1.Capability {
-	return caps(map[string]string{"interface": "SWD", "jtag": "chain-scan-only", "flash_programming": "CC23xx-only", "rtt": "no", "swo": "no"})
+	return caps(map[string]string{"interface": "SWD", "jtag": "chain-scan-only", "flash_programming": "CC23xx-only", "rtt": "target-memory", "swo": "no"})
 }
 
 // ListDevices implements pluginsdk.Plugin.
@@ -240,6 +242,9 @@ type device struct {
 	attached options
 
 	trig triggers
+	// closed is set when the probe is released, guarded by mu: an RTT
+	// capture holding the device then ends instead of re-attaching.
+	closed bool
 }
 
 func (p *Plugin) connect(e Entry, o options) (*device, error) {
@@ -274,6 +279,7 @@ func (d *device) closeLocked(restore bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	var err error
+	d.closed = true
 	if d.tgt != nil {
 		if restore {
 			err = d.trig.restoreAll(ctx, d.core)
@@ -341,7 +347,9 @@ func (p *Plugin) OpenDevice(_ context.Context, id string, cfg map[string]any) er
 	if err != nil {
 		return err
 	}
-	o, err := parseOptions(cfg)
+	// The capture settings (stream, rtt_*) are the capture's: a session opens
+	// the device with the same config it passes to StartCapture.
+	o, err := parseOptions(rttplugin.Without(cfg, streamKey))
 	if err != nil {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -450,11 +458,6 @@ func parseOptionsOver(base options, over map[string]any) (options, error) {
 	}
 	o.cc = base.cc
 	return o, nil
-}
-
-// StartCapture implements pluginsdk.Plugin; a debug probe produces no stream.
-func (p *Plugin) StartCapture(context.Context, pluginsdk.CaptureRequest, *pluginsdk.Sink) (pluginsdk.Capture, *pluginsdk.CaptureStart, error) {
-	return nil, nil, status.Error(codes.Unimplemented, "cmsisdap has no capture capability (RTT and SWO are not implemented)")
 }
 
 func classifyClose(err error) error {

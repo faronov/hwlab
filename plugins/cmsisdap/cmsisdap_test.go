@@ -66,19 +66,14 @@ func TestListDevices(t *testing.T) {
 	for _, c := range ds[1].Capabilities {
 		ids = append(ids, c.Id)
 	}
-	if strings.Join(ids, ",") != "DebugProbe,MemoryAccess,FlashProgramming" {
-		t.Errorf("only DebugProbe, MemoryAccess and CC23xx FlashProgramming may be advertised, got %v", ids)
+	if strings.Join(ids, ",") != "DebugProbe,MemoryAccess,FlashProgramming,RTT,LiveRawStream" {
+		t.Errorf("only DebugProbe, MemoryAccess, CC23xx FlashProgramming, RTT and its capture stream may be advertised, got %v", ids)
 	}
 }
 
-func TestInfoAdvertisesNoRTT(t *testing.T) {
+func TestInfoMethodDanger(t *testing.T) {
 	p, _ := simPlugin(t)
 	info := p.Info()
-	for _, c := range info.Capabilities {
-		if c.Id == pluginv1.CapRTT {
-			t.Fatalf("%s must not be advertised", c.Id)
-		}
-	}
 	danger := map[string]pluginv1.Danger{}
 	for _, m := range info.Methods {
 		danger[m.Capability+"."+m.Name] = m.Danger

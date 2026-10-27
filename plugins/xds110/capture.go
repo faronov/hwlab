@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/faronov/hwlab/internal/rtt/rttplugin"
 	"github.com/faronov/hwlab/internal/usb"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
@@ -69,11 +70,27 @@ func etAttributes() map[string]string {
 	}
 }
 
-// StartCapture implements pluginsdk.Plugin: it starts the EnergyTrace stream
-// of an LP-XDS110ET. The device must have been opened with allow_target_power
-// (the stream start may energize the target connector; whether it does was
-// not established), which the core guards with a confirmation.
+// StartCapture implements pluginsdk.Plugin. The config key stream selects
+// the capture: "rtt" (also implied by any rtt_* key) polls an RTT up buffer
+// through target memory; absent or "energytrace" starts the EnergyTrace
+// stream of an LP-XDS110ET, as before RTT existed.
 func (p *Plugin) StartCapture(ctx context.Context, req pluginsdk.CaptureRequest, sink *pluginsdk.Sink) (pluginsdk.Capture, *pluginsdk.CaptureStart, error) {
+	stream, err := captureStream(req.Config)
+	if err != nil {
+		return nil, nil, argErr(err)
+	}
+	if stream == "rtt" {
+		return p.startRTT(ctx, req, sink)
+	}
+	req.Config = rttplugin.Without(req.Config, streamKey)
+	return p.startEnergyTrace(ctx, req, sink)
+}
+
+// startEnergyTrace starts the EnergyTrace stream of an LP-XDS110ET. The device
+// must have been opened with allow_target_power (the stream start may energize
+// the target connector; whether it does was not established), which the core
+// guards with a confirmation.
+func (p *Plugin) startEnergyTrace(ctx context.Context, req pluginsdk.CaptureRequest, sink *pluginsdk.Sink) (pluginsdk.Capture, *pluginsdk.CaptureStart, error) {
 	p.mu.Lock()
 	d := p.devs[req.DeviceID]
 	p.mu.Unlock()
@@ -81,7 +98,7 @@ func (p *Plugin) StartCapture(ctx context.Context, req pluginsdk.CaptureRequest,
 		return nil, nil, status.Errorf(codes.FailedPrecondition, "open %s first", req.DeviceID)
 	}
 	if !supportsEnergyTrace(d.entry) {
-		return nil, nil, status.Error(codes.Unimplemented, "EnergyTrace is implemented for the LP-XDS110ET (0451:bef3) only")
+		return nil, nil, status.Error(codes.Unimplemented, "EnergyTrace is implemented for the LP-XDS110ET (0451:bef3) only; set stream=rtt for an RTT capture")
 	}
 	if _, err := parseOptions(req.Config); err != nil {
 		return nil, nil, status.Error(codes.InvalidArgument, err.Error())
@@ -93,6 +110,9 @@ func (p *Plugin) StartCapture(ctx context.Context, req pluginsdk.CaptureRequest,
 	defer d.mu.Unlock()
 	if d.cap != nil {
 		return nil, nil, status.Error(codes.FailedPrecondition, "an EnergyTrace capture is already running on this probe")
+	}
+	if d.rtt > 0 {
+		return nil, nil, status.Error(codes.FailedPrecondition, "an RTT capture is running on this probe: stop it before starting EnergyTrace")
 	}
 	if err := d.detach(); err != nil {
 		return nil, nil, err

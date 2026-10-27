@@ -16,7 +16,7 @@ Code, fixtures and passing tests are not hardware validation.
 | cc2340: internal/ti/cc23xx over internal/adiv5 + internal/cortexm; reached through native XDS110 and CMSIS-DAP HID | partial | real-hardware-partial | real | native | no |
 | ccdebugger: native Go USB (0451:16a2) | partial | real-hardware-partial | real | native | no |
 | ccdebugger: cc-tool fallback | complete | synthetic | none | optional-external-tool | no |
-| cmsisdap: native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) | partial | real-hardware-partial | real | native | no |
+| cmsisdap: native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt, simulator-tested) | partial | real-hardware-partial | real | native | no |
 | espusbjtag: native Go usbfs Espressif USB-JTAG transport + JTAG + RISC-V DM (spec 0.13) + SPI1 flash driver over system bus access | partial | real-hardware-partial | real | native | no |
 | fake: in-process simulation | complete | synthetic | synthetic | native | no |
 | ftdi: native Go usbfs FTDI protocol + MPSSE + JTAG | partial | real-hardware-partial | real | native | no |
@@ -36,7 +36,7 @@ Code, fixtures and passing tests are not hardware validation.
 | uart: serial (go.bug.st/serial) | complete | real-hardware-partial | real | native | no (device listing on darwin without cgo is a /dev/cu.* glob without VID/PID) |
 | usbcap: usbmon text input | partial | synthetic | synthetic | native | no |
 | usbcap: physical USB bus analyzer | missing | untested | none | vendor-sdk | n/a |
-| xds110: native Go XDS110 vendor protocol over Linux usbfs (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only | partial | real-hardware-partial | real | native | no |
+| xds110: native Go XDS110 vendor protocol over Linux usbfs (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only | partial | real-hardware-partial | real | native | no |
 
 ## Details
 
@@ -153,7 +153,7 @@ Code, fixtures and passing tests are not hardware validation.
 
 ### cmsisdap — CMSIS-DAP v2 (bulk) / v1 (HID) probe: native SWD + generic Cortex-M; real probes BL702-DAPLink (no target) and the LP-XDS110ET HID interface (CC2340 target)
 
-**native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag)**
+**native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt, simulator-tested)**
 
 - implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe's DAP interface (udev rule in docs/hardware.md); OpenOCD, probe-rs, libusb, Python are not used)
 - capabilities:
@@ -190,6 +190,7 @@ Code, fixtures and passing tests are not hardware validation.
   | performance: DAP_Info round trip | REAL_HW_VERIFIED | 110-126 us average over 2000 round trips |
   | performance: target memory throughput | REAL_HW_VERIFIED | CC2340 over the HID interface at 400 kHz, medians of 15: register block 61 ms, 16 B read 1.6 ms, 2 KiB read 44 ms, 256 B write 15 ms verified / 7.5 ms unverified, 100 steps 1.3 s. The BL702-DAPLink was never attached to a target. XDS110 is 2-3x faster on the same target |
   | flash programming | REAL_HW_VERIFIED | FlashProgramming is served for TI CC23xx targets by the shared SACI layer (see the cc2340 entry; restore of the original 512 KiB through this probe verified exactly); other targets are refused with a clear error, flash belongs to target-specific layers |
+  | RTT (target memory) | SIMULATED_ONLY | SEGGER-compatible RTT read from target SRAM through the shared engine (internal/rtt, no SEGGER software): DebugProbe.rtt_info, DebugProbe.rtt_write and an RTT capture (Log events on stream rtt), the same code path as the hardware-validated jlinknative RTT. On a CC23xx every access leaves SACI like MemoryAccess.read, and a capture re-attaches after a target reset. Exercised only against the simulated Cortex-M and the CC23xx SACI model; never run on a real probe |
   | SWO / UART / COM port | NOT_IMPLEMENTED | not implemented; this probe does not report them either |
 
 - verified:
@@ -203,6 +204,7 @@ Code, fixtures and passing tests are not hardware validation.
   - BL702-DAPLink with a target attached (the CC2340 was reached through the LP-XDS110ET's HID interface instead)
   - BL702-DAPLink DAP_ResetTarget and SYSRESETREQ followed by a debug reconnect (no target was attached to it; the CC2340 SACI reset layer was verified through the LP-XDS110ET HID interface)
   - effective SWD clock precision, DAP_ResetTarget on a probe that implements it
+  - RTT (rtt_info, rtt_write, RTT capture) on any real probe and target
 - known gaps:
   - the probe's USB serial 012345ABCDEF is a firmware placeholder, so identity by serial is ambiguous with several boards
   - the firmware does not answer undefined commands, so one stray out-of-sync reply may be reported before the stream is back in step
@@ -602,7 +604,7 @@ Code, fixtures and passing tests are not hardware validation.
 
 ### xds110 — TI XDS110 probe: native SWD + JTAG chain scan + generic Cortex-M; real probe LP-XDS110ET with a user-owned CC2340 target; EnergyTrace range 0 (protocol partial)
 
-**native Go XDS110 vendor protocol over Linux usbfs (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only**
+**native Go XDS110 vendor protocol over Linux usbfs (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only**
 
 - implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe's debug interface (udev rule in docs/hardware.md); OpenOCD, Code Composer Studio, DSLite, xdsdfu, Python and libusb are not used)
 - capabilities:
@@ -645,6 +647,8 @@ Code, fixtures and passing tests are not hardware validation.
   | EnergyTrace: replay of the real stream | REPLAY_VERIFIED | sanitized fixture plugins/xds110/energytrace/testdata/real-lpxds110et: parser and command sequence tests run without the probe |
   | EnergyTrace: unplug during capture | REAL_HW_VERIFIED | probe removed during a 30 min capture: the capture ended in under a second, no hang, the 7.08M samples already stored stayed readable, no stop commands were sent to the missing probe, same serial rediscovered after replug and a new capture ran |
   | flash programming | REAL_HW_VERIFIED | FlashProgramming is served for TI CC23xx targets by the shared SACI layer (see the cc2340 entry; erase, program, verify and backup through this probe on the real chip); other targets are refused with a clear error, flash belongs to target-specific layers |
+  | RTT (target memory) | REAL_HW_VERIFIED | SEGGER-compatible RTT read from target SRAM through the shared engine (internal/rtt, no SEGGER software): DebugProbe.rtt_info and an RTT capture (StartCapture with stream=rtt or any rtt_* setting; Log events on stream rtt), the same code path as the hardware-validated jlinknative RTT. On the CC2340 running zigbee-rs firmware: rtt_info found the control block at 0x20004bd0 with rtt_search_size=0x9000 (2048 B up buffer); captures recorded 28 boot lines (20 s) and a 338-line Zigbee join log (140 s) without loss or corruption. On a CC23xx every access leaves SACI like MemoryAccess.read. RTT and EnergyTrace captures exclude each other on one probe. rtt_write and re-attach after a reset during a capture are simulator-tested only |
+  | RTT down channel (rtt_write) | SIMULATED_ONLY | exercised against the simulated Cortex-M and the CC23xx SACI model; the CC2340 firmware has no down channel |
 
 - verified:
   - USB discovery of the composite LP-XDS110ET by serial; only the debug interface 2 is claimed
@@ -655,9 +659,12 @@ Code, fixtures and passing tests are not hardware validation.
   - the 3V3 pin voltage
   - the mapping of status -617 to a no-ACK error
   - EnergyTrace: absolute accuracy, ranges other than 0, voltage/energy, the voltage actually on the 3V3 pin
+  - RTT: rtt_write, and a capture re-attaching after a target reset that happens during the capture
 - known gaps:
   - the same physical probe is listed by both the xds110 and cmsisdap plugins (different USB interfaces); they can be open together
   - no JTAG-DP link and no ICEPick routing, so no TI target can be debugged over JTAG yet
   - EnergyTrace uses a synchronous bulk read per packet; no loss was seen at 256 kSPS, but there is no pending URB between reads
   - the LP-XDS110ET cannot switch its 3V3 pin by software (measured, phase 27), so power-cycle recovery was NOT exercised; earlier notes that a 10 s supply-off recovered the target are superseded by SACI reset
+  - rtt_info lists the CC2340 RTT channels with empty names (cause not yet investigated)
+  - while an RTT capture holds interface 2, another process cannot invoke the probe (BUSY): reset the target before starting the capture
   - Linux only (usbfs)

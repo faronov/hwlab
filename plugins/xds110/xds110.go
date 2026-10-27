@@ -6,7 +6,9 @@
 // driver. It claims only the vendor debug interface, so the CDC UART ports,
 // the CMSIS-DAP HID interface and the second vendor interface stay with the
 // kernel. The plugin advertises the generic DebugProbe and MemoryAccess
-// capabilities only: flash programming and EnergyTrace are not offered.
+// capabilities, CC23xx flash programming, target-memory RTT (internal/rtt,
+// DebugProbe.rtt_info/rtt_write and an RTT capture) and, on the LP-XDS110ET,
+// the EnergyTrace stream.
 //
 // STATUS: the XDS110 frame protocol, version query, clock encodings and JTAG
 // commands were exercised on a real LP-XDS110ET (hardware id 0x23, firmware
@@ -29,6 +31,7 @@ import (
 
 	"github.com/faronov/hwlab/internal/adiv5"
 	"github.com/faronov/hwlab/internal/cortexm"
+	"github.com/faronov/hwlab/internal/rtt/rttplugin"
 	"github.com/faronov/hwlab/internal/ti/cc23xx"
 	"github.com/faronov/hwlab/internal/ti/cc23xx/service"
 	"github.com/faronov/hwlab/internal/usb"
@@ -109,7 +112,7 @@ func defaultOpen(e Entry) (xds.Transport, error) {
 }
 
 func caps(attrs map[string]string) []*pluginv1.Capability {
-	ids := []string{pluginv1.CapDebugProbe, pluginv1.CapMemoryAccess, pluginv1.CapFlashProgramming}
+	ids := []string{pluginv1.CapDebugProbe, pluginv1.CapMemoryAccess, pluginv1.CapFlashProgramming, pluginv1.CapRTT, pluginv1.CapLiveRawStream}
 	out := make([]*pluginv1.Capability, len(ids))
 	for i, id := range ids {
 		out[i] = &pluginv1.Capability{Id: id, Version: 1, Attributes: attrs}
@@ -122,13 +125,14 @@ func powerCap() *pluginv1.Capability {
 }
 
 func deviceCaps(e Entry) []*pluginv1.Capability {
-	attrs := map[string]string{"interface": "SWD", "jtag": "chain-scan-only", "flash_programming": "CC23xx-only", "rtt": "no", "swo": "no", "energytrace": "no"}
+	attrs := map[string]string{"interface": "SWD", "jtag": "chain-scan-only", "flash_programming": "CC23xx-only", "rtt": "target-memory", "swo": "no", "energytrace": "no"}
 	out := caps(attrs)
 	if supportsEnergyTrace(e) {
+		// LiveRawStream (advertised above) carries both the RTT and the
+		// EnergyTrace capture; the config key stream selects one.
 		attrs["energytrace"] = "PROTOCOL_PARTIAL"
 		out = append(out, powerCap(),
-			&pluginv1.Capability{Id: pluginv1.CapTimedCapture, Version: 1, Attributes: etAttributes()},
-			&pluginv1.Capability{Id: pluginv1.CapLiveRawStream, Version: 1, Attributes: etAttributes()})
+			&pluginv1.Capability{Id: pluginv1.CapTimedCapture, Version: 1, Attributes: etAttributes()})
 	}
 	return out
 }
@@ -255,6 +259,11 @@ type device struct {
 	trig triggers
 	// cap is the running EnergyTrace capture, guarded by mu.
 	cap *etCapture
+	// rtt counts the running RTT captures, guarded by mu.
+	rtt int
+	// closed is set once the probe is released; an RTT capture still
+	// holding the device then stops.
+	closed bool
 }
 
 func (p *Plugin) connect(e Entry, o options) (*device, error) {
@@ -304,6 +313,7 @@ func (d *device) closeLocked(restore bool) error {
 		}
 		err = errors.Join(err, d.probe.Disconnect())
 	}
+	d.closed = true
 	return classifyClose(errors.Join(err, d.probe.Close()))
 }
 
@@ -388,7 +398,9 @@ func (p *Plugin) OpenDevice(_ context.Context, id string, cfg map[string]any) er
 	if err != nil {
 		return err
 	}
-	o, err := parseOptions(cfg)
+	// The capture settings (stream, rtt_*) are the capture's: a session opens
+	// the device with the same config it starts the capture with.
+	o, err := parseOptions(rttplugin.Without(cfg, streamKey))
 	if err != nil {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}

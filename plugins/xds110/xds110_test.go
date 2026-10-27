@@ -93,8 +93,8 @@ func TestListDevices(t *testing.T) {
 	for _, c := range ds[1].Capabilities {
 		ids = append(ids, c.Id)
 	}
-	if strings.Join(ids, ",") != "DebugProbe,MemoryAccess,FlashProgramming,PowerMeasurement,TimedCapture,LiveRawStream" {
-		t.Errorf("only DebugProbe, MemoryAccess, CC23xx FlashProgramming, PowerMeasurement and its capture stream may be advertised, got %v", ids)
+	if strings.Join(ids, ",") != "DebugProbe,MemoryAccess,FlashProgramming,RTT,LiveRawStream,PowerMeasurement,TimedCapture" {
+		t.Errorf("only DebugProbe, MemoryAccess, CC23xx FlashProgramming, RTT, the capture stream and PowerMeasurement may be advertised, got %v", ids)
 	}
 	for _, c := range ds[1].Capabilities {
 		if c.Id == pluginv1.CapPowerMeasurement && c.Attributes["energytrace"] != "PROTOCOL_PARTIAL" {
@@ -108,11 +108,11 @@ func TestListDevices(t *testing.T) {
 	}
 }
 
-func TestInfoAdvertisesNoRTT(t *testing.T) {
+func TestInfoAdvertisesNoPowerSource(t *testing.T) {
 	p, _ := simPlugin(t)
 	info := p.Info()
 	for _, c := range info.Capabilities {
-		if c.Id == pluginv1.CapRTT || c.Id == pluginv1.CapPowerSource {
+		if c.Id == pluginv1.CapPowerSource {
 			t.Fatalf("%s must not be advertised", c.Id)
 		}
 	}
