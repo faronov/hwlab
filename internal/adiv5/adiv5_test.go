@@ -200,10 +200,32 @@ func TestConnectWakesDormantDP(t *testing.T) {
 
 type wakerLink struct {
 	*fakeLink
-	wakes int
+	wakes   int
+	wakeErr error
 }
 
-func (w *wakerLink) WakeDormant() error { w.wakes++; w.dormant = false; return nil }
+func (w *wakerLink) WakeDormant() error {
+	w.wakes++
+	if w.wakeErr != nil {
+		return w.wakeErr
+	}
+	w.dormant = false
+	return nil
+}
+
+func TestConnectPreservesInitialAndDormantWakeErrors(t *testing.T) {
+	wakeErr := errors.New("wake transport failed")
+	w := &wakerLink{fakeLink: newFake(), wakeErr: wakeErr}
+	w.noACK = true
+	_, err := Connect(w, 0)
+	if !errors.Is(err, ErrNoACK) || !errors.Is(err, wakeErr) {
+		t.Fatalf("connect must preserve both errors: %v", err)
+	}
+	var transferErr *TransferError
+	if !errors.As(err, &transferErr) || transferErr.Ack != 7 {
+		t.Fatalf("initial transfer details were lost: %v", err)
+	}
+}
 
 func TestConnectUsesLinkDormantWaker(t *testing.T) {
 	w := &wakerLink{fakeLink: newFake()}

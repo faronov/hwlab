@@ -227,7 +227,7 @@ func (t *Target) Reinit() error {
 			werr = t.lineUp()
 		}
 		if werr != nil {
-			return fmt.Errorf("%w (dormant-to-SWD wake-up also tried: %v)", err, werr)
+			return fmt.Errorf("%w (dormant-to-SWD wake-up also tried: %w)", err, werr)
 		}
 		t.WokeFromDormant = true
 	}

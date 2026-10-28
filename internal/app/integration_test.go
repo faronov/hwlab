@@ -3,6 +3,7 @@ package app_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"image/png"
 	"log/slog"
 	"os"
@@ -56,7 +57,13 @@ func TestFakeExperimentPipeline(t *testing.T) {
 	ctx := context.Background()
 	a := newApp(t)
 
-	res, err := a.RunExperiment(ctx, loadExample(t), true)
+	exp := loadExample(t)
+	for i := range exp.Devices {
+		if exp.Devices[i].Alias == "radio" {
+			exp.Devices[i].ClockOffsetNs = int64(10 * time.Millisecond)
+		}
+	}
+	res, err := a.RunExperiment(ctx, exp, true)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -112,27 +119,63 @@ func TestFakeExperimentPipeline(t *testing.T) {
 		}
 	}
 
-	// Correlation: every power rise is preceded by the radio TX packet.
+	// Independent requests have different anchors, even in a simulated lab.
+	// Include a deliberate radio offset so a fixed scheduling tolerance
+	// cannot accidentally pass this assertion.
+	sess, err := a.OpenSession(res.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchors := map[string]int64{}
+	for _, c := range sess.Meta().Captures {
+		anchors[c.Alias] = c.RequestNs
+	}
+	powerAnchor, havePower := anchors["power"]
+	radioAnchor, haveRadio := anchors["radio"]
+	if !havePower || !haveRadio {
+		t.Fatalf("missing capture anchors: %v", anchors)
+	}
+	wantDelta := radioAnchor - powerAnchor + 15_220
+	for _, d := range exp.Devices {
+		switch d.Alias {
+		case "radio":
+			wantDelta += d.ClockOffsetNs
+		case "power":
+			wantDelta -= d.ClockOffsetNs
+		}
+	}
+	window := wantDelta
+	if window < 0 {
+		window = -window
+	}
+	window++
 	cor, err := a.Correlate(app.CorrelateQuery{
-		Session: res.SessionID, WindowNs: int64(time.Millisecond),
-		A: timeline.Filter{Types: []string{"analysis.power_rise"}}, B: timeline.Filter{Types: []string{"packet"}},
+		Session: res.SessionID, WindowNs: window,
+		A: timeline.Filter{Sources: []string{"power"}, Types: []string{"analysis.power_rise"}},
+		B: timeline.Filter{Sources: []string{"radio"}, Types: []string{"packet"}, Contains: "APS TX"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cor.Anchors != 10 || cor.Matched != 10 {
-		t.Errorf("anchors=%d matched=%d, want 10/10", cor.Anchors, cor.Matched)
+		t.Fatalf("anchors=%d matched=%d, want 10/10", cor.Anchors, cor.Matched)
 	}
-	rise := evs[0]
-	for _, e := range evs {
-		if e.Type == "analysis.power_rise" {
-			rise = e
-			break
+	for i, anchor := range cor.Correlations {
+		found := false
+		for _, hit := range anchor.Related {
+			if strings.Contains(hit.Event.Summary, fmt.Sprintf("TX seq=%d ", i)) && hit.DeltaNs == wantDelta {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("rise %d has no matching TX at delta %d ns: %+v", i, wantDelta, anchor.Related)
 		}
 	}
-	near, err := a.Nearest(res.SessionID, rise.TimestampNs, timeline.Filter{Types: []string{"packet"}})
-	if err != nil || !near.Found || near.Delta > int64(time.Millisecond) || near.Delta < -int64(time.Millisecond) {
-		t.Errorf("nearest packet: %+v err=%v", near, err)
+	near, err := a.Nearest(res.SessionID, cor.Correlations[0].Anchor.TimestampNs,
+		timeline.Filter{Sources: []string{"radio"}, Types: []string{"packet"}, Contains: "TX seq=0 "})
+	if err != nil || !near.Found || near.Delta != wantDelta {
+		t.Errorf("nearest first TX: %+v err=%v, want delta %d ns", near, err, wantDelta)
 	}
 
 	// Analysis and an on-demand plot.
