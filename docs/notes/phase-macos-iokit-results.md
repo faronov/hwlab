@@ -1,5 +1,7 @@
 # macOS native USB backend (IOKit through purego): results
 
+Hardware serial numbers and host-local device paths are anonymized examples.
+
 Scope: the darwin transport of `internal/usb` ([ADR 0035](../adr/0035-macos-iokit-usb.md))
 and the `jlinknative` plugin on top of it. Host: an Intel Mac (darwin/amd64),
 Go 1.27.1, `CGO_ENABLED=0` and `=1` builds. Everything below was read-only on
@@ -9,7 +11,7 @@ the target: nothing was written, erased, programmed or reset.
 
 | Device | VID:PID | Interfaces (macOS driver) |
 |---|---|---|
-| SEGGER J-Link OB-nRF5340 on a Nordic DK, serial 000000000001 | 1366:1061 | 0/1 CDC (AppleUSBACMControl/ACMData, `cu.usbmodem0000000000011`), 2/3 CDC (`…383`), 4 "BULK interface" vendor 0xff (IN 0x85 / OUT 0x03, 64 B, no driver), 5 mass storage (IOUSBMassStorageInterfaceNub) |
+| SEGGER J-Link OB-nRF5340 on a Nordic DK, serial 000000000001 | 1366:1061 | 0/1 CDC (AppleUSBACMControl/ACMData, `cu.usbmodem0000000000011`), 2/3 CDC (`cu.usbmodem0000000000013`), 4 "BULK interface" vendor 0xff (IN 0x85 / OUT 0x03, 64 B, no driver), 5 mass storage (IOUSBMassStorageInterfaceNub) |
 | CH340 serial adapter | 1a86:7523 | AppleUSBCHCOM, `cu.usbserial-EXAMPLE` |
 | built-in camera, T2, headset, ambient light sensor | Apple | (listed, never opened) |
 

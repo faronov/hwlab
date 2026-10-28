@@ -1,5 +1,7 @@
 # Telink debug (halt, step, breakpoints) on real hardware
 
+Host-local device paths are anonymized examples.
+
 Same board and programmer as phase 15: TB-04-style TLSR825x (SWire chip id
 0x5562, rev 0x02), pvvx SWire firmware 0x0008 on a CH340
 (`/dev/cu.usbserial-EXAMPLE`), running a zigbee-rs TLSR8258 router image. All

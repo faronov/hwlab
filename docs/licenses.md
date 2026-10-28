@@ -93,6 +93,15 @@ run. STM32 register and device-id tables come from ST reference manuals; the F1 
   absence of upstream identifiers; no automated code-similarity scan against
   cc-tool was run. Do one before a public release if provenance must be proven.
 
+## PPK2 historical GPL source reference
+
+The original PPK2 codec consulted IRNAS `ppk2-api-python`, licensed GPL-2.0;
+[ADR 0008](adr/0008-ppk2-protocol-sources.md) records that source reference.
+This was omitted from the initial license summary. Source availability and
+the absence of a Python runtime dependency do not establish non-derivation
+or GPL compliance. Project licensing and the provenance review remain
+unfinalized; public repository visibility is not license clearance.
+
 ## External vendor software (not relicensed, not redistributed)
 
 * SEGGER J-Link software (`JLinkExe`, proprietary): run as an external tool by `jlink-segger` only. `jlink-native` does not use it at runtime (only as a behavioural oracle in tests) and incorporates no GPL J-Link code (libjaylink/OpenOCD); see [ADR 0034](adr/0034-native-jlink.md).

@@ -1,5 +1,7 @@
 # Phase 15: Telink flash modification on real hardware
 
+The flash UID, backup hash and host-local device path below are anonymized.
+
 Board: TB-04-style TLSR825x (SWire chip id 0x5562, rev 0x02), GD 512 KiB flash
 (JEDEC 0xc86013), flash unique id `0011223344556677`. Programmer: pvvx SWire
 firmware 0x0008 on a CH340 (`/dev/cu.usbserial-EXAMPLE`, 230400 baud). Host:
