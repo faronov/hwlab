@@ -18,6 +18,7 @@
 | CMSIS-DAP probes (DAPLink, Pi Debug Probe, BL702-DAPLink, ...) | `cmsisdap` | probe side **real-hardware verified** on one BL702-DAPLink (v2 bulk, no target attached) and, for the target side (SWD, identify, halt/resume, registers read/write, memory read/write, 100 steps, hardware breakpoints, reset, CC23xx flash) and v1 HID, on a CC2340 through the LP-XDS110ET's HID interface; target-memory RTT implemented and simulator-tested, **not yet verified on hardware**; no SWO/JTAG debug | see below, [ADR 0021](adr/0021-cmsis-dap.md), [phase 22 results](notes/phase22-cmsisdap-results.md) |
 | Modbus RTU / TCP devices | `modbus` | **unvalidated on real hardware** (synthetic slave, replay) | see below, [ADR 0022](adr/0022-modbus.md), [results](notes/phase9-modbus-results.md) |
 | Telink SWire programmer + TLSR8258 | `telink` | **unvalidated on real hardware** (simulator, replay); no chip erase | see below, [ADR 0023](adr/0023-telink-swire.md), [results](notes/phase13-telink-results.md) |
+| Bouffalo BL702 boot-ROM ISP (USB or UART) | `bflb` | **real-hardware verified over USB** on one XT-ZB1 DevKit: identify, helper load, full backup, erase/program/SHA verify, reset; restore and UART not run; needs `HWLAB_BFLB_EFLASH_LOADER` | see below, [ADR 0036](adr/0036-bflb-native-isp.md), [results](notes/bflb-bl702-usb-isp-results.md) |
 | PicoScope oscilloscopes | `picoscope` | **no real driver, never connected** (synthetic scope, replay); contract only | see below, [ADR 0024](adr/0024-picoscope.md), [results](notes/phase10-picoscope-results.md) |
 | USB packet capture (Linux usbmon) | `usbcap` | **live backend never run** (no root/debugfs); synthetic + text-file + replay only | see below, [ADR 0025](adr/0025-usb-packet-capture.md), [results](notes/phase11-usb-results.md) |
 
@@ -583,4 +584,25 @@ HWLAB_STLINK_HW=1 go test -tags=hardware ./plugins/stlink/ -run HW -v         # 
 HWLAB_MCP_HW=1 go test -tags=hardware ./internal/mcp/ -run MCPHW -v   # real MCP client -> server -> ST-Link/BL702/CC-Debugger; add HWLAB_MCP_UNPLUG=1 for the interactive unplug test
 go test -tags=hardware ./plugins/saleae/ -run Hardware -v    # skips without Logic 2 + a Saleae
 HWLAB_UART_PORT=ttyACM0 go test -tags=hardware ./plugins/uart/ -run Hardware -v   # writes "hwlab" to the port; skips without a port
+```
+
+## Bouffalo BL702 boot-ROM ISP
+
+1. Hold BOOT while plugging the chip's own USB (on the XT-ZB1 DevKit the
+   right micro-USB; the left one is the CH340 log UART). The ROM enumerates as
+   `ffff:ffff` "BLIOT CDC Virtual ComPort".
+2. Point `HWLAB_BFLB_EFLASH_LOADER` at the vendor RAM helper
+   (`bflb_mcu_tool/chips/bl702/eflash_loader/eflash_loader_32m.bin` from
+   `pip install bflb-mcu-tool`). hwlab does not ship it and does not call
+   `bflb-mcu-tool`; identify works without it.
+3. `FlashProgramming.backup` first (whole flash, read twice, compared with the
+   chip-side SHA-256), then `program`/`verify`. `program` is refused without a
+   backup that matches this board.
+4. After `reset` the firmware runs, but macOS may keep the ISP port listed
+   until the cable is replugged.
+
+```sh
+hwlab invoke bflb/cu.usbmodemEXAMPLE TargetIdentify.identify
+hwlab invoke bflb/cu.usbmodemEXAMPLE FlashProgramming.backup --yes
+hwlab invoke bflb/cu.usbmodemEXAMPLE FlashProgramming.program --yes -a path=fw.flash.bin -a address=0 -a backup=<backup .bin>
 ```

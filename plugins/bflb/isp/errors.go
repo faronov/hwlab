@@ -1,0 +1,76 @@
+package isp
+
+import (
+	"errors"
+	"fmt"
+)
+
+// ErrNoAnswer means the chip sent nothing within the response timeout.
+var ErrNoAnswer = errors.New("no answer from the chip")
+
+// ChipError is a "FL" answer: the ROM or the flash helper refused a command.
+type ChipError struct {
+	Cmd  byte
+	Code uint16
+}
+
+func (e *ChipError) Error() string {
+	name := errorNames[e.Code]
+	if name == "" {
+		name = "unknown error"
+	}
+	return fmt.Sprintf("command 0x%02x: chip answered FL%04x (%s)", e.Cmd, e.Code, name)
+}
+
+// Transient reports a framing error the reference tool retries (the command
+// was not executed).
+func (e *ChipError) Transient() bool { return e.Code == 0x0102 || e.Code == 0x0103 }
+
+// errorNames are the Bouffalo ISP status codes (bflb-mcu-tool bflb_utils).
+var errorNames = map[uint16]string{
+	0x0001: "BFLB_FLASH_INIT_ERROR",
+	0x0002: "BFLB_FLASH_ERASE_PARA_ERROR",
+	0x0003: "BFLB_FLASH_ERASE_ERROR",
+	0x0004: "BFLB_FLASH_WRITE_PARA_ERROR",
+	0x0005: "BFLB_FLASH_WRITE_ADDR_ERROR",
+	0x0006: "BFLB_FLASH_WRITE_ERROR",
+	0x0007: "BFLB_FLASH_BOOT_PARA_ERROR",
+	0x0008: "BFLB_FLASH_SET_PARA_ERROR",
+	0x0009: "BFLB_FLASH_READ_STATUS_REG_ERROR",
+	0x000a: "BFLB_FLASH_WRITE_STATUS_REG_ERROR",
+	0x0101: "BFLB_CMD_ID_ERROR",
+	0x0102: "BFLB_CMD_LEN_ERROR",
+	0x0103: "BFLB_CMD_CRC_ERROR",
+	0x0104: "BFLB_CMD_SEQ_ERROR",
+	0x0201: "BFLB_IMG_BOOTHEADER_LEN_ERROR",
+	0x0202: "BFLB_IMG_BOOTHEADER_NOT_LOAD_ERROR",
+	0x0203: "BFLB_IMG_BOOTHEADER_MAGIC_ERROR",
+	0x0204: "BFLB_IMG_BOOTHEADER_CRC_ERROR",
+	0x0205: "BFLB_IMG_BOOTHEADER_ENCRYPT_NOTFIT",
+	0x0206: "BFLB_IMG_BOOTHEADER_SIGN_NOTFIT",
+	0x0207: "BFLB_IMG_SEGMENT_CNT_ERROR",
+	0x020f: "BFLB_IMG_SECTIONHEADER_LEN_ERROR",
+	0x0210: "BFLB_IMG_SECTIONHEADER_CRC_ERROR",
+	0x0211: "BFLB_IMG_SECTIONHEADER_DST_ERROR",
+	0x0212: "BFLB_IMG_SECTIONDATA_LEN_ERROR",
+	0x0213: "BFLB_IMG_SECTIONDATA_DEC_ERROR",
+	0x0214: "BFLB_IMG_SECTIONDATA_TLEN_ERROR",
+	0x0215: "BFLB_IMG_SECTIONDATA_CRC_ERROR",
+	0x0216: "BFLB_IMG_HALFBAKED_ERROR",
+	0x0217: "BFLB_IMG_HASH_ERROR",
+	0x021b: "BFLB_IMG_ALL_INVALID_ERROR",
+	0x0301: "BFLB_IF_RATE_LEN_ERROR",
+	0x0302: "BFLB_IF_RATE_PARA_ERROR",
+	0x0303: "BFLB_IF_PASSWORDERROR",
+	0x0304: "BFLB_IF_PASSWORDCLOSE",
+	0x0404: "BFLB_EFUSE_READ_PARA_ERROR",
+	0x0405: "BFLB_EFUSE_READ_ADDR_ERROR",
+	0x0406: "BFLB_EFUSE_READ_ERROR",
+	0x0407: "BFLB_EFUSE_READ_MAC_ERROR",
+	0x0501: "BFLB_MEMORY_WRITE_PARA_ERROR",
+	0x0502: "BFLB_MEMORY_WRITE_ADDR_ERROR",
+	0x0503: "BFLB_MEMORY_WRITE_ERROR",
+	0x0504: "BFLB_MEMORY_READ_PARA_ERROR",
+	0x0505: "BFLB_MEMORY_READ_ADDR_ERROR",
+	0x0506: "BFLB_MEMORY_READ_ERROR",
+}

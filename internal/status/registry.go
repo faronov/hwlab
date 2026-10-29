@@ -459,6 +459,24 @@ func Registry() []Entry {
 			Unverified: []string{"the exact TLSR825x variant (chip id 0x5562 does not distinguish them)", "memory write while the core runs (only stalled-core writes were checked)", "PC write (the board ignored writes to 0x6bc; not offered)", "the cause of the rare malformed first answer after opening the CH340 port (mitigated by settle, flush, resync and retry)"},
 			Gaps:       []string{"only the TLSR825x family driver exists (TLSR826x/8208 chip ids are recognised but have no target driver)", "board layouts: tb04-512k (factory block programmed) and tb04-512k-nofactory (factory block blank); 0x78000-0x80000 stays undescribed and refused", "optional TlsrPgm/probe-rs fallbacks are not wired"},
 		}}},
+		{Plugin: "bflb", Title: "Bouffalo BL702 (boot-ROM ISP)", Backends: []Backend{{
+			Name: "native boot-ROM ISP over the chip's USB (or a UART)", Implementation: ImplComplete, Validation: ValHardwarePartial, Fixture: FixtureReal,
+			Dependency: DepVendorSDK, Dependencies: "the vendor eflash_loader RAM helper from bflb-mcu-tool (HWLAB_BFLB_EFLASH_LOADER; not redistributed); bflb-mcu-tool itself is not called", Cgo: "no",
+			Capabilities: []Capability{
+				{"USB discovery", CapRealHW, "ffff:ffff BLIOT CDC Virtual ComPort of the XT-ZB1 (BL702, BOOT held at plug-in); no bytes written"},
+				{"ROM identify", CapRealHW, "ROM 0x07020001, chip id/MAC read and CRC-checked, no sign/encrypt requirement"},
+				{"helper load and start", CapRealHW, "59,200-byte eflash_loader segment loaded through the ROM over USB and started in ~0.5 s; a resident helper is reused"},
+				{"flash identify", CapRealHW, "JEDEC c22014 (1 MiB), MAC with CRC check"},
+				{"flash read / backup", CapRealHW, "1 MiB read twice in 3.6 s, both reads equal to the chip-side SHA-256"},
+				{"flash erase / program / verify", CapRealHW, "205,392-byte zigbee-rs image erased (1.9 s), written (1.9 s) in 55-byte frames, chip-side SHA-256 equal; the firmware booted"},
+				{"restore", CapSimulatedOnly, "same erase/write/SHA path as program; not run on the board"},
+				{"reset", CapRealHW, "helper reset restarts the chip into the firmware; the ISP USB device may stay listed until replug"},
+				{"UART ISP", CapUntested, "the same client with a UART sync length; not run (the board's CH340 port was not used for ISP)"},
+			},
+			Verified:   []string{"USB discovery of the ROM ISP device", "ROM boot info over USB", "eflash_loader load and start over USB", "flash JEDEC id and MAC", "full-flash backup (two identical reads equal to the chip SHA)", "program refused without a board-matched backup", "erase, program and chip-side SHA verify of a whole firmware image; the firmware boots", "verify after power cycle", "reset into the firmware"},
+			Unverified: []string{"restore on hardware", "UART ISP", "BL602/BL616 and other Bouffalo chips", "the cause of the helper losing USB frames of 64 bytes or more (worked around)"},
+			Gaps:       []string{"BL702 only", "no chip erase, efuse or flash-protection commands", "needs the vendor eflash_loader binary"},
+		}}},
 		{Plugin: "picoscope", Title: "PicoScope", Backends: []Backend{
 			{
 				Name: "simulated device", Implementation: ImplComplete, Validation: ValSynthetic, Fixture: FixtureSynthetic,

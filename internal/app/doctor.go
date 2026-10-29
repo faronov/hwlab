@@ -119,6 +119,15 @@ func (a *App) Doctor(ctx context.Context) DoctorReport {
 	r.Checks = append(r.Checks, cmsisdapChecks(seen["cmsisdap"])...)
 	r.Checks = append(r.Checks, jlinkNativeChecks(seen["jlinknative"])...)
 
+	if seen["bflb"] {
+		if p := os.Getenv("HWLAB_BFLB_EFLASH_LOADER"); p == "" {
+			add("Bouffalo BL702: boot-ROM ISP", CheckWarn, "HWLAB_BFLB_EFLASH_LOADER is not set: identify works, flash access needs the vendor eflash_loader_32m.bin")
+		} else if _, err := os.Stat(p); err != nil {
+			add("Bouffalo BL702: boot-ROM ISP", CheckWarn, "HWLAB_BFLB_EFLASH_LOADER: "+err.Error())
+		} else {
+			add("Bouffalo BL702: boot-ROM ISP", CheckOK, "native Go ISP; helper "+p)
+		}
+	}
 	if seen["telink"] {
 		add("Telink TLSR825x: native SWire", CheckOK, "available (Go serial + SWire, no Python or probe-rs needed)")
 	} else {

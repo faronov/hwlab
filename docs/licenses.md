@@ -104,6 +104,7 @@ unfinalized; public repository visibility is not license clearance.
 
 ## External vendor software (not relicensed, not redistributed)
 
+* Bouffalo Lab `eflash_loader` RAM helper (binary from `bflb-mcu-tool` 1.10.0, PyPI metadata MIT): loaded into the BL702 by the `bflb` plugin from the path in `HWLAB_BFLB_EFLASH_LOADER`; not redistributed. The `bflb` ISP client is a clean Go implementation of the boot-ROM/helper framing and command codes, written against the behaviour of `bflb-mcu-tool` 1.10.0 and measurements on the chip; no Python code was copied, and `bflb-mcu-tool` is not run; see [ADR 0036](adr/0036-bflb-native-isp.md).
 * SEGGER J-Link software (`JLinkExe`, proprietary): run as an external tool by `jlink-segger` only. `jlink-native` does not use it at runtime (only as a behavioural oracle in tests) and incorporates no GPL J-Link code (libjaylink/OpenOCD); see [ADR 0034](adr/0034-native-jlink.md).
 * Saleae Logic 2 (proprietary application): reached over its Automation gRPC API.
 * PicoSDK (proprietary): **not used at all yet**; the picoscope plugin has a
