@@ -253,7 +253,7 @@ func (c *Client) exec(cmd byte, data []byte, withData bool, timeout time.Duratio
 // waits for a handshake (see the package comment).
 func (c *Client) Handshake() error {
 	sync := bytes.Repeat([]byte{0x55}, c.SyncBytes)
-	var last error = ErrNoAnswer
+	last := ErrNoAnswer
 	for attempt := 0; attempt < 3; attempt++ {
 		if err := c.ctx.Err(); err != nil {
 			return err
@@ -409,7 +409,7 @@ func (c *Client) LoadHelper(img *Image, bi BootInfo) (BootInfo, error) {
 		}
 		l, rerr := c.reopen()
 		if rerr != nil {
-			return BootInfo{}, fmt.Errorf("the helper did not answer after start (%v) and the port could not be reopened: %w", err, rerr)
+			return BootInfo{}, fmt.Errorf("the helper did not answer after start (%w) and the port could not be reopened: %w", err, rerr)
 		}
 		c.link = l
 		if err := c.Handshake(); err != nil {
