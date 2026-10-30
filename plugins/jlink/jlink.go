@@ -102,7 +102,7 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 			confirm(pluginv1.CapDebugProbe, "read_registers", "halt the target and read the CPU registers", `{"type":"object","properties":{`+targetProps+`}}`),
 			safe(pluginv1.CapMemoryAccess, "read", "read target memory; args: address, length (bytes, max 1 MiB). May halt the CPU briefly", `{"type":"object","required":["address","length"],"properties":{`+targetProps+`,"address":{},"length":{"type":"number"}}}`),
 			confirm(pluginv1.CapMemoryAccess, "write", "write target memory; args: address, data (hex string, max 4096 bytes)", `{"type":"object","required":["address","data"],"properties":{`+targetProps+`,"address":{},"data":{"type":"string"}}}`),
-			confirm(pluginv1.CapFlashProgramming, "program", "program a .hex/.srec/.bin file; .bin needs address; resets and runs afterwards unless run=false", `{"type":"object","required":["path"],"properties":{`+targetProps+`,"path":{"type":"string"},"address":{},"run":{"type":"boolean"}}}`),
+			confirm(pluginv1.CapFlashProgramming, "program", "program a .hex/.srec/.bin file; .bin needs address; resets and runs afterwards unless run=false. flash_loader=\"phy62xx-rom\" (target \"Cortex-M0\", .bin only) programs PHY6222/PHY6252 flash through the boot ROM routines instead of SEGGER's loader, verifies it and can save the whole flash to backup (a .bin path) first", `{"type":"object","required":["path"],"properties":{`+targetProps+`,"path":{"type":"string"},"address":{},"run":{"type":"boolean"},"flash_loader":{"type":"string","enum":["phy62xx-rom"]},"backup":{"type":"string"}}}`),
 		},
 	}
 }
@@ -496,6 +496,16 @@ func (p *Plugin) program(ctx context.Context, id string, args map[string]any) (m
 	}
 	if st, err := os.Stat(path); err != nil || st.IsDir() {
 		return nil, status.Errorf(codes.InvalidArgument, "firmware file %q not found", path)
+	}
+	switch fl, _ := args["flash_loader"].(string); fl {
+	case "":
+	case FlashLoaderPHY62xx:
+		if !strings.EqualFold(filepath.Ext(path), ".bin") {
+			return nil, status.Errorf(codes.InvalidArgument, "flash_loader %s takes a .bin file", fl)
+		}
+		return p.programPHY62xx(ctx, id, t, path, args)
+	default:
+		return nil, status.Errorf(codes.InvalidArgument, "unknown flash_loader %q (supported: %s)", fl, FlashLoaderPHY62xx)
 	}
 	load := fmt.Sprintf("loadfile %q", path)
 	if strings.EqualFold(filepath.Ext(path), ".bin") {

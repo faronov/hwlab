@@ -29,6 +29,7 @@ type fakeCmd struct {
 	started  []Target
 	rttAddrs []uint64
 	stopped  int
+	reply    func(script []string) string // overrides out when set
 }
 
 type run struct {
@@ -48,6 +49,9 @@ func (f *fakeCmd) Run(_ context.Context, serial string, t Target, script []strin
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.runs = append(f.runs, run{serial, t, script})
+	if f.reply != nil {
+		return f.reply(script), nil
+	}
 	return f.out, nil
 }
 

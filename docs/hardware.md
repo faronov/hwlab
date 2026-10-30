@@ -117,6 +117,25 @@ udev (used for the SAM-ICE, whose node was root-only; adjust `OWNER`):
 `SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1366", OWNER="alexx", MODE="0600"`,
 then replug the probe.
 
+**PHY6222/PHY6252 flash (`flash_loader: phy62xx-rom`).** SEGGER's PHY6222
+flash loader erased the whole flash of a PB-03F (PHY6252) when asked for one
+range, and its verify read from the cache. With `flash_loader: phy62xx-rom`,
+`FlashProgramming.program` instead calls the chip's boot ROM
+(`spif_erase_sector`, `spif_write`) over SWD with target `Cortex-M0`. Each
+session resets the chip, stops the ROM by a hardware breakpoint just after it
+has set up the flash controller (before any application runs), and erases and
+writes 16 sectors. The flash is then read back with the cache bypassed and
+compared. `backup: <file.bin>` saves the whole flash first. The ROM refuses flash
+below 0x2000; blank image sectors there are skipped. The ROM bytes it calls are
+fingerprinted, so another ROM revision is refused. Validated by restoring the
+factory AT firmware of a PB-03F (512 KiB flash, JEDEC 1340C4): 256 KiB in about
+19 s, verified, AT V1.3.0 answers afterwards.
+
+```sh
+hwlab invoke jlink/<serial> FlashProgramming.program --yes -a target=Cortex-M0 \
+  -a path=fw.bin -a address=0x0 -a flash_loader=phy62xx-rom -a backup=before.bin
+```
+
 **Status:** validated on a real J-Link OB (nRF52840 DK) and a SAM-ICE
 (EFR32MG1P), non-destructive operations only; see the ADR and
 `docs/notes/phase17-jlink-multiprobe-results.md`. SEGGER's license forbids redistribution, so
