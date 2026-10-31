@@ -6,7 +6,7 @@ BIN := bin
 all: build
 
 BUILD_PKGS := ./cmd/... ./plugins/fake/cmd/... ./plugins/ppk2/cmd/... \
-		./plugins/nrf802154/cmd/... ./plugins/saleae/cmd/... ./plugins/jlink/cmd/... ./plugins/ccdebugger/cmd/... ./plugins/uart/cmd/... ./plugins/can/cmd/... ./plugins/scpi/cmd/... ./plugins/cmsisdap/cmd/... ./plugins/modbus/cmd/... ./plugins/telink/cmd/... ./plugins/picoscope/cmd/... ./plugins/usbcap/cmd/... ./plugins/ftdi/cmd/... ./plugins/espusbjtag/cmd/... ./plugins/stlink/cmd/... ./plugins/xds110/cmd/... ./plugins/jlinknative/cmd/... ./plugins/bflb/cmd/...
+		./plugins/nrf802154/cmd/... ./plugins/saleae/cmd/... ./plugins/jlink/cmd/... ./plugins/ccdebugger/cmd/... ./plugins/uart/cmd/... ./plugins/can/cmd/... ./plugins/scpi/cmd/... ./plugins/cmsisdap/cmd/... ./plugins/modbus/cmd/... ./plugins/telink/cmd/... ./plugins/picoscope/cmd/... ./plugins/usbcap/cmd/... ./plugins/ftdi/cmd/... ./plugins/espusbjtag/cmd/... ./plugins/stlink/cmd/... ./plugins/xds110/cmd/... ./plugins/jlinknative/cmd/... ./plugins/bflb/cmd/... ./plugins/wstk/cmd/...
 
 build:
 	$(GO) build -o $(BIN)/ $(BUILD_PKGS)
@@ -41,7 +41,7 @@ check-cgo:
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build ./...
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build ./cmd/... ./internal/app/... ./internal/usb/... ./plugins/fake/... \
 		./plugins/saleae/... ./plugins/jlink/... ./plugins/jlinknative/... ./plugins/ccdebugger/... ./plugins/uart/... ./plugins/can/... \
-		./plugins/scpi/... ./plugins/cmsisdap/... ./plugins/ftdi/... ./plugins/espusbjtag/... ./plugins/stlink/... ./plugins/xds110/... ./plugins/modbus/... ./plugins/telink/... ./plugins/bflb/... \
+		./plugins/scpi/... ./plugins/cmsisdap/... ./plugins/ftdi/... ./plugins/espusbjtag/... ./plugins/stlink/... ./plugins/xds110/... ./plugins/modbus/... ./plugins/telink/... ./plugins/bflb/... ./plugins/wstk/... \
 		./plugins/picoscope/... ./plugins/usbcap/...
 
 lint:

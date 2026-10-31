@@ -37,6 +37,8 @@ Code, fixtures and passing tests are not hardware validation.
 | uart: serial (go.bug.st/serial) | complete | real-hardware-partial | real | native | no (device listing on darwin without cgo is a /dev/cu.* glob without VID/PID) |
 | usbcap: usbmon text input | partial | synthetic | synthetic | native | no |
 | usbcap: physical USB bus analyzer | missing | untested | none | vendor-sdk | n/a |
+| wstk: native USB: J-Link EMUCOM channels of the kit's on-board J-Link (kit control 0x10000, AEM 0x10002) | partial | real-hardware-partial | real | native | no |
+| wstk: native Ethernet: admin console (TCP 4902) and debug channel (TCP 4905) | complete | synthetic | synthetic | native | no |
 | xds110: native Go XDS110 vendor protocol over Linux usbfs or macOS IOKit (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only | partial | real-hardware-partial | real | native | no |
 
 ## Details
@@ -649,6 +651,58 @@ Code, fixtures and passing tests are not hardware validation.
 - implementation: missing; validation: untested; dependency: vendor-sdk
 - known gaps:
   - no bus-level backend written (packets, NAK, SOF, electrical errors are invisible to usbmon)
+
+### wstk — Silicon Labs Wireless Starter Kit (BRD4001A mainboard: AEM energy, PTI packet trace)
+
+**native USB: J-Link EMUCOM channels of the kit's on-board J-Link (kit control 0x10000, AEM 0x10002)**
+
+- implementation: partial; validation: real-hardware-partial; dependency: native (the jlinknative USB transport (Linux usbfs or macOS IOKit); Simplicity Commander, silink, JLinkExe and libjlinkarm are not used)
+- capabilities:
+
+  | Capability | Status | Evidence |
+  |---|---|---|
+  | USB discovery | REAL_HW_VERIFIED | SEGGER VID with manufacturer "Silicon Labs" (product "J-Link Pro OB"); listing reads the board list once (~80 ms J-Link hold), then answers from a cache |
+  | kit info and board list | REAL_HW_VERIFIED | firmware 1.4.6 build 1171, BRD4001A Rev A02 + BRD4183A Rev A00 with serials and dates, identical to Simplicity Commander's answer |
+  | AEM capture (current + voltage) | REAL_HW_VERIFIED | 10 kHz, 256-sample buffers; 5 s captures delivered 50,000 contiguous samples (2.18 mA mean, 2.09-2.48 mA, 3.336 V) into the session; the parser matches Commander's CSV sample for sample on a recorded stream |
+  | AEM accuracy | HYPOTHESIS_ONLY | values are the kit's own calibrated floats, passed through; not checked against a reference load |
+  | AEM clock mapping | PROTOCOL_PARTIAL | kit microsecond buffer stamps placed through the millisecond message time and a minimum-offset estimator; that the message time is the queue time is inferred from observation |
+  | PTI over USB | NOT_IMPLEMENTED | the kit's USB tunnel for the debug channel needs a further channel set-up that could disturb the VCOM; use the Ethernet backend |
+  | admin console over USB | NOT_IMPLEMENTED | not implemented (USB tunnel); use the Ethernet backend |
+
+- verified:
+  - discovery and identification of one BRD4001A/BRD4183A kit
+  - PowerMeasurement.info and read_current
+  - 5 s AEM captures through hwlab run (analysis and plot)
+  - AEM stream parser against a recorded stream and Commander's CSV
+- unverified:
+  - AEM accuracy against a reference load
+  - other mainboards (BRD4002A and later) and radio boards
+  - long captures
+  - a kit firmware other than 1.4.6
+  - Linux (usbfs)
+- known gaps:
+  - the capture holds the J-Link exclusively: a debugger cannot use the probe meanwhile
+  - no PTI or admin console over USB
+  - no target power, reset or AEM mode control (deliberately)
+
+**native Ethernet: admin console (TCP 4902) and debug channel (TCP 4905)**
+
+- implementation: complete; validation: synthetic; dependency: native (the kit on the LAN (HWLAB_WSTK_HOSTS))
+- capabilities:
+
+  | Capability | Status | Evidence |
+  |---|---|---|
+  | PTI capture (802.15.4 to pcapng + Packet events) | SIMULATED_ONLY | DCH v2/v3 framing and EFR32 PTI records decoded per Silicon Labs' public PTI documentation and Wireshark's dissector; tested on synthetic streams; the attached kit had no network and its target emits no PTI |
+  | AEM polling over the admin console | SIMULATED_ONLY | one reading per poll (default 100 ms) from 'aem current'/'dbg info'; the reply formats are partly assumed |
+  | read-only admin commands | SIMULATED_ONLY | allowlist of read-only commands; target, reset, debug-mode and calibration commands are refused |
+
+- unverified:
+  - any real kit over Ethernet
+  - PTI channel and RSSI mapping on real frames
+  - whether the debug channel streams without a command
+- known gaps:
+  - needs target firmware that enables PTI (RAIL applications do)
+  - PTI shows only the target radio's own traffic
 
 ### xds110 — TI XDS110 probe: native SWD + JTAG chain scan + generic Cortex-M; real probe LP-XDS110ET with a user-owned CC2340 target; EnergyTrace range 0 (protocol partial)
 

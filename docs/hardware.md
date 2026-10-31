@@ -19,6 +19,7 @@
 | Modbus RTU / TCP devices | `modbus` | **unvalidated on real hardware** (synthetic slave, replay) | see below, [ADR 0022](adr/0022-modbus.md), [results](notes/phase9-modbus-results.md) |
 | Telink SWire programmer + TLSR8258 | `telink` | **unvalidated on real hardware** (simulator, replay); no chip erase | see below, [ADR 0023](adr/0023-telink-swire.md), [results](notes/phase13-telink-results.md) |
 | Bouffalo BL702 boot-ROM ISP (USB or UART) | `bflb` | **real-hardware verified over USB** on one XT-ZB1 DevKit: identify, helper load, full backup, erase/program/SHA verify, reset; restore and UART not run; needs `HWLAB_BFLB_EFLASH_LOADER` | see below, [ADR 0036](adr/0036-bflb-native-isp.md), [results](notes/bflb-bl702-usb-isp-results.md) |
+| Silicon Labs Wireless Starter Kit (BRD4001A mainboard + radio board) | `wstk` | USB (J-Link EMUCOM) **real-hardware verified** on one BRD4001A + BRD4183A: discovery with board list, 10 kHz AEM current/voltage capture; Ethernet (admin console, AEM polling, PTI → pcapng) **synthetic only**; no PTI over USB | see below, [ADR 0037](adr/0037-wstk-native.md), [results](notes/wstk-native-results.md) |
 | PicoScope oscilloscopes | `picoscope` | **no real driver, never connected** (synthetic scope, replay); contract only | see below, [ADR 0024](adr/0024-picoscope.md), [results](notes/phase10-picoscope-results.md) |
 | USB packet capture (Linux usbmon) | `usbcap` | **live backend never run** (no root/debugfs); synthetic + text-file + replay only | see below, [ADR 0025](adr/0025-usb-packet-capture.md), [results](notes/phase11-usb-results.md) |
 
@@ -603,6 +604,7 @@ HWLAB_STLINK_HW=1 go test -tags=hardware ./plugins/stlink/ -run HW -v         # 
 HWLAB_MCP_HW=1 go test -tags=hardware ./internal/mcp/ -run MCPHW -v   # real MCP client -> server -> ST-Link/BL702/CC-Debugger; add HWLAB_MCP_UNPLUG=1 for the interactive unplug test
 go test -tags=hardware ./plugins/saleae/ -run Hardware -v    # skips without Logic 2 + a Saleae
 HWLAB_UART_PORT=ttyACM0 go test -tags=hardware ./plugins/uart/ -run Hardware -v   # writes "hwlab" to the port; skips without a port
+HWLAB_WSTK_SERIAL=<J-Link serial> [HWLAB_WSTK_SECONDS=5] go test -tags=hardware ./plugins/wstk/ -run HW -v   # read-only: board list + AEM; holds the kit's J-Link during the capture
 ```
 
 ## Bouffalo BL702 boot-ROM ISP
@@ -624,4 +626,55 @@ HWLAB_UART_PORT=ttyACM0 go test -tags=hardware ./plugins/uart/ -run Hardware -v 
 hwlab invoke bflb/cu.usbmodemEXAMPLE TargetIdentify.identify
 hwlab invoke bflb/cu.usbmodemEXAMPLE FlashProgramming.backup --yes
 hwlab invoke bflb/cu.usbmodemEXAMPLE FlashProgramming.program --yes -a path=fw.flash.bin -a address=0 -a backup=<backup .bin>
+```
+
+## Silicon Labs Wireless Starter Kit (`wstk`)
+
+The `wstk` plugin talks to a WSTK mainboard (BRD4001A) natively; Simplicity
+Commander and `silink` are not used. See [ADR 0037](adr/0037-wstk-native.md).
+
+* **USB** (`wstk:<J-Link serial>`): any SEGGER J-Link (VID 0x1366) whose USB
+  manufacturer is "Silicon Labs" or "Energy Micro". hwlab reads the kit
+  firmware and board records (mainboard + radio board, serials, revisions)
+  and streams the Advanced Energy Monitor over J-Link EMUCOM. The first device
+  listing reads the board list (J-Link held ~80 ms, retried at most once a
+  minute, skipped while a capture runs); `HWLAB_WSTK_LIST_IDENTIFY=0` turns
+  that off. Properties link the same probe's `jlink`/`jlinknative` devices and
+  the kit's VCOM `uart` device.
+* **Ethernet** (`wstk-net:<name>`): set `HWLAB_WSTK_HOSTS=lab=192.0.2.10,...`
+  (or bare hosts). hwlab uses the admin console (TCP 4902, read-only command
+  allowlist) and the Debug Channel (TCP 4905) for PTI. Not run on hardware.
+* `HWLAB_WSTK_SIM=1` adds a synthetic kit `wstk:SIM`.
+
+Capture config (`TimedCapture`): `mode: aem` (default) or `mode: pti`
+(Ethernet only), `poll_ms` (Ethernet AEM polling, 20–10000, default 100),
+`channel` (PTI channel to record when the trace does not carry it).
+
+* **AEM over USB** streams 256-sample buffers at 10 kSa/s with one voltage per
+  buffer. Output is `PowerBatch` events like `ppk2`, so `power_analyze`,
+  `plot_render` and the timeline work unchanged. Kit time is mapped onto the
+  host clock per buffer (gap-aware, duplicate buffers dropped). The kit's
+  current accuracy and range switching were not checked against a reference
+  load.
+* **A USB capture holds the J-Link exclusively.** Do not run it while another
+  tool is flashing or debugging through the same kit; `jlink`/`jlinknative`
+  operations on that probe wait or fail until the capture ends.
+* **AEM over Ethernet** polls `aem current`/`aem voltage` on the admin console:
+  low rate (≤ 50 Sa/s), for trends only.
+* **PTI** needs target firmware that enables Packet Trace (RAIL apps and
+  Simplicity Studio Zigbee/OpenThread projects with the PTI component do;
+  custom firmware must configure the PTI pins). PTI shows only what the
+  target's own radio sends and receives. Frames are written to pcapng with
+  the 802.15.4 TAP link type used by `nrf802154`.
+* All methods are `DANGER_SAFE` and read-only: `PowerMeasurement.info`,
+  `read_current` (one AEM buffer over USB, one admin read over Ethernet),
+  `admin_read` (Ethernet, allowlisted commands only), `PacketCapture.pti_status`.
+  hwlab never sends admin `target …`, `sys reset`, `dbg mode` or `aem calibrate`:
+  on the test kit an admin `target status` made the board controller
+  re-enumerate.
+
+```sh
+hwlab devices                                   # wstk/wstk:<serial> with board properties
+hwlab invoke wstk/wstk:<serial> PowerMeasurement.read_current
+hwlab run wstk-aem.yaml                         # devices: {aem: {plugin: wstk, device: "wstk:<serial>"}}, duration 5s
 ```

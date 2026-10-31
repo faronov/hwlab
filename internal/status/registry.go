@@ -477,6 +477,35 @@ func Registry() []Entry {
 			Unverified: []string{"restore on hardware", "UART ISP", "BL602/BL616 and other Bouffalo chips", "the cause of the helper losing USB frames of 64 bytes or more (worked around)"},
 			Gaps:       []string{"BL702 only", "no chip erase, efuse or flash-protection commands", "needs the vendor eflash_loader binary"},
 		}}},
+		{Plugin: "wstk", Title: "Silicon Labs Wireless Starter Kit (BRD4001A mainboard: AEM energy, PTI packet trace)", Backends: []Backend{
+			{
+				Name: "native USB: J-Link EMUCOM channels of the kit's on-board J-Link (kit control 0x10000, AEM 0x10002)", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
+				Dependency: DepNative, Dependencies: "the jlinknative USB transport (Linux usbfs or macOS IOKit); Simplicity Commander, silink, JLinkExe and libjlinkarm are not used", Cgo: "no",
+				Capabilities: []Capability{
+					{"USB discovery", CapRealHW, "SEGGER VID with manufacturer \"Silicon Labs\" (product \"J-Link Pro OB\"); listing reads the board list once (~80 ms J-Link hold), then answers from a cache"},
+					{"kit info and board list", CapRealHW, "firmware 1.4.6 build 1171, BRD4001A Rev A02 + BRD4183A Rev A00 with serials and dates, identical to Simplicity Commander's answer"},
+					{"AEM capture (current + voltage)", CapRealHW, "10 kHz, 256-sample buffers; 5 s captures delivered 50,000 contiguous samples (2.18 mA mean, 2.09-2.48 mA, 3.336 V) into the session; the parser matches Commander's CSV sample for sample on a recorded stream"},
+					{"AEM accuracy", CapHypothesisOnly, "values are the kit's own calibrated floats, passed through; not checked against a reference load"},
+					{"AEM clock mapping", CapProtocolPartial, "kit microsecond buffer stamps placed through the millisecond message time and a minimum-offset estimator; that the message time is the queue time is inferred from observation"},
+					{"PTI over USB", CapNotImplemented, "the kit's USB tunnel for the debug channel needs a further channel set-up that could disturb the VCOM; use the Ethernet backend"},
+					{"admin console over USB", CapNotImplemented, "not implemented (USB tunnel); use the Ethernet backend"},
+				},
+				Verified:   []string{"discovery and identification of one BRD4001A/BRD4183A kit", "PowerMeasurement.info and read_current", "5 s AEM captures through hwlab run (analysis and plot)", "AEM stream parser against a recorded stream and Commander's CSV"},
+				Unverified: []string{"AEM accuracy against a reference load", "other mainboards (BRD4002A and later) and radio boards", "long captures", "a kit firmware other than 1.4.6", "Linux (usbfs)"},
+				Gaps:       []string{"the capture holds the J-Link exclusively: a debugger cannot use the probe meanwhile", "no PTI or admin console over USB", "no target power, reset or AEM mode control (deliberately)"},
+			},
+			{
+				Name: "native Ethernet: admin console (TCP 4902) and debug channel (TCP 4905)", Implementation: ImplComplete, Validation: ValSynthetic, Fixture: FixtureSynthetic,
+				Dependency: DepNative, Dependencies: "the kit on the LAN (HWLAB_WSTK_HOSTS)", Cgo: "no",
+				Capabilities: []Capability{
+					{"PTI capture (802.15.4 to pcapng + Packet events)", CapSimulatedOnly, "DCH v2/v3 framing and EFR32 PTI records decoded per Silicon Labs' public PTI documentation and Wireshark's dissector; tested on synthetic streams; the attached kit had no network and its target emits no PTI"},
+					{"AEM polling over the admin console", CapSimulatedOnly, "one reading per poll (default 100 ms) from 'aem current'/'dbg info'; the reply formats are partly assumed"},
+					{"read-only admin commands", CapSimulatedOnly, "allowlist of read-only commands; target, reset, debug-mode and calibration commands are refused"},
+				},
+				Unverified: []string{"any real kit over Ethernet", "PTI channel and RSSI mapping on real frames", "whether the debug channel streams without a command"},
+				Gaps:       []string{"needs target firmware that enables PTI (RAIL applications do)", "PTI shows only the target radio's own traffic"},
+			},
+		}},
 		{Plugin: "picoscope", Title: "PicoScope", Backends: []Backend{
 			{
 				Name: "simulated device", Implementation: ImplComplete, Validation: ValSynthetic, Fixture: FixtureSynthetic,
