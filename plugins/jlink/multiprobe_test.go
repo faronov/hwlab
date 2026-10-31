@@ -14,6 +14,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/faronov/hwlab/internal/cortexm"
+	"github.com/faronov/hwlab/internal/usb"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
 )
@@ -41,6 +43,8 @@ type multiCmd struct {
 }
 
 func (m *multiCmd) Available() (string, error) { return "/fake/JLinkExe", nil }
+
+func (m *multiCmd) DeviceDatabase(context.Context) ([]byte, error) { return []byte(testDeviceDB), nil }
 
 func (m *multiCmd) Run(_ context.Context, serial string, t Target, script []string) (string, error) {
 	m.mu.Lock()
@@ -175,7 +179,7 @@ func TestSwitchingProbesNeverMixesSessions(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		id, want := a, "EFR32MG1PxxxF256"
 		if i%2 == 1 {
-			id, want = b, "NRF52840_XXAA"
+			id, want = b, "nRF52840_xxAA"
 		}
 		res, err := invokeOn(p, id, "DebugProbe", "connect", nil)
 		if err != nil || res["probe_serial"] != id || res["target"] != want || res["core_revision"] != "r0p1" || res["cpuid"] != "0x410FC241" {
@@ -222,13 +226,14 @@ func TestDeviceIdMustBeASerial(t *testing.T) {
 }
 
 func TestProbeConnectFailureIsAnError(t *testing.T) {
+	// Not Unavailable: the core would report that as a crashed plugin.
 	f := &fakeCmd{out: "J-Link>h\nConnecting to J-Link ...FAILED: Cannot connect to the probe/programmer.\n"}
 	_, err := invoke(t, NewWith(t.TempDir(), f), "DebugProbe", "halt", map[string]any{"target": "X"})
-	if status.Code(err) != codes.Unavailable {
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), usb.ErrDisconnected.Error()) {
 		t.Fatalf("halt on an unreachable probe must fail, got %v", err)
 	}
 	f.out = "Connecting to J-Link ...FAILED\n"
-	if _, err := invoke(t, NewWith(t.TempDir(), f), "DebugProbe", "resume", map[string]any{"target": "X"}); status.Code(err) != codes.Unavailable {
+	if _, err := invoke(t, NewWith(t.TempDir(), f), "DebugProbe", "resume", map[string]any{"target": "X"}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("unknown serial must fail, got %v", err)
 	}
 }
@@ -317,7 +322,7 @@ func TestParseRegsIgnoresVTrefAndHaltStateIsRead(t *testing.T) {
 
 func TestHaltFailsWhenTargetStillRunning(t *testing.T) {
 	p := NewWith(t.TempDir(), &fakeCmd{out: "S/N: 683123456\nCPU is not halted\n"})
-	if _, err := invoke(t, p, "DebugProbe", "halt", map[string]any{"target": "X"}); status.Code(err) != codes.Unavailable {
+	if _, err := invoke(t, p, "DebugProbe", "halt", map[string]any{"target": "X"}); status.Code(err) != codes.Unknown || !strings.Contains(err.Error(), cortexm.ErrNotHalted.Error()) {
 		t.Fatalf("halt that left the CPU running must fail: %v", err)
 	}
 	p = NewWith(t.TempDir(), &fakeCmd{out: "S/N: 683123456\nCPU is halted (PC = 0x00000100)\n"})

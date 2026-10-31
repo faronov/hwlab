@@ -125,10 +125,16 @@ func TestProgramPHY62xxROM(t *testing.T) {
 	sim.flash[len(img)] = 0x55 // stale byte in the tail sector must be erased
 	f := &fakeCmd{reply: sim.reply}
 	p := NewWith(t.TempDir(), f)
+	allowFlash(t, p, "allow_flash")
 	backup := filepath.Join(dir, "backup.bin")
-	res, err := invoke(t, p, "FlashProgramming", "program", map[string]any{"target": "Cortex-M0", "path": binF, "address": "0x11000000", "flash_loader": "phy62xx-rom", "backup": backup})
+	before := append([]byte(nil), sim.flash...)
+	args := map[string]any{"target": "Cortex-M0", "path": binF, "address": "0x11000000", "flash_loader": "phy62xx-rom", "backup": backup, "confirm": "program-flash"}
+	res, err := invoke(t, p, "FlashProgramming", "program", args)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if b, m, err := loadBackup(backup); err != nil || !bytes.Equal(b, before) || m.Device != phyDevice || m.FlashJEDEC != "1340C4" {
+		t.Fatalf("the backup must be the flash before programming, with a manifest: %v %+v", err, m)
 	}
 	if !bytes.Equal(sim.flash[:len(img)], img) || sim.flash[len(img)] != 0xFF {
 		t.Error("flash content differs from the image")
@@ -152,6 +158,16 @@ func TestProgramPHY62xxROM(t *testing.T) {
 	if got := strings.Join(f.last().script, "|"); got != "r|g" {
 		t.Errorf("final script %s", got)
 	}
+	// The flash no longer matches that backup: a second write is refused.
+	n := len(f.runs)
+	if _, err := invoke(t, p, "FlashProgramming", "program", args); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "no longer matches") {
+		t.Fatalf("stale backup: %v", err)
+	}
+	for _, r := range f.runs[n:] {
+		if strings.Contains(strings.Join(r.script, "|"), fmt.Sprintf("SetPC 0x%X", phyRomWrite)) {
+			t.Fatal("a refused call must not write")
+		}
+	}
 }
 
 func TestProgramPHY62xxROMRefuses(t *testing.T) {
@@ -161,7 +177,7 @@ func TestProgramPHY62xxROMRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := func(kv ...any) map[string]any {
-		m := map[string]any{"target": "Cortex-M0", "path": binF, "address": "0x0", "flash_loader": "phy62xx-rom"}
+		m := map[string]any{"target": "Cortex-M0", "path": binF, "address": "0x0", "flash_loader": "phy62xx-rom", "confirm": "program-flash", "backup": filepath.Join(t.TempDir(), "b.bin")}
 		for i := 0; i < len(kv); i += 2 {
 			m[kv[i].(string)] = kv[i+1]
 		}
@@ -171,22 +187,31 @@ func TestProgramPHY62xxROMRefuses(t *testing.T) {
 		a     map[string]any
 		setup func(*phySim)
 		code  codes.Code
+		perms []string
 	}{
-		"FLM device":     {args("target", "PHY6222"), nil, codes.InvalidArgument},
-		"unaligned":      {args("address", "0x100"), nil, codes.InvalidArgument},
-		"past flash end": {args("address", "0x7F800"), nil, codes.InvalidArgument},
-		"unknown loader": {args("flash_loader", "foo"), nil, codes.InvalidArgument},
-		"ROM-protected":  {args("address", "0x1000"), nil, codes.InvalidArgument},
-		"other ROM":      {args("address", "0x2000"), func(s *phySim) { s.romHex[1] = "00 00" }, codes.FailedPrecondition},
-		"no boot stop":   {args("address", "0x2000"), func(s *phySim) { s.noBoot = true }, codes.Unavailable},
-		"erase error":    {args("address", "0x2000"), func(s *phySim) { s.failPC = phyRomErase }, codes.Unavailable},
-		"verify":         {args("address", "0x2000"), func(s *phySim) { s.corrupt = true }, codes.DataLoss},
+		"no allow_flash": {args(), nil, codes.PermissionDenied, []string{}},
+		"no token":       {args("confirm", "yes"), nil, codes.PermissionDenied, nil},
+		"no backup":      {args("address", "0x2000", "backup", ""), nil, codes.PermissionDenied, nil},
+		"FLM device":     {args("target", "PHY6222"), nil, codes.InvalidArgument, nil},
+		"unaligned":      {args("address", "0x100"), nil, codes.InvalidArgument, nil},
+		"past flash end": {args("address", "0x7F800"), nil, codes.InvalidArgument, nil},
+		"unknown loader": {args("flash_loader", "foo"), nil, codes.InvalidArgument, nil},
+		"ROM-protected":  {args("address", "0x1000"), nil, codes.InvalidArgument, nil},
+		"other ROM":      {args("address", "0x2000"), func(s *phySim) { s.romHex[1] = "00 00" }, codes.FailedPrecondition, nil},
+		"no boot stop":   {args("address", "0x2000"), func(s *phySim) { s.noBoot = true }, codes.FailedPrecondition, nil},
+		"erase error":    {args("address", "0x2000"), func(s *phySim) { s.failPC = phyRomErase }, codes.Internal, nil},
+		"verify":         {args("address", "0x2000"), func(s *phySim) { s.corrupt = true }, codes.DataLoss, nil},
 	} {
 		sim := newPhySim()
 		if tc.setup != nil {
 			tc.setup(sim)
 		}
 		p := NewWith(t.TempDir(), &fakeCmd{reply: sim.reply})
+		perms := tc.perms
+		if perms == nil {
+			perms = []string{"allow_flash"}
+		}
+		allowFlash(t, p, perms...)
 		if _, err := invoke(t, p, "FlashProgramming", "program", tc.a); status.Code(err) != tc.code {
 			t.Errorf("%s: %v, want %v", name, err, tc.code)
 		}

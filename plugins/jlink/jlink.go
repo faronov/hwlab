@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -27,6 +26,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/faronov/hwlab/internal/adiv5"
+	"github.com/faronov/hwlab/internal/cortexm"
+	"github.com/faronov/hwlab/internal/usb"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
 )
@@ -47,6 +49,9 @@ type Plugin struct {
 	locks    map[string]*sync.Mutex
 	rttPorts map[int]bool    // telnet ports reserved by running RTT captures
 	rttHeld  map[string]bool // probes whose RTT Commander session is open
+
+	dbMu sync.Mutex
+	db   *DeviceDB // SEGGER's device list, loaded on first use
 }
 
 // New returns the plugin using the real J-Link Commander.
@@ -80,6 +85,9 @@ func confirm(capName, name, desc, schema string) *pluginv1.MethodSpec {
 
 const targetProps = `"target":{"type":"string","description":"J-Link device name, e.g. NRF52840_XXAA"},"interface":{"type":"string","enum":["SWD","JTAG"]},"speed_khz":{"type":"number"}`
 
+// flashGeomProps override SEGGER's flash layout for a target (device config).
+const flashGeomProps = `,"flash_base":{},"flash_size":{},"flash_sector_bytes":{"type":"number"}`
+
 // Info implements pluginsdk.Plugin.
 func (p *Plugin) Info() *pluginv1.PluginInfo {
 	path, ok := p.toolPath()
@@ -93,6 +101,7 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 		RuntimeRequirements: []*pluginv1.RuntimeRequirement{
 			{Name: "JLinkExe", Kind: "binary", Optional: false, Description: desc, Satisfied: ok},
 		},
+		DangerousConfigKeys: []string{"allow_flash", "allow_erase", "allow_chip_erase"},
 		Methods: []*pluginv1.MethodSpec{
 			safe(pluginv1.CapDebugProbe, "info", "probe firmware, hardware version and measured target voltage (VTref); needs no target", `{"type":"object"}`),
 			safe(pluginv1.CapDebugProbe, "connect", "connect to the target and report the core; args: "+"target, interface, speed_khz", `{"type":"object","required":["target"],"properties":{`+targetProps+`}}`),
@@ -102,7 +111,13 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 			confirm(pluginv1.CapDebugProbe, "read_registers", "halt the target and read the CPU registers", `{"type":"object","properties":{`+targetProps+`}}`),
 			safe(pluginv1.CapMemoryAccess, "read", "read target memory; args: address, length (bytes, max 1 MiB). May halt the CPU briefly", `{"type":"object","required":["address","length"],"properties":{`+targetProps+`,"address":{},"length":{"type":"number"}}}`),
 			confirm(pluginv1.CapMemoryAccess, "write", "write target memory; args: address, data (hex string, max 4096 bytes)", `{"type":"object","required":["address","data"],"properties":{`+targetProps+`,"address":{},"data":{"type":"string"}}}`),
-			confirm(pluginv1.CapFlashProgramming, "program", "program a .hex/.srec/.bin file; .bin needs address; resets and runs afterwards unless run=false. flash_loader=\"phy62xx-rom\" (target \"Cortex-M0\", .bin only) programs PHY6222/PHY6252 flash through the boot ROM routines instead of SEGGER's loader, verifies it and can save the whole flash to backup (a .bin path) first", `{"type":"object","required":["path"],"properties":{`+targetProps+`,"path":{"type":"string"},"address":{},"run":{"type":"boolean"},"flash_loader":{"type":"string","enum":["phy62xx-rom"]},"backup":{"type":"string"}}}`),
+			safe(pluginv1.CapFlashProgramming, "info", "flash banks, sector size and the canonical SEGGER device name of the configured target (resolved from SEGGER's device list; no probe access)", `{"type":"object","properties":{`+targetProps+flashGeomProps+`}}`),
+			safe(pluginv1.CapFlashProgramming, "read", "read flash with savebin on a halted core (resumed afterwards when it was running; halt=false reads it running); args: address, length; at most 4096 bytes inline as hex, more needs path (a new file; overwrite=true replaces)", `{"type":"object","required":["address","length"],"properties":{`+targetProps+flashGeomProps+`,"address":{},"length":{"type":"number"},"path":{"type":"string"},"overwrite":{"type":"boolean"},"halt":{"type":"boolean"}}}`),
+			safe(pluginv1.CapFlashProgramming, "verify", "compare flash with a .bin (at address, default the flash base) or Intel .hex file; VERIFY_FAILED names the first differing address", `{"type":"object","required":["path"],"properties":{`+targetProps+flashGeomProps+`,"path":{"type":"string"},"address":{}}}`),
+			confirm(pluginv1.CapFlashProgramming, "backup", "read the WHOLE main flash bank twice in one halted session, require identical SHA-256 and store it (mode 0600) with a .json manifest in dir (default $HWLAB_HOME/artifacts/jlink-flash); never modifies flash; the core runs again afterwards if it was running", `{"type":"object","properties":{`+targetProps+flashGeomProps+`,"dir":{"type":"string"}}}`),
+			confirm(pluginv1.CapFlashProgramming, "erase", "erase flash: mode=region (sector-aligned address+length, confirm=\"erase-flash-region\") or mode=chip (the whole main bank, confirm=\"erase-entire-chip\", needs allow_chip_erase); needs allow_flash+allow_erase in the device config and backup=<verified backup .bin> still matching the affected sectors; read back as 0xFF. reset=none (default: the core keeps its state)|run|halt", `{"type":"object","required":["mode","confirm","backup"],"properties":{`+targetProps+flashGeomProps+`,"mode":{"type":"string","enum":["region","chip"]},"address":{},"length":{"type":"number"},"confirm":{"type":"string"},"backup":{"type":"string"},"reset":{"type":"string","enum":["run","halt","none"]}}}`),
+			confirm(pluginv1.CapFlashProgramming, "program", "program a .bin (address required) or Intel .hex file with SEGGER's flash loader: needs allow_flash in the device config (allow_erase too when a bit must go from 0 to 1), confirm=\"program-flash\" and backup=<verified backup .bin> still matching the affected sectors; bytes outside the image in the touched sectors are preserved, only changed sectors are written and every covering sector is read back. reset=run (default)|halt|none; run=false means halt. flash_loader=\"phy62xx-rom\" (target \"Cortex-M0\", .bin only) programs PHY6222/PHY6252 flash through the boot ROM routines instead; its backup path gets a fresh double read when it does not exist yet", `{"type":"object","required":["path","confirm","backup"],"properties":{`+targetProps+flashGeomProps+`,"path":{"type":"string"},"address":{},"confirm":{"type":"string"},"backup":{"type":"string"},"reset":{"type":"string","enum":["run","halt","none"]},"run":{"type":"boolean"},"flash_loader":{"type":"string","enum":["phy62xx-rom"]}}}`),
+			confirm(pluginv1.CapFlashProgramming, "restore", "write a backup made by FlashProgramming.backup back (path=<backup .bin>; its manifest must name this device, flash base and size); needs allow_flash+allow_erase in the device config and confirm=\"restore-flash\"; only differing sectors are written and the whole-bank SHA-256 must match afterwards. reset=run (default)|halt|none", `{"type":"object","required":["path","confirm"],"properties":{`+targetProps+flashGeomProps+`,"path":{"type":"string"},"confirm":{"type":"string"},"reset":{"type":"string","enum":["run","halt","none"]}}}`),
 		},
 	}
 }
@@ -283,20 +298,53 @@ func (p *Plugin) run(ctx context.Context, id string, t Target, script []string) 
 	defer l.Unlock()
 	out, err := p.cmd.Run(ctx, id, t, script)
 	if err != nil {
-		return out, status.Error(codes.Unavailable, err.Error())
+		if errors.Is(err, ErrTimeout) {
+			return out, status.Errorf(codes.DeadlineExceeded, "J-Link: %v", err)
+		}
+		return out, status.Errorf(codes.FailedPrecondition, "J-Link Commander could not run: %v", err)
 	}
 	if f := failure(out); f != "" {
+		switch failureKind(f) {
+		case failTarget:
+			return out, targetError(f, out, t)
+		case failDevice:
+			return out, status.Errorf(codes.InvalidArgument, "J-Link: %s (target %q)", f, t.Device)
+		}
 		if strings.Contains(strings.ToLower(f), "cannot connect to the probe") {
 			if o := p.otherRTTHolders(NormalizeSerial(id)); len(o) > 0 {
 				f += fmt.Sprintf(" (an RTT Commander session is also open on probe %s: SEGGER's DLL lets other processes share only one probe held by a long-running session at a time, so run RTT on one probe, or set rtt: false in the config of the others)", strings.Join(o, ", "))
 			}
 		}
-		return out, status.Errorf(codes.Unavailable, "J-Link: %s", f)
+		// Not Unavailable: the core reports that code as a crashed plugin.
+		return out, status.Errorf(codes.FailedPrecondition, "J-Link: %s: probe %s did not answer (%v, or held by another J-Link program)", f, NormalizeSerial(id), usb.ErrDisconnected)
 	}
 	if got := outputSerial(out); got != "" && got != NormalizeSerial(id) {
 		return out, status.Errorf(codes.Internal, "J-Link: requested probe %s but the commander answered from probe %s; refusing to continue", id, got)
 	}
 	return out, nil
+}
+
+// targetError reports a target that does not answer although the probe
+// does. The probe is still there, so this is not DEVICE_GONE: the text
+// carries the SWD no-acknowledge marker the core classifies as SWD_NO_ACK.
+func targetError(line, out string, t Target) error {
+	iface, speed := t.Interface, t.SpeedKHz
+	if iface == "" {
+		iface = "SWD"
+	}
+	if speed <= 0 {
+		speed = 4000
+	}
+	vt := "VTref not reported"
+	if v, ok := probeInfo(out)["vtref_v"].(float64); ok {
+		vt = fmt.Sprintf("VTref %.3f V", v)
+		if v < 1.0 {
+			vt += ", i.e. the target looks unpowered"
+		}
+	}
+	return status.Errorf(codes.Unknown,
+		"J-Link: %s: %s; the probe answered but target %q did not over %s (%s): check target power, the SWDIO/SWCLK/GND (and reset) wiring, or lower speed_khz (now %d)",
+		line, adiv5.ErrNoACK.Error(), t.Device, iface, vt, speed)
 }
 
 // validSerial reports whether id looks like a J-Link serial number (decimal).
@@ -312,7 +360,7 @@ func validSerial(id string) bool {
 	return true
 }
 
-func (p *Plugin) needTarget(cfg map[string]any) (Target, error) {
+func (p *Plugin) needTarget(ctx context.Context, cfg map[string]any) (Target, error) {
 	t, err := target(cfg)
 	if err != nil {
 		return t, status.Error(codes.InvalidArgument, err.Error())
@@ -320,7 +368,8 @@ func (p *Plugin) needTarget(cfg map[string]any) (Target, error) {
 	if t.Device == "" {
 		return t, status.Error(codes.InvalidArgument, `no target device: pass "target" (a J-Link device name such as NRF52840_XXAA) in the device config or the call args`)
 	}
-	return t, nil
+	t, _, err = p.resolveTarget(ctx, t)
+	return t, err
 }
 
 // Invoke implements pluginsdk.Plugin.
@@ -350,8 +399,20 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 		res, err = p.readMem(ctx, id, args)
 	case pluginv1.CapMemoryAccess + ".write":
 		res, err = p.writeMem(ctx, id, args)
+	case pluginv1.CapFlashProgramming + ".info":
+		res, err = p.flashInfo(ctx, args)
+	case pluginv1.CapFlashProgramming + ".read":
+		res, err = p.flashRead(ctx, id, args)
+	case pluginv1.CapFlashProgramming + ".verify":
+		res, err = p.flashVerify(ctx, id, args)
+	case pluginv1.CapFlashProgramming + ".backup":
+		res, err = p.flashBackup(ctx, id, args)
+	case pluginv1.CapFlashProgramming + ".erase":
+		res, err = p.flashErase(ctx, id, args)
 	case pluginv1.CapFlashProgramming + ".program":
 		res, err = p.program(ctx, id, args)
+	case pluginv1.CapFlashProgramming + ".restore":
+		res, err = p.flashRestore(ctx, id, args)
 	default:
 		return nil, status.Errorf(codes.Unimplemented, "unsupported method %s.%s", req.GetCapability(), req.GetMethod())
 	}
@@ -391,7 +452,7 @@ func (p *Plugin) info(ctx context.Context, id string) (map[string]any, error) {
 func expect(halted bool) *bool { return &halted }
 
 func (p *Plugin) simple(ctx context.Context, id string, args map[string]any, script []string, wantTarget bool, wantHalted ...*bool) (map[string]any, error) {
-	t, err := p.needTarget(args)
+	t, err := p.needTarget(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +470,10 @@ func (p *Plugin) simple(ctx context.Context, id string, args map[string]any, scr
 			res["pc"] = pc
 		}
 		if len(wantHalted) == 1 && wantHalted[0] != nil && *wantHalted[0] != halted {
-			return nil, status.Errorf(codes.Unavailable, "J-Link: target halted=%v after the call, expected %v", halted, *wantHalted[0])
+			if *wantHalted[0] {
+				return nil, status.Errorf(codes.Unknown, "J-Link: %v after the halt command (pc %s)", cortexm.ErrNotHalted, pc)
+			}
+			return nil, status.Errorf(codes.FailedPrecondition, "J-Link: the target is still halted after the call, expected it running")
 		}
 	}
 	if wantTarget && res["core"] == nil {
@@ -421,7 +485,7 @@ func (p *Plugin) simple(ctx context.Context, id string, args map[string]any, scr
 }
 
 func (p *Plugin) registers(ctx context.Context, id string, args map[string]any) (map[string]any, error) {
-	t, err := p.needTarget(args)
+	t, err := p.needTarget(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +505,7 @@ func (p *Plugin) registers(ctx context.Context, id string, args map[string]any) 
 }
 
 func (p *Plugin) readMem(ctx context.Context, id string, args map[string]any) (map[string]any, error) {
-	t, err := p.needTarget(args)
+	t, err := p.needTarget(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -459,14 +523,14 @@ func (p *Plugin) readMem(ctx context.Context, id string, args map[string]any) (m
 	}
 	data, err := parseMem(out, 1, n)
 	if err != nil {
-		return nil, status.Error(codes.Unavailable, err.Error())
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return map[string]any{"address": fmt.Sprintf("0x%X", addr), "length": float64(n), "hex": hex.EncodeToString(data),
 		"probe_serial": NormalizeSerial(id), "target": t.Device}, nil
 }
 
 func (p *Plugin) writeMem(ctx context.Context, id string, args map[string]any) (map[string]any, error) {
-	t, err := p.needTarget(args)
+	t, err := p.needTarget(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -483,47 +547,6 @@ func (p *Plugin) writeMem(ctx context.Context, id string, args map[string]any) (
 		return nil, err
 	}
 	return map[string]any{"address": fmt.Sprintf("0x%X", addr), "written": float64(len(data))}, nil
-}
-
-func (p *Plugin) program(ctx context.Context, id string, args map[string]any) (map[string]any, error) {
-	t, err := p.needTarget(args)
-	if err != nil {
-		return nil, err
-	}
-	path, _ := args["path"].(string)
-	if path == "" {
-		return nil, status.Error(codes.InvalidArgument, "path is required")
-	}
-	if st, err := os.Stat(path); err != nil || st.IsDir() {
-		return nil, status.Errorf(codes.InvalidArgument, "firmware file %q not found", path)
-	}
-	switch fl, _ := args["flash_loader"].(string); fl {
-	case "":
-	case FlashLoaderPHY62xx:
-		if !strings.EqualFold(filepath.Ext(path), ".bin") {
-			return nil, status.Errorf(codes.InvalidArgument, "flash_loader %s takes a .bin file", fl)
-		}
-		return p.programPHY62xx(ctx, id, t, path, args)
-	default:
-		return nil, status.Errorf(codes.InvalidArgument, "unknown flash_loader %q (supported: %s)", fl, FlashLoaderPHY62xx)
-	}
-	load := fmt.Sprintf("loadfile %q", path)
-	if strings.EqualFold(filepath.Ext(path), ".bin") {
-		a, err := toAddr(args["address"])
-		if err != nil {
-			return nil, status.Error(codes.InvalidArgument, ".bin files need an address (e.g. \"0x0\")")
-		}
-		load = fmt.Sprintf("loadfile %q 0x%X", path, a)
-	}
-	script := []string{"h", load, "r"}
-	if run, ok := args["run"].(bool); !ok || run {
-		script = append(script, "g")
-	}
-	out, err := p.run(ctx, id, t, script)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"programmed": path, "output": tail(out, 12)}, nil
 }
 
 func rttConfigFrom(cfg map[string]any) (rttConfig, error) {
@@ -582,6 +605,9 @@ func (p *Plugin) StartCapture(ctx context.Context, req pluginsdk.CaptureRequest,
 		if _, err := p.cmd.Available(); err != nil {
 			return nil, nil, unavailable(err)
 		}
+		if rc.target, _, err = p.resolveTarget(ctx, rc.target); err != nil {
+			return nil, nil, err
+		}
 	}
 	if rc.disabled {
 		return &rttCapture{cfg: rc, serial: req.DeviceID, cmd: p.cmd, clock: req.Clock, sink: sink},
@@ -610,7 +636,7 @@ func (p *Plugin) StartCapture(ctx context.Context, req pluginsdk.CaptureRequest,
 	}
 	if err := c.begin(ctx); err != nil {
 		c.shutdown()
-		return nil, nil, status.Error(codes.Unavailable, err.Error())
+		return nil, nil, status.Error(codes.FailedPrecondition, err.Error())
 	}
 	return c, &pluginsdk.CaptureStart{Streams: []*pluginv1.StreamInfo{{StreamId: rttStream, Kind: "log",
 		Attributes: map[string]string{"source": LogSource, "channel": "0", "port": strconv.Itoa(rc.port)}}}}, nil

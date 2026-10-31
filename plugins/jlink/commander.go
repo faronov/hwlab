@@ -44,6 +44,26 @@ type Commander interface {
 	// the RTT control block address; otherwise the J-Link software has to find
 	// the block itself, which it does not always do. stop ends it.
 	Start(ctx context.Context, serial string, t Target, rttPort int, rttAddr uint64) (stop func(), err error)
+	// DeviceDatabase returns SEGGER's device list as exported by
+	// ExpDevListXML. It needs no probe.
+	DeviceDatabase(ctx context.Context) ([]byte, error)
+}
+
+// dialogGuard runs first in every script that talks to a probe: it asks the
+// J-Link DLL not to open the device selection dialog, which would block a
+// headless run until someone closes it (-NoGui alone does not prevent the
+// device picker; names are also resolved against SEGGER's list before any
+// launch). Firmware updates are only suppressed, never run. SetBatchMode is
+// deliberately not used: it answers dialogs with their default, and the
+// default of an "unsecure device?" prompt is a mass erase.
+var dialogGuard = []string{"exec HideDeviceSelection = 1", "exec SuppressInfoUpdateFW"}
+
+type timeoutKey struct{}
+
+// WithTimeout raises the per-Run timeout of ExecCommander for long flash
+// operations.
+func WithTimeout(ctx context.Context, d time.Duration) context.Context {
+	return context.WithValue(ctx, timeoutKey{}, d)
 }
 
 // ExecCommander drives the real JLinkExe.
@@ -112,25 +132,40 @@ func (c *ExecCommander) Run(ctx context.Context, serial string, t Target, script
 	if err != nil {
 		return "", err
 	}
-	if _, err := f.WriteString(strings.Join(append(append([]string{}, script...), "exit"), "\n") + "\n"); err != nil {
+	lines := []string{}
+	if serial != "" {
+		lines = append(lines, dialogGuard...)
+	}
+	lines = append(append(lines, script...), "exit")
+	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
 		return "", errors.Join(err, f.Close())
 	}
 	if err := f.Close(); err != nil {
 		return "", fmt.Errorf("close Commander script: %w", err)
 	}
 
+	return c.exec(ctx, exe, append(t.args(serial), "-CommandFile", f.Name()))
+}
+
+// exec runs the commander with a timeout. Only the child it started is
+// killed when the timeout expires.
+func (c *ExecCommander) exec(ctx context.Context, exe string, args []string) (string, error) {
 	to := c.Timeout
 	if to <= 0 {
 		to = 60 * time.Second
 	}
+	if d, ok := ctx.Value(timeoutKey{}).(time.Duration); ok && d > to {
+		to = d
+	}
 	ctx, cancel := context.WithTimeout(ctx, to)
 	defer cancel()
 	var out bytes.Buffer
-	cmd := exec.CommandContext(ctx, exe, append(t.args(serial), "-CommandFile", f.Name())...)
+	cmd := exec.CommandContext(ctx, exe, args...)
 	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.WaitDelay = 2 * time.Second
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return out.String(), fmt.Errorf("%s timed out after %s", filepath.Base(exe), to)
+			return out.String(), fmt.Errorf("%s %w after %s (only the child process it started was stopped)", filepath.Base(exe), ErrTimeout, to)
 		}
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) {
@@ -139,6 +174,36 @@ func (c *ExecCommander) Run(ctx context.Context, serial string, t Target, script
 		// A non-zero exit still carries the useful diagnostics in the output.
 	}
 	return out.String(), nil
+}
+
+// ErrTimeout marks a commander run that did not finish in time.
+var ErrTimeout = errors.New("timed out")
+
+// DeviceDatabase implements Commander.
+func (c *ExecCommander) DeviceDatabase(ctx context.Context) (data []byte, err error) {
+	exe, err := c.find()
+	if err != nil {
+		return nil, err
+	}
+	dir, err := ownedtemp.New("hwlab-jlink-devs-")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, dir.Close()) }()
+	xml := dir.File("devices.xml")
+	script := dir.File("commands.jlink")
+	if err := os.WriteFile(script, []byte(fmt.Sprintf("ExpDevListXML %s\nexit\n", xml)), 0o600); err != nil {
+		return nil, err
+	}
+	out, err := c.exec(ctx, exe, []string{"-NoGui", "1", "-ExitOnError", "1", "-CommandFile", script})
+	if err != nil {
+		return nil, err
+	}
+	data, err = os.ReadFile(xml)
+	if err != nil {
+		return nil, fmt.Errorf("%s did not export its device list (ExpDevListXML): %w; output: %v", filepath.Base(exe), err, tail(out, 3))
+	}
+	return data, nil
 }
 
 // Start implements Commander.
@@ -156,6 +221,12 @@ func (c *ExecCommander) Start(_ context.Context, serial string, t Target, rttPor
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start %s: %w", filepath.Base(exe), err)
+	}
+	for _, l := range dialogGuard {
+		if _, err := fmt.Fprintln(stdin, l); err != nil {
+			_ = cmd.Process.Kill()
+			return nil, fmt.Errorf("send %s: %w", l, err)
+		}
 	}
 	if rttAddr != 0 {
 		if _, err := fmt.Fprintf(stdin, "exec SetRTTAddr 0x%X\n", rttAddr); err != nil {

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -115,7 +117,7 @@ var (
 func phyBooted(out string) ([][]string, error) {
 	ms := rePhyHalt.FindAllStringSubmatch(out, -1)
 	if len(ms) == 0 || !strings.EqualFold(ms[0][1], fmt.Sprintf("%08X", phyBootStop)) {
-		return nil, status.Error(codes.Unavailable, "the boot ROM did not stop after initialising the flash controller (is this a PHY62xx?)")
+		return nil, status.Error(codes.FailedPrecondition, "the boot ROM did not stop after initialising the flash controller (is this a PHY62xx?)")
 	}
 	return ms[1:], nil
 }
@@ -170,13 +172,13 @@ func (p *Plugin) phyProbe(ctx context.Context, id string, t Target) (jedec uint3
 	}
 	m := rePhyMem32.FindStringSubmatch(out)
 	if m == nil {
-		return 0, 0, status.Error(codes.Unavailable, "no flash JEDEC id in the commander output")
+		return 0, 0, status.Error(codes.Internal, "no flash JEDEC id in the commander output")
 	}
 	v, _ := strconv.ParseUint(m[1], 16, 32)
 	jedec = uint32(v) & 0xFFFFFF
 	bits := (jedec >> 16) & 0xFF
 	if jedec == 0 || jedec == 0xFFFFFF || bits < 16 || bits > 24 {
-		return jedec, 0, status.Errorf(codes.Unavailable, "implausible flash JEDEC id %06X", jedec)
+		return jedec, 0, status.Errorf(codes.FailedPrecondition, "implausible flash JEDEC id %06X", jedec)
 	}
 	return jedec, 1 << bits, nil
 }
@@ -194,7 +196,7 @@ func (p *Plugin) phyRead(ctx context.Context, id string, t Target, path string, 
 		return err
 	}
 	if st, err := os.Stat(path); err != nil || st.Size() != int64(length) {
-		return status.Errorf(codes.Unavailable, "flash read back failed: %v", tail(out, 3))
+		return status.Errorf(codes.Internal, "flash read back failed: %v", tail(out, 3))
 	}
 	return nil
 }
@@ -242,12 +244,11 @@ func (p *Plugin) programPHY62xx(ctx context.Context, id string, t Target, path s
 
 	res = map[string]any{"programmed": path, "address": fmt.Sprintf("0x%X", off), "length": float64(len(image)),
 		"flash_jedec_id": fmt.Sprintf("%06X", jedec), "flash_size": float64(size), "flash_loader": FlashLoaderPHY62xx}
-	if b, _ := args["backup"].(string); b != "" {
-		if err := p.phyRead(ctx, id, t, b, 0, size); err != nil {
-			return nil, fmt.Errorf("backup: %w", err)
-		}
-		res["backup"] = b
+	bk, err := p.phyBackupGate(ctx, id, t, dir, args, jedec, size, off, len(padded))
+	if err != nil {
+		return nil, err
 	}
+	res["backup"] = bk
 	for i := 0; i < len(padded); i += phySectorsPerSession * phySector {
 		end := min(i+phySectorsPerSession*phySector, len(padded))
 		script, calls := phySessionScript(off+uint32(i), padded[i:end])
@@ -256,7 +257,7 @@ func (p *Plugin) programPHY62xx(ctx context.Context, id string, t Target, path s
 			return nil, err
 		}
 		if err := phyCheckCalls(out, calls); err != nil {
-			return nil, status.Errorf(codes.Unavailable, "flash 0x%X..0x%X: %v", off+uint32(i), off+uint32(end), err)
+			return nil, status.Errorf(codes.Internal, "flash 0x%X..0x%X: %v", off+uint32(i), off+uint32(end), err)
 		}
 	}
 	rb := dir.File("readback.bin")
@@ -283,4 +284,63 @@ func (p *Plugin) programPHY62xx(ctx context.Context, id string, t Target, path s
 		return nil, err
 	}
 	return res, nil
+}
+
+// phyDevice names PHY62xx flash in backup manifests (the J-Link target is the
+// generic "Cortex-M0").
+const phyDevice = "PHY62xx"
+
+// phyBackupGate makes sure a verified backup of the whole flash exists before
+// it is modified: a backup path that does not exist yet gets two full reads
+// that must be identical; an existing backup (with its manifest) must still
+// match every sector the image touches, or that sector must be blank.
+func (p *Plugin) phyBackupGate(ctx context.Context, id string, t Target, dir *ownedtemp.Dir, args map[string]any, jedec, size, off uint32, n int) (map[string]any, error) {
+	path, err := strArg(args, "backup")
+	if err != nil {
+		return nil, err
+	}
+	if path == "" {
+		return nil, denied("refusing to modify flash without a verified full backup: pass backup=<path of a .bin>; a new path gets two identical full reads, an existing backup is checked against the flash")
+	}
+	jedecHex := fmt.Sprintf("%06X", jedec)
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		t0 := time.Now()
+		files := []string{dir.File("backup1.bin"), dir.File("backup2.bin")}
+		var reads [2][]byte
+		for i, f := range files {
+			if err := p.phyRead(ctx, id, t, f, 0, size); err != nil {
+				return nil, fmt.Errorf("backup: %w", err)
+			}
+			if reads[i], err = os.ReadFile(f); err != nil {
+				return nil, err
+			}
+		}
+		m := manifest{Format: backupFormat, File: filepath.Base(path), SizeBytes: int(size), SHA256: sha(reads[0]), SecondRead: sha(reads[1]),
+			Device: phyDevice, FlashBase: hexAddr(phyFlashBase), ReadSeconds: time.Since(t0).Seconds(), Halted: true, FlashJEDEC: jedecHex, ProbeSerial: NormalizeSerial(id)}
+		if m.SHA256 != m.SecondRead {
+			return nil, status.Errorf(codes.DataLoss, "the two full-flash reads differ (%s vs %s): no backup was stored and nothing was written", m.SHA256, m.SecondRead)
+		}
+		if err := writeBackup(path, reads[0], m); err != nil {
+			return nil, err
+		}
+		return map[string]any{"path": path, "manifest": path + ".json", "sha256": m.SHA256, "identical_reads": true, "fresh": true, "size_bytes": float64(size)}, nil
+	} else if err != nil {
+		return nil, argErr("backup %s: %v", path, err)
+	}
+	b, m, err := loadBackup(path)
+	if err != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "backup %s: %v", path, err)
+	}
+	if m.Device != phyDevice || m.FlashBase != hexAddr(phyFlashBase) || len(b) != int(size) || (m.FlashJEDEC != "" && m.FlashJEDEC != jedecHex) {
+		return nil, status.Errorf(codes.FailedPrecondition, "backup %s is of another flash (%s, %d bytes, JEDEC %s) than this PHY62xx (%d bytes, JEDEC %s)", path, m.Device, len(b), m.FlashJEDEC, size, jedecHex)
+	}
+	cur := dir.File("current.bin")
+	if err := p.phyRead(ctx, id, t, cur, off, uint32(n)); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(cur)
+	if err != nil {
+		return nil, err
+	}
+	return gate(path, b, m, &geom{base: phyFlashBase, sector: phySector}, phyFlashBase+uint64(off), data)
 }

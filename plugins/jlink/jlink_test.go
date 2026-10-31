@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/faronov/hwlab/internal/adiv5"
 	"github.com/faronov/hwlab/internal/testutil"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
@@ -30,6 +31,66 @@ type fakeCmd struct {
 	rttAddrs []uint64
 	stopped  int
 	reply    func(script []string) string // overrides out when set
+	err      error                        // returned by Run
+	dbErr    error                        // returned by DeviceDatabase
+	dbCalls  int
+}
+
+// testDeviceDB is a slice of SEGGER's ExpDevListXML output (V9.24a).
+const testDeviceDB = `<DeviceDatabase>
+  <VendorInfo Name="Unspecified" >
+    <DeviceInfo Name="Cortex-M0" Core="Cortex-M0" >
+      <AliasInfo Name="ARMCM0" />
+    </DeviceInfo>
+    <DeviceInfo Name="Cortex-M33" Core="Cortex-M33" >
+    </DeviceInfo>
+    <DeviceInfo Name="X" Core="Cortex-M4" >
+    </DeviceInfo>
+  </VendorInfo >
+  <VendorInfo Name="Nordic Semi" >
+    <DeviceInfo Name="nRF52840_xxAA" Core="Cortex-M4" WorkRAMStartAddr="0x20000000" WorkRAMSize="0x00040000" >
+      <FlashBankInfo StartAddr="0x00000000" Size="0x00100000" />
+      <FlashBankInfo StartAddr="0x10001000" Size="0x00001000" />
+      <FlashBankInfo StartAddr="0x12000000" Size="0x04000000" />
+    </DeviceInfo>
+    <DeviceInfo Name="nRF5340_xxAA_APP" Core="Cortex-M33" WorkRAMStartAddr="0x20000000" WorkRAMSize="0x00080000" >
+      <FlashBankInfo StartAddr="0x00FF8000" Size="0x00000100" />
+      <FlashBankInfo StartAddr="0x00FF8100" Size="0x00000300" />
+      <FlashBankInfo StartAddr="0x00000000" Size="0x00100000" />
+    </DeviceInfo>
+  </VendorInfo >
+  <VendorInfo Name="PHYPLUS" >
+    <DeviceInfo Name="PHY6222" Core="Cortex-M0" WorkRAMStartAddr="0x1FFFC000" WorkRAMSize="0x00004000" >
+      <FlashBankInfo StartAddr="0x11000000" Size="0x00080000" />
+    </DeviceInfo>
+  </VendorInfo >
+  <VendorInfo Name="Silicon Labs" >
+    <DeviceInfo Name="EFR32MG1PxxxF256" Core="Cortex-M4" WorkRAMStartAddr="0x20000000" WorkRAMSize="0x00008000" >
+      <FlashBankInfo StartAddr="0x00000000" Size="0x00040000" />
+    </DeviceInfo>
+    <DeviceInfo Name="EFR32MG21AxxxF1024" Core="Cortex-M33" WorkRAMStartAddr="0x20000000" WorkRAMSize="0x00018000" >
+      <FlashBankInfo StartAddr="0x00000000" Size="0x00100000" />
+      <FlashBankInfo StartAddr="0x0FE00000" Size="0x00000400" />
+      <AliasInfo Name="EFR32MG21A010F1024IM32" />
+      <AliasInfo Name="EFR32MG21A020F1024IM32" />
+      <AliasInfo Name="EFR32MG21B010F1024IM32" />
+      <AliasInfo Name="EFR32MG21B020F1024IM32" />
+    </DeviceInfo>
+    <DeviceInfo Name="EFR32MG21BxxxF512" Core="Cortex-M33" WorkRAMStartAddr="0x20000000" WorkRAMSize="0x00010000" >
+      <FlashBankInfo StartAddr="0x00000000" Size="0x00080000" />
+    </DeviceInfo>
+  </VendorInfo >
+</DeviceDatabase>
+`
+
+func (f *fakeCmd) DeviceDatabase(context.Context) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dbCalls++
+	if f.dbErr != nil {
+		return nil, f.dbErr
+	}
+	return []byte(testDeviceDB), nil
 }
 
 type run struct {
@@ -49,6 +110,9 @@ func (f *fakeCmd) Run(_ context.Context, serial string, t Target, script []strin
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.runs = append(f.runs, run{serial, t, script})
+	if f.err != nil {
+		return f.out, f.err
+	}
 	if f.reply != nil {
 		return f.reply(script), nil
 	}
@@ -145,12 +209,13 @@ func TestMethodDangerClassification(t *testing.T) {
 	for _, m := range New().Info().Methods {
 		danger[m.Capability+"."+m.Name] = m.Danger
 	}
-	for _, m := range []string{"DebugProbe.halt", "DebugProbe.resume", "DebugProbe.reset", "DebugProbe.read_registers", "MemoryAccess.write", "FlashProgramming.program"} {
+	for _, m := range []string{"DebugProbe.halt", "DebugProbe.resume", "DebugProbe.reset", "DebugProbe.read_registers", "MemoryAccess.write", "FlashProgramming.program",
+		"FlashProgramming.backup", "FlashProgramming.erase", "FlashProgramming.restore"} {
 		if danger[m] != pluginv1.Danger_DANGER_CONFIRM {
 			t.Errorf("%s must require confirmation", m)
 		}
 	}
-	for _, m := range []string{"DebugProbe.info", "DebugProbe.connect", "MemoryAccess.read"} {
+	for _, m := range []string{"DebugProbe.info", "DebugProbe.connect", "MemoryAccess.read", "FlashProgramming.info", "FlashProgramming.read", "FlashProgramming.verify"} {
 		if danger[m] != pluginv1.Danger_DANGER_SAFE {
 			t.Errorf("%s should be safe", m)
 		}
@@ -194,7 +259,7 @@ func TestConnectAndHarmlessOps(t *testing.T) {
 	if err != nil || res["core"] != "Cortex-M4" || res["ok"] != true || res["dp_id"] != "0x2BA01477" {
 		t.Fatalf("connect: %+v err=%v", res, err)
 	}
-	if r := f.last(); r.t.Device != "NRF52840_XXAA" || r.t.SpeedKHz != 1000 {
+	if r := f.last(); r.t.Device != "nRF52840_xxAA" || r.t.SpeedKHz != 1000 {
 		t.Errorf("target not passed: %+v", r.t)
 	}
 	if _, err := invoke(t, p, "DebugProbe", "reset", map[string]any{"target": "NRF52840_XXAA"}); err != nil {
@@ -220,7 +285,7 @@ func TestOpenDeviceConfigIsUsedByInvoke(t *testing.T) {
 	if _, err := invoke(t, p, "DebugProbe", "halt", nil); err != nil {
 		t.Fatal(err)
 	}
-	if r := f.last(); r.t.Device != "NRF5340_XXAA_APP" || r.t.Interface != "JTAG" {
+	if r := f.last(); r.t.Device != "nRF5340_xxAA_APP" || r.t.Interface != "JTAG" {
 		t.Errorf("%+v", r.t)
 	}
 	if err := p.OpenDevice(context.Background(), "x", map[string]any{"interface": "uart"}); status.Code(err) != codes.InvalidArgument {
@@ -229,9 +294,25 @@ func TestOpenDeviceConfigIsUsedByInvoke(t *testing.T) {
 }
 
 func TestConnectFailureIsReported(t *testing.T) {
-	f := &fakeCmd{out: "Connecting to J-Link via USB...O.K.\nCannot connect to target.\n"}
+	// The probe answers, the target does not: not DEVICE_GONE (Unavailable is
+	// reported by the core as a crashed plugin) but a target error.
+	f := &fakeCmd{out: connectOut + "Cannot connect to target.\n"}
 	_, err := invoke(t, NewWith(t.TempDir(), f), "DebugProbe", "connect", map[string]any{"target": "NRF52840_XXAA"})
-	if status.Code(err) != codes.Unavailable || !strings.Contains(err.Error(), "Cannot connect to target") {
+	if status.Code(err) != codes.Unknown || !strings.Contains(err.Error(), "Cannot connect to target") ||
+		!strings.Contains(err.Error(), adiv5.ErrNoACK.Error()) || !strings.Contains(err.Error(), "VTref 3.300 V") {
+		t.Fatalf("err=%v", err)
+	}
+	f.out = "Connecting to J-Link via USB...O.K.\nVTref=0.000V\nJ-Link: Error occurred: Could not connect to the target device.\n"
+	_, err = invoke(t, NewWith(t.TempDir(), f), "DebugProbe", "connect", map[string]any{"target": "EFR32MG21AXXXF1024"})
+	if status.Code(err) != codes.Unknown || !strings.Contains(err.Error(), "looks unpowered") || !strings.Contains(err.Error(), "SWDIO/SWCLK") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCommanderTimeoutIsDeadlineExceeded(t *testing.T) {
+	f := &fakeCmd{err: fmt.Errorf("JLinkExe %w after 1m0s", ErrTimeout)}
+	_, err := invoke(t, NewWith(t.TempDir(), f), "DebugProbe", "connect", map[string]any{"target": "X"})
+	if status.Code(err) != codes.DeadlineExceeded {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -298,37 +379,6 @@ func TestRegisters(t *testing.T) {
 	}
 }
 
-func TestProgram(t *testing.T) {
-	dir := t.TempDir()
-	hexF := filepath.Join(dir, "fw.hex")
-	binF := filepath.Join(dir, "fw.bin")
-	for _, p := range []string{hexF, binF} {
-		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	f := &fakeCmd{out: connectOut}
-	p := NewWith(t.TempDir(), f)
-	if _, err := invoke(t, p, "FlashProgramming", "program", map[string]any{"target": "X", "path": hexF}); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(f.last().script, "|"); got != fmt.Sprintf("h|loadfile %q|r|g", hexF) {
-		t.Errorf("script %s", got)
-	}
-	if _, err := invoke(t, p, "FlashProgramming", "program", map[string]any{"target": "X", "path": binF}); status.Code(err) != codes.InvalidArgument {
-		t.Errorf(".bin without address: %v", err)
-	}
-	if _, err := invoke(t, p, "FlashProgramming", "program", map[string]any{"target": "X", "path": binF, "address": "0x1000", "run": false}); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(f.last().script, "|"); got != fmt.Sprintf("h|loadfile %q 0x1000|r", binF) {
-		t.Errorf("script %s", got)
-	}
-	if _, err := invoke(t, p, "FlashProgramming", "program", map[string]any{"target": "X", "path": filepath.Join(dir, "nope.hex")}); status.Code(err) != codes.InvalidArgument {
-		t.Errorf("missing file: %v", err)
-	}
-}
-
 func TestParseEmuList(t *testing.T) {
 	ps := parseEmuList("J-Link[0]: Connection: USB, Serial number: 000683123456, ProductName: J-Link OB-nRF5340-NordicSemi\nJ-Link[1]: Connection: USB, Serial number: 260100000, ProductName: J-Link PRO\n")
 	if len(ps) != 2 || ps[0].Serial != "683123456" || ps[1].Product != "J-Link PRO" {
@@ -364,7 +414,7 @@ func TestExecCommanderArgsAndScript(t *testing.T) {
 		}
 	}
 	cmds, _ := os.ReadFile(dir + "/cmds")
-	if string(cmds) != "h\nmem8 0x0 4\nexit\n" {
+	if string(cmds) != "exec HideDeviceSelection = 1\nexec SuppressInfoUpdateFW\nh\nmem8 0x0 4\nexit\n" {
 		t.Errorf("command file %q", cmds)
 	}
 	if _, err := (&ExecCommander{Exe: filepath.Join(dir, "missing")}).find(); err != nil {
@@ -480,7 +530,7 @@ func TestRTTLinesBecomeLogEvents(t *testing.T) {
 	if res.Stats.Events != uint64(len(evs)) {
 		t.Errorf("stats %d vs events %d", res.Stats.Events, len(evs))
 	}
-	if len(f.started) != 1 || f.started[0].Device != "NRF52840_XXAA" || f.stopped != 1 {
+	if len(f.started) != 1 || f.started[0].Device != "nRF52840_xxAA" || f.stopped != 1 {
 		t.Errorf("commander must be launched once and stopped: started=%v stopped=%d", f.started, f.stopped)
 	}
 }
@@ -521,7 +571,7 @@ func TestRTTNotReachable(t *testing.T) {
 	p := NewWith(t.TempDir(), f)
 	_, _, err := p.StartCapture(context.Background(), pluginsdk.CaptureRequest{DeviceID: "1", Clock: pluginsdk.NewClock(0),
 		Config: map[string]any{"rtt_port": float64(port), "target": "X", "rtt_connect_timeout_ms": float64(300)}}, pluginsdk.NewTestSink(4))
-	if status.Code(err) != codes.Unavailable || !strings.Contains(err.Error(), "not reachable") {
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "not reachable") {
 		t.Fatalf("err=%v", err)
 	}
 	if f.stopped != 1 {

@@ -364,11 +364,16 @@ Code, fixtures and passing tests are not hardware validation.
   - session records the exact probe serial and target
 - unverified:
   - memory write
-  - flash program and erase
   - SAM-ICE authenticity (reports firmware "J-Link V9", hardware V9.70; a clone cannot be excluded)
   - RTT on the nRF52840 DK (its firmware has no RTT block)
+  - FlashProgramming info/read/verify/backup through the plugin: only a hand-written JLinkExe session with the same commands (halt, two savebins of 1 MiB, resume) ran on an EFR32MG21 (ZBT-1): identical reads in about 5 s; the plugin code is tested against a simulated Commander
+  - FlashProgramming erase/program/restore on any target (simulated Commander only; never run on hardware)
 - known gaps:
   - RTT is up channel 0 terminal only
+  - flash geometry comes from SEGGER's device list (first bank of at least 4 KiB) plus a built-in sector size for EFR32 series 1/2 and nRF5x; other targets need flash_sector_bytes in the device config before erase/program/restore
+  - the backup gate read and the write are separate Commander sessions, so running firmware could change flash between them
+  - chip erase is a range erase of the main bank, not SEGGER's chip erase; hwlab never requests an unsecure of a locked part, but SEGGER's software decides on its own what happens on connect to one (older versions mass-erased without asking), so do not point it at locked chips whose contents matter
+  - program accepts .bin and Intel .hex only (no .srec/.elf)
   - SEGGER's DLL shares only one probe held by a long-running Commander session with other processes at a time: with two probes run RTT on one (`rtt: false` on the other)
   - every call is a new Commander session, so a halt does not outlive the call (halt and register reads are one script in read_registers)
 

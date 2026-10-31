@@ -37,6 +37,44 @@ var (
 	}
 )
 
+// Kinds of commander failures.
+const (
+	failProbe  = "probe"  // the probe itself is unreachable
+	failTarget = "target" // the probe answered, the target did not
+	failDevice = "device" // the DLL did not know the device name
+)
+
+// failureKind tells a probe failure from a target that does not answer.
+func failureKind(line string) string {
+	l := strings.ToLower(line)
+	switch {
+	case strings.Contains(l, "connecting to j-link") && strings.Contains(l, "failed"),
+		strings.Contains(l, "cannot connect to the probe"), strings.Contains(l, "no emulators connected"),
+		strings.Contains(l, "no j-link found"), strings.Contains(l, "connection to j-link failed"),
+		strings.Contains(l, "failed to open dll"), strings.Contains(l, "could not connect to j-link"):
+		return failProbe
+	case strings.Contains(l, "unknown device"), strings.Contains(l, "device not found"):
+		return failDevice
+	}
+	return failTarget
+}
+
+// cmdFailure returns the first line of out in which a command reported an
+// error (savebin, loadbin, erase, verifybin...), or "".
+func cmdFailure(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		l := strings.ToLower(strings.TrimSpace(line))
+		if strings.Contains(l, "will now exit on error") || strings.HasPrefix(l, "j-link>") {
+			continue
+		}
+		if strings.Contains(l, "could not") || strings.Contains(l, "failed") || strings.HasPrefix(l, "error") ||
+			strings.Contains(l, "error:") || strings.Contains(l, "error occurred") || strings.Contains(l, "unknown command") {
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
+}
+
 // failure returns the first line of out that signals a failed connection or
 // command, or "".
 func failure(out string) string {
@@ -227,6 +265,14 @@ func emuEntry(out, serial string) (Probe, bool) {
 		}
 	}
 	return Probe{}, false
+}
+
+// firstHaltState returns the first "CPU is [not ]halted" in out.
+func firstHaltState(out string) (halted bool, ok bool) {
+	if m := reHalted.FindStringSubmatch(out); m != nil {
+		return m[1] == "", true
+	}
+	return false, false
 }
 
 // haltState returns the last "CPU is [not ]halted" the commander printed

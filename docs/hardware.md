@@ -83,7 +83,17 @@ hwlab drives SEGGER's own `JLinkExe`; it never bundles or reimplements it.
 2. Make `JLinkExe` findable: on `PATH`, in `/opt/SEGGER/JLink/`, or via
    `HWLAB_JLINK_EXE=/path/to/JLinkExe`. Without it the probe is listed as
    `discovery-only`.
-3. Set `target` to the SEGGER device name (e.g. `NRF52840_XXAA`).
+3. Set `target` to the SEGGER device name (e.g. `NRF52840_XXAA`, `EFR32MG21AXXXF1024`).
+   The name is checked against SEGGER's own device list (`JLinkExe` `ExpDevListXML`,
+   read once per plugin process) before any Commander session starts, because an
+   unknown name makes `JLinkExe` open a modal device picker even with `-NoGui 1`.
+   Matching ignores case and accepts SEGGER's aliases (`EFR32MG21A020F1024IM32` →
+   `EFR32MG21AxxxF1024`), an ordering code where SEGGER writes `xxx`, or a unique
+   prefix of at least 6 characters; an unknown or ambiguous name fails with
+   `INVALID_ARGUMENT` and no session is started. Every script also begins with
+   `exec HideDeviceSelection = 1` and `exec SuppressInfoUpdateFW`; `SetBatchMode` is
+   not used (it answers dialogs with their default, which for an "unsecure?" prompt is
+   a mass erase), and firmware updates are never run.
 
 ```yaml
 devices:
@@ -118,6 +128,49 @@ udev (used for the SAM-ICE, whose node was root-only; adjust `OWNER`):
 `SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1366", OWNER="alexx", MODE="0600"`,
 then replug the probe.
 
+**Errors.** A target that does not answer SWD (unpowered, not wired, wrong
+interface) fails with `SWD_NO_ACK` and a VTref/wiring hint; the probe stays
+usable and the plugin keeps running (it used to be reported as `DEVICE_GONE`
+"plugin process crashed"). A probe that disappeared is `DEVICE_GONE` without the
+crash wording, an unknown device name `INVALID_ARGUMENT`, a Commander session
+over its time limit `TIMEOUT` (only the spawned `JLinkExe` is killed).
+
+**Flash (`FlashProgramming`).** Same methods and safety rules as `stlink`:
+
+| Method | Gate | What it does |
+|---|---|---|
+| `info` | safe | canonical SEGGER name, flash banks from SEGGER's list, main bank (first bank of at least 4 KiB), sector size; no probe access |
+| `read` | safe | `savebin` with the core halted (`h`, confirmed by `IsHalted`) and resumed (`g`) afterwards if it was running; `halt=false` reads it running. At most 4096 bytes inline as hex, more needs `path` (a new file; `overwrite=true` replaces) |
+| `verify` | safe | compares flash with a `.bin` (`address`, default the flash base) or Intel `.hex`; `VERIFY_FAILED` names the first differing address |
+| `backup` | `--yes` | reads the whole main bank twice in one halted session, requires identical SHA-256 (else `VERIFY_FAILED`) and writes `jlink-flash-<device>-<base>-<size>-<sha12>.bin` (mode 0600) plus a `.json` manifest (format `hwlab-jlink-flash-backup/1`, both reads' SHA-256, elapsed time) to `dir` (default `$HWLAB_HOME/artifacts/jlink-flash`) |
+| `erase` | `--yes`, `allow_flash`+`allow_erase`, token `erase-flash-region` (`mode=region`, sector aligned) or `erase-entire-chip` (`mode=chip`, also `allow_chip_erase`), `backup=` | erases sectors, reads them back as 0xFF |
+| `program` | `--yes`, `allow_flash` (+`allow_erase` when a bit must go 0→1), token `program-flash`, `backup=` | `.bin` (with `address`) or Intel `.hex`; reads the covering sectors, merges the image, writes only changed sectors with `loadbin` (bytes outside the image are preserved) and reads them all back (`VERIFY_FAILED` on mismatch) |
+| `restore` | `--yes`, `allow_flash`+`allow_erase`, token `restore-flash` | `path=<backup .bin>` whose manifest names this device, base and size; writes differing sectors, then the whole-bank SHA-256 must equal the backup |
+
+`allow_*` count only in the device configuration (`--config allow_flash=true`),
+never in call arguments, and the plugin declares them dangerous. `backup=` must be
+a backup made by `FlashProgramming.backup` (manifest checked) whose affected sectors
+still equal the flash or are blank; a stale backup is `PRECONDITION_FAILED`.
+The flash geometry for erase/program/restore comes from SEGGER's list and the
+device configuration only (`flash_base`, `flash_size`, `flash_sector_bytes`); call
+arguments may only repeat it. Built-in sector sizes: EFR32 series 2 8 KiB, series 1
+2 KiB, nRF52/53/91 4 KiB, nRF51 1 KiB; for other targets set `flash_sector_bytes`.
+After a write the core runs (`reset=run`, default; `run=false` or `reset=halt` leaves
+it halted, `reset=none` keeps the state). Limitations: the gate read and the write
+are separate Commander sessions; chip erase is a range erase of the main bank, not
+SEGGER's chip erase; `.srec`/`.elf` are not accepted; hwlab never requests an
+unsecure, but SEGGER's software decides on its own what happens when it connects to a
+locked part (older versions mass-erased it), so do not point it at locked chips
+whose contents matter.
+
+```sh
+hwlab target flash info   --plugin jlink --device <serial> --config target=EFR32MG21AXXXF1024
+hwlab target flash backup --plugin jlink --device <serial> --config target=EFR32MG21AXXXF1024 --yes
+hwlab target flash program --plugin jlink --device <serial> --yes --token program-flash \
+  --config target=EFR32MG21AXXXF1024 --config allow_flash=true --config allow_erase=true \
+  --path fw.hex --arg backup=<backup .bin>
+```
+
 **PHY6222/PHY6252 flash (`flash_loader: phy62xx-rom`).** SEGGER's PHY6222
 flash loader erased the whole flash of a PB-03F (PHY6252) when asked for one
 range, and its verify read from the cache. With `flash_loader: phy62xx-rom`,
@@ -126,19 +179,26 @@ range, and its verify read from the cache. With `flash_loader: phy62xx-rom`,
 session resets the chip, stops the ROM by a hardware breakpoint just after it
 has set up the flash controller (before any application runs), and erases and
 writes 16 sectors. The flash is then read back with the cache bypassed and
-compared. `backup: <file.bin>` saves the whole flash first. The ROM refuses flash
+compared. It needs `allow_flash` in the device configuration, `confirm=program-flash`
+and `backup: <file.bin>`: a new path gets a double read of the whole flash (same
+manifest as `FlashProgramming.backup`), an existing backup must still match the
+sectors that will be written. The ROM refuses flash
 below 0x2000; blank image sectors there are skipped. The ROM bytes it calls are
 fingerprinted, so another ROM revision is refused. Validated by restoring the
 factory AT firmware of a PB-03F (512 KiB flash, JEDEC 1340C4): 256 KiB in about
 19 s, verified, AT V1.3.0 answers afterwards.
 
 ```sh
-hwlab invoke jlink/<serial> FlashProgramming.program --yes -a target=Cortex-M0 \
-  -a path=fw.bin -a address=0x0 -a flash_loader=phy62xx-rom -a backup=before.bin
+hwlab target flash program --plugin jlink --device <serial> --yes --token program-flash \
+  --config target=Cortex-M0 --config allow_flash=true \
+  --path fw.bin --arg address=0x0 --arg flash_loader=phy62xx-rom --arg backup=before.bin
 ```
 
 **Status:** validated on a real J-Link OB (nRF52840 DK) and a SAM-ICE
-(EFR32MG1P), non-destructive operations only; see the ADR and
+(EFR32MG1P), non-destructive operations only. The flash methods are tested
+against a simulated Commander; on hardware only a hand-written session with the
+same read commands ran (EFR32MG21 / ZBT-1: halt, two identical 1 MiB `savebin`
+reads, resume, about 5 s); erase/program/restore never ran on hardware. See the ADR and
 `docs/notes/phase17-jlink-multiprobe-results.md`. SEGGER's license forbids redistribution, so
 download the pack from segger.com; on Linux install its `99-jlink.rules`.
 
