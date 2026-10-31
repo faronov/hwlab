@@ -216,6 +216,42 @@ func (c *Conn) Exchange(ctx context.Context, cmd []byte, replyLen int) ([]byte, 
 	return buf, nil
 }
 
+// ExchangeUpTo sends cmd (nothing when empty) and returns the first non-empty
+// IN transfer, at most maxLen bytes. It serves replies whose length is only
+// known from their first bytes (the probe's EMUCOM channel reads): the caller
+// completes a short read with Exchange. Requesting no more than the largest
+// possible reply keeps the read from overrunning.
+func (c *Conn) ExchangeUpTo(ctx context.Context, cmd []byte, maxLen int) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, jlerr.New(jlerr.ProbeGone, "exchange", iusb.ErrClosed)
+	}
+	if c.dirty {
+		if err := c.drain(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if len(cmd) > 0 {
+		if _, err := c.port.BulkOut(ctx, c.info.Out, cmd, c.timeout); err != nil {
+			c.afterError(err)
+			return nil, mapUSB("bulk out", err)
+		}
+	}
+	for zlps := 0; zlps <= 4; zlps++ {
+		b, err := c.port.BulkIn(ctx, c.info.In, maxLen, c.timeout)
+		if err != nil {
+			c.afterError(err)
+			return nil, mapUSB("bulk in", err)
+		}
+		if len(b) > 0 {
+			return b, nil
+		}
+	}
+	c.dirty = true
+	return nil, jlerr.New(jlerr.ProtocolError, "bulk in", io.ErrNoProgress)
+}
+
 // afterError records what the failed transfer left behind.
 func (c *Conn) afterError(err error) {
 	switch {
