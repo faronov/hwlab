@@ -21,6 +21,7 @@ import (
 	"github.com/faronov/hwlab/internal/riscv"
 	"github.com/faronov/hwlab/internal/usb"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
+	"github.com/faronov/hwlab/plugins/espusbjtag/esp"
 )
 
 const (
@@ -519,6 +520,13 @@ func chipHint(id *jtag.IDCode) map[string]any {
 		return map[string]any{
 			"observed": "IDCODE 0x0000dc25", "consistent_with": "ESP32-C6 (observed on a board known to carry one)",
 			"basis":      "an IDCODE match is evidence, not proof; the chip is not identified from the IDCODE alone",
+			"confidence": "idcode-only",
+		}
+	}
+	if id.Raw == esp.ChipH2.IDCode {
+		return map[string]any{
+			"observed": "IDCODE 0x00010c25", "consistent_with": "ESP32-H2 (observed on a board known to carry one)",
+			"basis":      "an IDCODE match is evidence, not proof; flash and register access additionally require the ROM word to match the ESP32-H2 profile",
 			"confidence": "idcode-only",
 		}
 	}

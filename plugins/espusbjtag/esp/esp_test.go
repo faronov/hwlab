@@ -320,19 +320,19 @@ func hexs(b []byte) string {
 
 func TestSecurity(t *testing.T) {
 	r := newRig(t, 1<<20, false)
-	s, err := esp.ReadSecurity(ctx, r.dm)
+	s, err := esp.ReadSecurity(ctx, r.dm, &esp.ChipC6)
 	if err != nil || s.CheckFlashWritable() != nil {
 		t.Fatal(s, err)
 	}
 	r.efuse[0x30] = 1 << 9 // not used
 	r.efuse[0x34] = 1 << 18
-	s, _ = esp.ReadSecurity(ctx, r.dm)
+	s, _ = esp.ReadSecurity(ctx, r.dm, &esp.ChipC6)
 	if !s.FlashEncrypted() || s.CheckFlashWritable() == nil {
 		t.Fatalf("%+v", s)
 	}
 	r.efuse[0x34] = 0
 	r.efuse[0x38] = 1 << 20
-	s, _ = esp.ReadSecurity(ctx, r.dm)
+	s, _ = esp.ReadSecurity(ctx, r.dm, &esp.ChipC6)
 	if !s.SecureBootEnabled || s.CheckFlashWritable() == nil {
 		t.Fatalf("%+v", s)
 	}
@@ -343,7 +343,7 @@ func TestQuiesceRestore(t *testing.T) {
 	if _, err := r.dm.BusBatch(ctx, []riscv.BusOp{{Kind: riscv.BusWrite, Addr: 0x60008048, Vals: []uint32{1<<31 | 5}}}); err != nil {
 		t.Fatal(err)
 	}
-	q, err := esp.Quiesce(ctx, r.dm)
+	q, err := esp.Quiesce(ctx, r.dm, &esp.ChipC6)
 	if err != nil || q.TIMG0 != 1<<31|5 {
 		t.Fatal(q, err)
 	}

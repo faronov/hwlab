@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/codes"
 
 	"github.com/faronov/hwlab/plugins/espusbjtag/esp"
+	"github.com/faronov/hwlab/plugins/espusbjtag/sim"
 )
 
 // opsRig is a rig whose device was opened with the given permissions, backed
@@ -23,6 +24,11 @@ type opsRig struct {
 func newOps(t *testing.T, cfg map[string]any) *opsRig {
 	t.Helper()
 	sc, fl := SimConfigFlash()
+	return newOpsSim(t, cfg, sc, fl)
+}
+
+func newOpsSim(t *testing.T, cfg map[string]any, sc sim.Config, fl *esp.SimFlash) *opsRig {
+	t.Helper()
 	r := newRigCfg(t, sc)
 	if err := r.OpenDevice(context.Background(), wantID, cfg); err != nil {
 		t.Fatal(err)
@@ -323,7 +329,11 @@ type flashFix struct {
 
 func newFlash(t *testing.T) *flashFix {
 	t.Helper()
-	r := newOps(t, allow)
+	return newFlashOn(t, newOps(t, allow), esp.ChipIDESP32C6)
+}
+
+func newFlashOn(t *testing.T, r *opsRig, bootChipID uint16) *flashFix {
+	t.Helper()
 	// bootloader header, a partition table and an app image
 	parts := []esp.Partition{
 		{Label: "nvs", Type: 1, Subtype: 2, Offset: 0x9000, Size: 0x6000},
@@ -331,7 +341,7 @@ func newFlash(t *testing.T) *flashFix {
 		{Label: "app0", Type: 0, Subtype: 0x10, Offset: 0x20000, Size: 0x10000},
 		{Label: "app1", Type: 0, Subtype: 0x11, Offset: 0x30000, Size: 0x10000},
 	}
-	boot := esp.BuildImage(esp.ChipIDESP32C6, 0x40800000, map[uint32][]byte{0x40800000: make([]byte, 64)}, []uint32{0x40800000})
+	boot := esp.BuildImage(bootChipID, 0x40800000, map[uint32][]byte{0x40800000: make([]byte, 64)}, []uint32{0x40800000})
 	copy(r.fl.Mem[0:], boot)
 	copy(r.fl.Mem[0x8000:], esp.BuildPartitionTable(parts))
 	for i := 0x9000; i < 0xF000; i++ {
@@ -361,12 +371,14 @@ func (f *flashFix) image(t *testing.T, name string, data []byte) string {
 	return p
 }
 
-func appImage(fill byte) []byte {
+func appImage(fill byte) []byte { return appImageFor(esp.ChipIDESP32C6, fill) }
+
+func appImageFor(chipID uint16, fill byte) []byte {
 	seg := make([]byte, 256)
 	for i := range seg {
 		seg[i] = fill ^ byte(i)
 	}
-	return esp.BuildImage(esp.ChipIDESP32C6, 0x40800000, map[uint32][]byte{0x40800000: seg}, []uint32{0x40800000})
+	return esp.BuildImage(chipID, 0x40800000, map[uint32][]byte{0x40800000: seg}, []uint32{0x40800000})
 }
 
 func TestFlashInfoAndRead(t *testing.T) {

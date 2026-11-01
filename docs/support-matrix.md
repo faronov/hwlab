@@ -255,7 +255,7 @@ Code, fixtures and passing tests are not hardware validation.
   - SWO, UART/COM port and JTAG debugging are not implemented
   - Linux only (usbfs and hidraw)
 
-### espusbjtag — Espressif native USB Serial/JTAG (ESP32-C6) + generic RISC-V Debug Module + ESP flash
+### espusbjtag — Espressif native USB Serial/JTAG (ESP32-C6, ESP32-H2) + generic RISC-V Debug Module + ESP flash
 
 **native Go Espressif USB-JTAG transport (Linux usbfs or macOS IOKit) + JTAG + RISC-V DM (spec 0.13) + SPI1 flash driver over system bus access**
 
@@ -266,6 +266,7 @@ Code, fixtures and passing tests are not hardware validation.
   |---|---|---|
   | macOS IOKit transport | IMPLEMENTED_UNTESTED | implemented on the shared internal/usb IOKit transport (run read-only with one J-Link on macOS); never run against an ESP32 on macOS |
   | ESP USB transport | REAL_HW_VERIFIED | 303a:1001, interface 2 only (OUT 0x02/IN 0x83), cdc_acm stays bound; docs/notes/phase18, phase19 |
+  | per-chip profiles (ESP32-C6, ESP32-H2) | SIMULATED_ONLY | chip chosen only when JTAG IDCODE and the ROM word at 0x40001000 both match one profile (C6 0x0000dc25/0x2CE0806F, H2 0x00010c25/0x97E30068); unknown or conflicting evidence refuses flash, watchdog and SoC-reset access before any halt or write; image chip id must equal the detected chip (0x000D/0x0010); per-chip watchdog maps (H2 TIMG0 0x60009000, TIMG1 0x6000A000, LP_WDT WPROTECT +0x1C, SWD auto-feed during the halt) from the esp32h2 PAC; H2 IDCODE and ROM word observed read-only on a real ESP32-H2 |
   | JTAG transport | REAL_HW_VERIFIED | stable scan: 1 TAP, IDCODE 0x0000dc25, IR length 5 (observed evidence, not an identity proof) |
   | RISC-V DM | REAL_HW_VERIFIED | Debug Module 0.13, 2 harts, progbuf 16, SBA v1 32-bit |
   | halt/resume | REAL_HW_VERIFIED | hart 0, confirmed through dmstatus acknowledge |
@@ -302,12 +303,12 @@ Code, fixtures and passing tests are not hardware validation.
   - erase of an app partition and full-chip erase on hardware (never run)
   - power loss or unplug during a flash write: deliberately not performed (could brick the only board); a partial write is detected by the verify but not repaired automatically
   - the EPROTO/EILSEQ-as-unplug mapping added after a first failed round (both later rounds returned ENODEV, so that path is covered by code reading only)
-  - other Espressif chips (ESP32-S3/C3/H2/C5) and external USB-JTAG bridges: only one ESP32-C6 was attached
+  - ESP32-H2 flash backup/program/reset on hardware (profile exercised only on the simulator); other Espressif chips (ESP32-S3/C3/C5) and external USB-JTAG bridges are refused as unknown
   - comparison with OpenOCD/esptool (not installed)
 - known gaps:
   - flash writes use the CPU-side SPI1 controller while the hart is held in debug mode; the cache/MSPI arbitration is handled by quiescing, but behaviour with a running flash-heavy firmware on the other hart is untested
   - program speed is about 12 KB/s for a single sector including erase; reads are about 65 KB/s, bound by about 2.5 ms per DMI round trip
-  - the chip is named only from the IDCODE plus ROM evidence (inferred); other Espressif IDCODEs are not mapped
+  - the chip is named only from the IDCODE plus ROM evidence (inferred); only the ESP32-C6 and ESP32-H2 are mapped, and an ESP32-H2 with a different ROM word (another ROM revision) is refused rather than guessed
   - no program-buffer fallback for memory access; system bus access (32-bit) is required
   - Linux only (usbfs)
 

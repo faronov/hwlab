@@ -151,6 +151,16 @@ func (s *session) writeMem(ctx context.Context, args map[string]any) (map[string
 	if err != nil {
 		return nil, err
 	}
+	// parseWrite checked the widest (ESP32-C6) map; the detected chip's own
+	// SRAM bounds decide. An unidentified chip gets no SRAM write.
+	chip, _, err := s.chipProfile(ctx, dm)
+	if err != nil {
+		return nil, err
+	}
+	if !chip.WritableSRAM(rq.addr, len(rq.data)) {
+		return nil, argErr(fmt.Errorf("[0x%08x, +%d) is %s on the %s: generic memory writes are only allowed inside one SRAM block",
+			rq.addr, len(rq.data), chip.Classify(rq.addr), chip.Name))
+	}
 	prev, err := dm.ReadMem(ctx, rq.addr, len(rq.data))
 	if err != nil {
 		return nil, fmt.Errorf("reading the previous content: %w", err)
@@ -169,7 +179,7 @@ func (s *session) writeMem(ctx context.Context, args map[string]any) (map[string
 	st, _ := dm.Status(ctx)
 	res := map[string]any{
 		"address": fmt.Sprintf("0x%08x", rq.addr), "length": float64(len(rq.data)), "verified": true,
-		"previous_hex": hex.EncodeToString(prev), "class": string(esp.Classify(rq.addr)),
+		"previous_hex": hex.EncodeToString(prev), "class": string(chip.Classify(rq.addr)),
 		"hart": s.curHart(), "hart_state": string(st.State), "elapsed_ms": float64(time.Since(start).Milliseconds()),
 		"via": "system bus access (32-bit; 8/16-bit by read-modify-write), read back and compared",
 	}

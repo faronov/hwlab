@@ -544,7 +544,7 @@ interface 1 (channel B) stays a UART for the `uart` plugin.
 
 Native Go over Linux usbfs ([ADR 0029](adr/0029-espressif-usb-jtag-riscv-dm.md)):
 no CGO, libusb, OpenOCD, ESP-IDF or Python. The device (`303a:1001`, the built-in USB of the
-ESP32-C6; other chips with the same peripheral are untested) exposes CDC-ACM on interfaces 0/1 and a vendor JTAG
+ESP32-C6 and ESP32-H2; other chips with the same peripheral are refused by the flash and reset paths) exposes CDC-ACM on interfaces 0/1 and a vendor JTAG
 interface 2. Only interface 2 is claimed and no kernel driver is detached, so
 `/dev/ttyACMx` stays with `cdc_acm` and keeps working through the `uart` plugin.
 
@@ -578,7 +578,16 @@ interface 2. Only interface 2 is claimed and no kernel driver is detached, so
   be committed.
 * Unplug: operations on a vanished device fail with `DEVICE_GONE` (bounded, about 8 s); the session recovers when
   the same serial reappears.
-* The JTAG IDCODE (`0x0000dc25`) is reported as observed evidence; generic code does not conclude "ESP32-C6" from it.
+* The JTAG IDCODE (`0x0000dc25` C6, `0x00010c25` H2) is reported as observed evidence; generic code does not conclude
+  the chip from it.
+* Chip profiles (flash, watchdog quiesce, SoC reset, SRAM write bounds): a profile is selected only when the JTAG
+  IDCODE and the ROM word at `0x40001000` both match it (ESP32-C6 `0x0000dc25`/`0x2CE0806F`; ESP32-H2
+  `0x00010c25`/`0x97E30068`, the word observed on a v1.x H2 since esptool uses no magic value for the H2). Unknown or
+  conflicting evidence is refused before the hart is halted or any register is written. `program` requires the image
+  chip id to equal the detected chip (`0x000D` C6, `0x0010` H2). Watchdog maps: C6 TIMG0/1 `0x60008000`/`0x60009000`,
+  LP_WDT WPROTECT `+0x18` (unchanged); H2 TIMG0/1 `0x60009000`/`0x6000A000`, LP_WDT FEED/WPROTECT `+0x18`/`+0x1C`,
+  and the H2 super watchdog gets SWD_AUTO_FEED_EN for the halt (as esptool does) and its old value back afterwards.
+  SPI1 (`0x60003000`) and the eFuse RD_REPEAT_DATA0..3 security fields are identical on both.
 * Examples: `examples/espusbjtag-c6-debug.yaml` (real, non-destructive; SRAM scratch restored).
 * Hardware tests: `HWLAB_ESPJTAG_HW=1 go test -tags hardware -count=1 -v ./plugins/espusbjtag/ -run 'TestHWDebug'`;
   flash (writes the board after a fresh full backup): `HWLAB_ESPJTAG_FLASH=1 HWLAB_ESPJTAG_BACKUP_DIR=<dir>

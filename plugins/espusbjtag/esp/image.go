@@ -14,6 +14,8 @@ const (
 	ImageMagic = 0xE9
 	// ChipIDESP32C6 is the chip id the image header carries for the ESP32-C6.
 	ChipIDESP32C6 = 0x000D
+	// ChipIDESP32H2 is the chip id the image header carries for the ESP32-H2.
+	ChipIDESP32H2 = 0x0010
 	imageHdrLen   = 24
 	segHdrLen     = 8
 )

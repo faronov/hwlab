@@ -7,14 +7,9 @@ import (
 	"github.com/faronov/hwlab/internal/riscv"
 )
 
-// eFuse read registers (the shadow copy; read only). This package never
-// writes an eFuse.
-const (
-	efuseRepeat0 = 0x600B0830
-	efuseRepeat1 = 0x600B0834
-	efuseRepeat2 = 0x600B0838
-	efuseRepeat3 = 0x600B083C
-)
+// eFuse read registers (the shadow copy EFUSE_RD_REPEAT_DATA0..3 at
+// Chip.EfuseRepeat0; read only). This package never writes an eFuse. The
+// field positions below are identical on the ESP32-C6 and ESP32-H2.
 
 // Security is the security-relevant eFuse state, as read.
 type Security struct {
@@ -39,8 +34,11 @@ func (s Security) FlashEncrypted() bool {
 }
 
 // ReadSecurity reads the eFuse shadow registers.
-func ReadSecurity(ctx context.Context, dm *riscv.DM) (Security, error) {
-	r, err := dm.BusBatch(ctx, []riscv.BusOp{{Kind: riscv.BusRead, Addr: efuseRepeat0, Words: 4}})
+func ReadSecurity(ctx context.Context, dm *riscv.DM, c *Chip) (Security, error) {
+	if c == nil {
+		return Security{}, errNoChip
+	}
+	r, err := dm.BusBatch(ctx, []riscv.BusOp{{Kind: riscv.BusRead, Addr: c.EfuseRepeat0, Words: 4}})
 	if err != nil {
 		return Security{}, err
 	}

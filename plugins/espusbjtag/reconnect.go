@@ -176,8 +176,13 @@ func (p *Plugin) soc(ctx context.Context, id string, s *session, persistent bool
 		return nil, err
 	}
 	old := *s.identity
+	chip, _, err := s.chipProfile(ctx, dm)
+	if err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
 	st, _ := dm.Status(ctx)
-	armErr := s.withHaltedLocked(ctx, dm, func() error { return esp.ArmSoCReset(ctx, dm) })
+	armErr := s.withHaltedLocked(ctx, dm, func() error { return esp.ArmSoCReset(ctx, dm, chip) })
 	wasHalted := st.State == riscv.HartHalted
 	if armErr == nil && wasHalted {
 		_, armErr = dm.Resume(ctx) // the watchdog only matters while the CPU runs the clock domain
@@ -208,8 +213,8 @@ func (p *Plugin) soc(ctx context.Context, id string, s *session, persistent bool
 			return true
 		}
 		if wasHalted && err == nil {
-			if armed, e := esp.SoCResetArmed(ctx, dm); e == nil && !armed {
-				_ = esp.ArmSoCReset(ctx, dm)
+			if armed, e := esp.SoCResetArmed(ctx, dm, chip); e == nil && !armed {
+				_ = esp.ArmSoCReset(ctx, dm, chip)
 			}
 		}
 		return false

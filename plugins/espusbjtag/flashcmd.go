@@ -41,6 +41,7 @@ const (
 // halted, the watchdogs are quiesced and the SPI controller is borrowed.
 type flashCtx struct {
 	dm     *riscv.DM
+	chip   *esp.Chip
 	f      *esp.Flash
 	info   esp.Info
 	sec    esp.Security
@@ -58,6 +59,15 @@ func (s *session) flashSession(ctx context.Context, args map[string]any, modify 
 	if err != nil {
 		return err
 	}
+	// Identify the chip first, through system-bus reads only: an unknown
+	// chip is refused before the hart is halted or any register is written.
+	chip, ev, err := s.chipProfile(ctx, dm)
+	if err != nil {
+		return err
+	}
+	if chip.SPI1 != esp.SPI1Base {
+		return status.Errorf(codes.FailedPrecondition, "%s: the flash driver supports only the SPI1 controller at 0x%08x", chip.Name, esp.SPI1Base)
+	}
 	st, err := dm.Status(ctx)
 	if err != nil {
 		return err
@@ -73,7 +83,7 @@ func (s *session) flashSession(ctx context.Context, args map[string]any, modify 
 	default:
 		return status.Errorf(codes.FailedPrecondition, "hart %d is %s: flash access needs a halted CPU", dm.Hart(), st.State)
 	}
-	fc := &flashCtx{dm: dm}
+	fc := &flashCtx{dm: dm, chip: chip, ev: ev}
 	var q esp.Quiesced
 	quiesced := false
 	defer func() {
@@ -92,10 +102,7 @@ func (s *session) flashSession(ctx context.Context, args map[string]any, modify 
 			}
 		}
 	}()
-	if fc.ev, err = esp.ReadEvidence(ctx, dm); err != nil {
-		return err
-	}
-	if q, err = esp.Quiesce(ctx, dm); err != nil {
+	if q, err = esp.Quiesce(ctx, dm, chip); err != nil {
 		return err
 	}
 	quiesced = true
@@ -105,7 +112,7 @@ func (s *session) flashSession(ctx context.Context, args map[string]any, modify 
 	if fc.info, err = fc.f.ReadInfo(ctx); err != nil {
 		return err
 	}
-	if fc.sec, err = esp.ReadSecurity(ctx, dm); err != nil {
+	if fc.sec, err = esp.ReadSecurity(ctx, dm, chip); err != nil {
 		return err
 	}
 	if modify {
@@ -121,6 +128,25 @@ func (s *session) flashSession(ctx context.Context, args map[string]any, modify 
 		fc.parts, fc.tabErr = esp.ParsePartitionTable(tb)
 	}
 	return fn(fc)
+}
+
+// chipProfile identifies the target from the JTAG IDCODE (scanned when the
+// debug module was built) and the ROM word read through the system bus (no
+// halt). Without a matching profile nothing chip-specific may be done.
+func (s *session) chipProfile(ctx context.Context, dm *riscv.DM) (*esp.Chip, esp.Evidence, error) {
+	ev, err := esp.ReadEvidence(ctx, dm)
+	if err != nil {
+		return nil, ev, err
+	}
+	var idcode uint32
+	if c := s.chain; c != nil && len(c.Devices) == 1 && c.Devices[0].IDCode != nil {
+		idcode = c.Devices[0].IDCode.Raw
+	}
+	chip, err := esp.Detect(idcode, ev.ROMMagic)
+	if err != nil {
+		return nil, ev, status.Errorf(codes.FailedPrecondition, "refusing: %v", err)
+	}
+	return chip, ev, nil
 }
 
 func (fc *flashCtx) partitionByLabel(label string) (esp.Partition, bool) {
@@ -290,6 +316,8 @@ func (s *session) flashInfo(ctx context.Context, args map[string]any) (map[strin
 		res = map[string]any{
 			"flash": info, "security": sec, "chip_evidence": map[string]any{
 				"rom_magic": fmt.Sprintf("0x%08x", fc.ev.ROMMagic), "matches_esp32c6": fc.ev.MagicMatchesC6, "basis": fc.ev.Basis,
+				"chip": fc.chip.Name, "jtag_idcode": fmt.Sprintf("0x%08x", fc.chip.IDCode), "image_chip_id": fmt.Sprintf("0x%04x", fc.chip.ImageChipID),
+				"chip_basis": "profile selected because both the JTAG IDCODE and the ROM word matched it",
 			},
 			"flash_writable": fc.sec.CheckFlashWritable() == nil, "hart": float64(fc.dm.Hart()),
 			"basis": "JEDEC id (0x9F), SFDP (0x5A) and the status register read through the SPI1 controller, plus eFuse security fields read-only. Nothing was written.",
@@ -620,8 +648,12 @@ func (s *session) flashProgram(ctx context.Context, args map[string]any) (map[st
 		if err != nil {
 			return nil, argErr(fmt.Errorf("%s is not a valid ESP image (truncated or corrupt images are refused before anything is erased): %w", path, err))
 		}
-		if parsed.ChipID != esp.ChipIDESP32C6 {
-			return nil, argErr(fmt.Errorf("%s targets chip id 0x%04x, not the ESP32-C6 (0x%04x)", path, parsed.ChipID, esp.ChipIDESP32C6))
+		known := false
+		for _, c := range esp.Chips {
+			known = known || parsed.ChipID == c.ImageChipID
+		}
+		if !known {
+			return nil, argErr(fmt.Errorf("%s targets chip id 0x%04x, not a supported chip (ESP32-C6 0x%04x, ESP32-H2 0x%04x)", path, parsed.ChipID, esp.ChipIDESP32C6, esp.ChipIDESP32H2))
 		}
 		if parsed.SizeBytes > len(data) {
 			return nil, argErr(fmt.Errorf("%s: image needs %d bytes but the file has %d", path, parsed.SizeBytes, len(data)))
@@ -649,8 +681,8 @@ func (s *session) flashProgram(ctx context.Context, args map[string]any) (map[st
 	}
 	var res map[string]any
 	err = s.flashSession(ctx, args, true, func(fc *flashCtx) error {
-		if im != nil && !fc.ev.MagicMatchesC6 {
-			return status.Errorf(codes.FailedPrecondition, "the image is for the ESP32-C6 but the connected chip did not show the ESP32-C6 ROM evidence (%s)", fc.ev.Basis)
+		if im != nil && im.ChipID != fc.chip.ImageChipID {
+			return status.Errorf(codes.FailedPrecondition, "the image carries chip id 0x%04x but the connected chip is the %s (image chip id 0x%04x; %s)", im.ChipID, fc.chip.Name, fc.chip.ImageChipID, fc.ev.Basis)
 		}
 		if err := fc.f.CheckRange(addr, len(data)); err != nil {
 			return err
