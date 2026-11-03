@@ -145,6 +145,8 @@ type session struct {
 	chain *jtag.Chain
 	dtm   *riscv.DTM
 	dm    *riscv.DM
+	// xt is set instead of dtm/dm when the chain is an ESP32-S3 (Xtensa).
+	xt *xtTarget
 
 	// identity is what this session first saw; a reconnect must match it.
 	identity *identity
@@ -213,6 +215,9 @@ func (s *session) tapIRLen(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if isXtensaChain(c) {
+		return 0, errXtensaOnly
+	}
 	if c.Status != jtag.StatusOK || len(c.Devices) != 1 {
 		return 0, fmt.Errorf("%w: expected one TAP in the chain, found %d (status %s)", errNoTarget, len(c.Devices), c.Status)
 	}
@@ -262,6 +267,9 @@ func (s *session) close() error {
 	if s.dm != nil {
 		s.dropBreakpoints(ctx)
 		_ = s.dm.Release(ctx)
+	}
+	if s.xt != nil {
+		s.xtClose(ctx)
 	}
 	return s.probe.Close()
 }

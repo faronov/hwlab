@@ -153,10 +153,10 @@ func (f *Flash) readBatchAt(ctx context.Context, addr uint32, n int) ([]byte, er
 		var cs []chunk
 		for off := 0; off < n; off += MaxChunk {
 			c := min(MaxChunk, n-off)
-			ops = append(ops, txn{cmd: 0x0B, addr: addr + uint32(off), hasA: true, dummy: 8, miso: c}.ops()...)
-			ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: SPI1Base + spiCmd, Words: 1})
+			ops = append(ops, txn{cmd: 0x0B, addr: addr + uint32(off), hasA: true, dummy: 8, miso: c}.ops(f.base)...)
+			ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: f.base + spiCmd, Words: 1})
 			d := len(ops) - 1
-			ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: SPI1Base + spiW0, Words: (c + 3) / 4})
+			ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: f.base + spiW0, Words: (c + 3) / 4})
 			cs = append(cs, chunk{d, d + 1, c})
 		}
 		r, err := f.dm.BusBatch(ctx, ops)

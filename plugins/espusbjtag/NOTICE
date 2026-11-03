@@ -19,5 +19,15 @@ References (specifications and hardware facts, not code):
     sequence (JEDEC 0x9F, SFDP 0x5A, READ, WREN, PP 0x02, SE 0x20, BE 0xD8,
     CE 0xC7) is the standard SPI-NOR command set (JEDEC JESD216).
   * Observations of a real ESP32-C6 (USB descriptors, IDCODE, DM registers).
+  * ESP32-S3 / Xtensa (internal/xtensa, ADR 0038): instruction encodings and
+    special-register numbers from Cadence's public Xtensa Instruction Set
+    Architecture Reference Manual. OpenOCD's Xtensa and esp32s3 sources
+    (GPL-2.0) were read as a REFERENCE ONLY for interface facts (TAP
+    instruction codes, OCD register numbers and bits, the LDDR32.P/SDDR32.P/
+    RFDO encodings, power-up order); no code was copied, translated or linked.
+    ESP32-S3 register addresses, eFuse field positions and flash pins from
+    ESP-IDF v5.3 headers and esp_efuse_table.csv (Apache-2.0) and the ESP32-S3
+    TRM; esptool (GPL-2.0+) consulted for facts only. Constants were checked on
+    a real ESP32-S3 where readable.
 
 internal/usb and internal/jtag are shared with plugins/ftdi.

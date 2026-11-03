@@ -36,6 +36,8 @@ type identity struct {
 	IDCode    uint32
 	ROMMagic  uint32
 	Harts     int
+	// OCDID is core 0's Xtensa OCDID (ESP32-S3 only; 0 on RISC-V chips).
+	OCDID uint32
 }
 
 func (a identity) mismatch(b identity) string {
@@ -46,12 +48,17 @@ func (a identity) mismatch(b identity) string {
 		return fmt.Sprintf("JTAG IDCODE 0x%08x != 0x%08x", a.IDCode, b.IDCode)
 	case a.ROMMagic != b.ROMMagic:
 		return fmt.Sprintf("ROM chip-detect word 0x%08x != 0x%08x", a.ROMMagic, b.ROMMagic)
+	case a.OCDID != b.OCDID:
+		return fmt.Sprintf("Xtensa OCDID 0x%08x != 0x%08x", a.OCDID, b.OCDID)
 	}
 	return ""
 }
 
 // captureIdentity reads the identity of the target behind the session.
 func (s *session) captureIdentity(ctx context.Context) (identity, error) {
+	if x := s.xtensaTarget(ctx); x != nil {
+		return s.xtIdentity(ctx, x)
+	}
 	dm, err := s.ensureDM(ctx)
 	if err != nil {
 		return identity{}, err
@@ -326,6 +333,10 @@ func (p *Plugin) reconnect(ctx context.Context, id string, args map[string]any) 
 		"idcode": fmt.Sprintf("0x%08x", ns.identity.IDCode), "rom_chip_word": fmt.Sprintf("0x%08x", ns.identity.ROMMagic), "harts": float64(ns.identity.Harts),
 		"usb_address": fmt.Sprintf("%d:%d", ns.entry.Dev.Bus, ns.entry.Dev.Address),
 		"note":        "the device is found by USB serial number; the USB bus/device number is informational only and may differ from before",
+	}
+	if ns.identity.OCDID != 0 {
+		res["ocdid"] = fmt.Sprintf("0x%08x", ns.identity.OCDID)
+		delete(res, "rom_chip_word") // read only through a halted core on the ESP32-S3; not part of its identity
 	}
 	if want == nil {
 		res["note"] = "no earlier identity was known for this device, so nothing could be compared; this only proves the device answers"

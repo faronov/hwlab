@@ -11,8 +11,15 @@ import (
 
 // SPI1 is the flash controller the CPU's own flash driver uses for commands.
 // It is driven here register by register through the RISC-V system bus while
-// the hart is halted: no code runs on the target, no ROM function is called.
+// the hart is halted (on the ESP32-S3: debug loads/stores executed by the
+// halted Xtensa core, esp.XtensaBus): no code runs on the target, no ROM
+// function is called. The register offsets and bits below are the same on
+// the ESP32-C6, ESP32-H2 and ESP32-S3 (ESP-IDF soc/esp32s3 spi_mem_reg.h:
+// CMD 0x00 USR bit 18, FLASH_PE bit 17; ADDR 0x04; CTRL 0x08; USER 0x18;
+// USER1 0x1C; USER2 0x20; MOSI_DLEN 0x24; MISO_DLEN 0x28; W0 0x58); only the
+// base differs (Chip.SPI1).
 const (
+	// SPI1Base is the ESP32-C6/H2 SPI1 base.
 	SPI1Base = 0x60003000
 
 	spiCmd      = 0x00
@@ -52,10 +59,13 @@ var (
 
 // Flash drives the SPI flash through SPI1.
 type Flash struct {
-	dm     *riscv.DM
-	saved  []uint32 // ctrl, addr..., user regs as found
-	size   int
-	opened bool
+	dm      Bus
+	base    uint32   // SPI1 register base (SPI1Base on the ESP32-C6/H2)
+	saved   []uint32 // ctrl, addr..., user regs as found
+	pins    []uint32 // IO_MUX registers switched to the SPI function
+	pinsWas []uint32 // their values before, put back on Close
+	size    int
+	opened  bool
 	// Counters for diagnostics and tests.
 	Transactions int
 }
@@ -63,14 +73,72 @@ type Flash struct {
 // OpenFlash prepares the controller: waits until the host is idle and saves
 // the registers it is about to change. The caller must have halted the
 // hart(s) that could be using SPI1.
-func OpenFlash(ctx context.Context, dm *riscv.DM) (*Flash, error) {
-	f := &Flash{dm: dm}
+func OpenFlash(ctx context.Context, dm Bus) (*Flash, error) {
+	return openFlash(ctx, dm, SPI1Base)
+}
+
+// OpenFlashChip is OpenFlash for the SPI1 controller of chip c (Chip.SPI1).
+// The register layout is the one the driver knows (verified for the
+// ESP32-C6/H2 at 0x60003000 and the ESP32-S3 at 0x60002000); only the base
+// differs.
+func OpenFlashChip(ctx context.Context, dm Bus, c *Chip) (*Flash, error) {
+	if c == nil {
+		return nil, errNoChip
+	}
+	if c.SPI1 == 0 {
+		return nil, fmt.Errorf("flash: no SPI1 controller is profiled for the %s", c.Name)
+	}
+	f, err := openFlash(ctx, dm, c.SPI1)
+	if err != nil || len(c.FlashPins) == 0 {
+		return f, err
+	}
+	if err := f.attachPins(ctx, c.FlashPins); err != nil {
+		_ = f.Close(ctx)
+		return nil, err
+	}
+	return f, nil
+}
+
+// IO_MUX MCU_SEL (function select) field; function 0 is the SPI flash
+// function of the dedicated flash pins.
+const iomuxMCUSel = 7 << 12
+
+// attachPins selects function 0 on every flash pin that is not already on
+// it, keeping the other pad settings, and remembers what to put back.
+func (f *Flash) attachPins(ctx context.Context, pins []uint32) error {
+	ops := make([]riscv.BusOp, len(pins))
+	for i, a := range pins {
+		ops[i] = riscv.BusOp{Kind: riscv.BusRead, Addr: a, Words: 1}
+	}
+	r, err := f.dm.BusBatch(ctx, ops)
+	if err != nil {
+		return err
+	}
+	var wr []riscv.BusOp
+	for i, a := range pins {
+		v := r[i][0]
+		if v&iomuxMCUSel == 0 {
+			continue
+		}
+		f.pins = append(f.pins, a)
+		f.pinsWas = append(f.pinsWas, v)
+		wr = append(wr, riscv.BusOp{Kind: riscv.BusWrite, Addr: a, Vals: []uint32{v &^ iomuxMCUSel}})
+	}
+	if len(wr) == 0 {
+		return nil
+	}
+	_, err = f.dm.BusBatch(ctx, wr)
+	return err
+}
+
+func openFlash(ctx context.Context, dm Bus, base uint32) (*Flash, error) {
+	f := &Flash{dm: dm, base: base}
 	if err := f.waitHostIdle(ctx); err != nil {
 		return nil, err
 	}
 	r, err := dm.BusBatch(ctx, []riscv.BusOp{
-		{Kind: riscv.BusRead, Addr: SPI1Base + spiAddr, Words: 2}, // addr, ctrl
-		{Kind: riscv.BusRead, Addr: SPI1Base + spiUser, Words: 5}, // user, user1, user2, mosi, miso len
+		{Kind: riscv.BusRead, Addr: base + spiAddr, Words: 2}, // addr, ctrl
+		{Kind: riscv.BusRead, Addr: base + spiUser, Words: 5}, // user, user1, user2, mosi, miso len
 	})
 	if err != nil {
 		return nil, err
@@ -86,17 +154,22 @@ func (f *Flash) Close(ctx context.Context) error {
 		return nil
 	}
 	f.opened = false
-	_, err := f.dm.BusBatch(ctx, []riscv.BusOp{
-		{Kind: riscv.BusWrite, Addr: SPI1Base + spiAddr, Vals: f.saved[0:2]},
-		{Kind: riscv.BusWrite, Addr: SPI1Base + spiUser, Vals: f.saved[2:7]},
-	})
+	ops := []riscv.BusOp{
+		{Kind: riscv.BusWrite, Addr: f.base + spiAddr, Vals: f.saved[0:2]},
+		{Kind: riscv.BusWrite, Addr: f.base + spiUser, Vals: f.saved[2:7]},
+	}
+	for i, a := range f.pins {
+		ops = append(ops, riscv.BusOp{Kind: riscv.BusWrite, Addr: a, Vals: []uint32{f.pinsWas[i]}})
+	}
+	f.pins, f.pinsWas = nil, nil
+	_, err := f.dm.BusBatch(ctx, ops)
 	return err
 }
 
 func (f *Flash) waitHostIdle(ctx context.Context) error {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		v, err := ReadWord(ctx, f.dm, SPI1Base+spiCmd)
+		v, err := ReadWord(ctx, f.dm, f.base+spiCmd)
 		if err != nil {
 			return err
 		}
@@ -123,7 +196,7 @@ type txn struct {
 
 // ops returns the register writes that configure and start the transaction.
 // A read of the CMD register follows so the caller can tell it has finished.
-func (t txn) ops() []riscv.BusOp {
+func (t txn) ops(base uint32) []riscv.BusOp {
 	user := uint32(userCommand)
 	var user1 uint32
 	if t.hasA {
@@ -149,13 +222,13 @@ func (t txn) ops() []riscv.BusOp {
 		trig |= cmdPE
 	}
 	ops := []riscv.BusOp{
-		{Kind: riscv.BusWrite, Addr: SPI1Base + spiAddr, Vals: []uint32{t.addr & 0xFFFFFF, 0}}, // addr, ctrl=0
-		{Kind: riscv.BusWrite, Addr: SPI1Base + spiUser, Vals: []uint32{user, user1, user2, mosiLen, misoLen}},
+		{Kind: riscv.BusWrite, Addr: base + spiAddr, Vals: []uint32{t.addr & 0xFFFFFF, 0}}, // addr, ctrl=0
+		{Kind: riscv.BusWrite, Addr: base + spiUser, Vals: []uint32{user, user1, user2, mosiLen, misoLen}},
 	}
 	if len(t.mosi) > 0 {
-		ops = append(ops, riscv.BusOp{Kind: riscv.BusWrite, Addr: SPI1Base + spiW0, Vals: packWords(t.mosi)})
+		ops = append(ops, riscv.BusOp{Kind: riscv.BusWrite, Addr: base + spiW0, Vals: packWords(t.mosi)})
 	}
-	return append(ops, riscv.BusOp{Kind: riscv.BusWrite, Addr: SPI1Base + spiCmd, Vals: []uint32{trig}})
+	return append(ops, riscv.BusOp{Kind: riscv.BusWrite, Addr: base + spiCmd, Vals: []uint32{trig}})
 }
 
 func packWords(b []byte) []uint32 {
@@ -183,11 +256,11 @@ func unpackWords(w []uint32, n int) []byte {
 // that the command had completed before the result buffer was read.
 func (f *Flash) run(ctx context.Context, t txn) ([]byte, error) {
 	for try := 0; ; try++ {
-		ops := t.ops()
-		ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: SPI1Base + spiCmd, Words: 1})
+		ops := t.ops(f.base)
+		ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: f.base + spiCmd, Words: 1})
 		doneAt := len(ops) - 1
 		if t.miso > 0 {
-			ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: SPI1Base + spiW0, Words: (t.miso + 3) / 4})
+			ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: f.base + spiW0, Words: (t.miso + 3) / 4})
 		}
 		r, err := f.dm.BusBatch(ctx, ops)
 		if err != nil {
@@ -285,7 +358,7 @@ func (f *Flash) writeEnable(ctx context.Context) error {
 // caller knows it is.
 func (f *Flash) issueUser(ctx context.Context, t txn, timeout time.Duration) error {
 	t.pe = true
-	if _, err := f.dm.BusBatch(ctx, t.ops()); err != nil {
+	if _, err := f.dm.BusBatch(ctx, t.ops(f.base)); err != nil {
 		return err
 	}
 	f.Transactions++

@@ -16,6 +16,9 @@ const (
 	ChipIDESP32C6 = 0x000D
 	// ChipIDESP32H2 is the chip id the image header carries for the ESP32-H2.
 	ChipIDESP32H2 = 0x0010
+	// ChipIDESP32S3 is the chip id the image header carries for the ESP32-S3
+	// (esptool ESP32S3ROM.IMAGE_CHIP_ID).
+	ChipIDESP32S3 = 0x0009
 	imageHdrLen   = 24
 	segHdrLen     = 8
 )

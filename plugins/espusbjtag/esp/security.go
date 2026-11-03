@@ -9,7 +9,8 @@ import (
 
 // eFuse read registers (the shadow copy EFUSE_RD_REPEAT_DATA0..3 at
 // Chip.EfuseRepeat0; read only). This package never writes an eFuse. The
-// field positions below are identical on the ESP32-C6 and ESP32-H2.
+// field positions below are identical on the ESP32-C6, ESP32-H2 and ESP32-S3,
+// except DIS_USB_JTAG (Chip.EfuseDisUSBJTAG).
 
 // Security is the security-relevant eFuse state, as read.
 type Security struct {
@@ -34,9 +35,12 @@ func (s Security) FlashEncrypted() bool {
 }
 
 // ReadSecurity reads the eFuse shadow registers.
-func ReadSecurity(ctx context.Context, dm *riscv.DM, c *Chip) (Security, error) {
+func ReadSecurity(ctx context.Context, dm Bus, c *Chip) (Security, error) {
 	if c == nil {
 		return Security{}, errNoChip
+	}
+	if c.EfuseRepeat0 == 0 {
+		return Security{}, fmt.Errorf("no eFuse security layout is profiled for the %s: refusing to interpret its eFuse words", c.Name)
 	}
 	r, err := dm.BusBatch(ctx, []riscv.BusOp{{Kind: riscv.BusRead, Addr: c.EfuseRepeat0, Words: 4}})
 	if err != nil {
@@ -51,6 +55,9 @@ func ReadSecurity(ctx context.Context, dm *riscv.DM, c *Chip) (Security, error) 
 		SoftJTAGDisable:      int(w[0] >> 16 & 7),
 		DownloadModeDisabled: w[3]&1 == 1,
 		SecurityDownload:     w[3]>>5&1 == 1,
+	}
+	if b := c.EfuseDisUSBJTAG; b != nil {
+		s.USBJTAGDisabled = w[b.Word]>>b.Bit&1 == 1
 	}
 	copy(s.Raw[:], w)
 	return s, nil

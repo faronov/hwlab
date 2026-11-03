@@ -115,6 +115,20 @@ type writeReq struct {
 }
 
 func parseWrite(args map[string]any) (writeReq, error) {
+	rq, err := parseWriteArgs(args)
+	if err != nil {
+		return writeReq{}, err
+	}
+	addr, data := rq.addr, rq.data
+	if !esp.WritableSRAM(addr, len(data)) {
+		return writeReq{}, argErr(fmt.Errorf("[0x%08x, +%d) is %s: generic memory writes are only allowed inside one SRAM block (ROM, the flash-mapped window, peripherals and unmapped space are refused; use the flash methods for flash)",
+			addr, len(data), esp.Classify(addr)))
+	}
+	return rq, nil
+}
+
+// parseWriteArgs checks the address and data arguments, not the memory map.
+func parseWriteArgs(args map[string]any) (writeReq, error) {
 	addr, err := toAddr(args["address"])
 	if err != nil {
 		return writeReq{}, argErr(err)
@@ -129,10 +143,6 @@ func parseWrite(args map[string]any) (writeReq, error) {
 	}
 	if len(data) > maxWriteBytes {
 		return writeReq{}, argErr(fmt.Errorf("data: %d bytes exceeds the %d-byte limit", len(data), maxWriteBytes))
-	}
-	if !esp.WritableSRAM(addr, len(data)) {
-		return writeReq{}, argErr(fmt.Errorf("[0x%08x, +%d) is %s: generic memory writes are only allowed inside one SRAM block (ROM, the flash-mapped window, peripherals and unmapped space are refused; use the flash methods for flash)",
-			addr, len(data), esp.Classify(addr)))
 	}
 	return writeReq{addr, data}, nil
 }

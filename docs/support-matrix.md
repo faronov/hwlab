@@ -18,7 +18,7 @@ Code, fixtures and passing tests are not hardware validation.
 | ccdebugger: native Go USB (0451:16a2) | partial | real-hardware-partial | real | native | no |
 | ccdebugger: cc-tool fallback | complete | synthetic | none | optional-external-tool | no |
 | cmsisdap: native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1), or macOS IOKit bulk (v2 only) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt, simulator-tested) | partial | real-hardware-partial | real | native | no |
-| espusbjtag: native Go Espressif USB-JTAG transport (Linux usbfs or macOS IOKit) + JTAG + RISC-V DM (spec 0.13) + SPI1 flash driver over system bus access | partial | real-hardware-partial | real | native | no |
+| espusbjtag: native Go Espressif USB-JTAG transport (Linux usbfs or macOS IOKit) + JTAG + RISC-V DM (spec 0.13) or Xtensa OCD (ESP32-S3) + SPI1 flash driver over system bus access or a halted Xtensa core | partial | real-hardware-partial | real | native | no |
 | fake: in-process simulation | complete | synthetic | synthetic | native | no |
 | ftdi: native Go FTDI protocol (Linux usbfs or macOS IOKit) + MPSSE + JTAG | partial | real-hardware-partial | real | native | no |
 | jlink: J-Link Commander + RTT telnet (jlink-segger) | complete | real-hardware-partial | real | external-tool | no |
@@ -255,9 +255,9 @@ Code, fixtures and passing tests are not hardware validation.
   - SWO, UART/COM port and JTAG debugging are not implemented
   - Linux only (usbfs and hidraw)
 
-### espusbjtag — Espressif native USB Serial/JTAG (ESP32-C6, ESP32-H2) + generic RISC-V Debug Module + ESP flash
+### espusbjtag — Espressif native USB Serial/JTAG (ESP32-C6, ESP32-H2, ESP32-S3) + generic RISC-V Debug Module + generic Xtensa OCD + ESP flash
 
-**native Go Espressif USB-JTAG transport (Linux usbfs or macOS IOKit) + JTAG + RISC-V DM (spec 0.13) + SPI1 flash driver over system bus access**
+**native Go Espressif USB-JTAG transport (Linux usbfs or macOS IOKit) + JTAG + RISC-V DM (spec 0.13) or Xtensa OCD (ESP32-S3) + SPI1 flash driver over system bus access or a halted Xtensa core**
 
 - implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the device (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo (no setup; ADR 0035); OpenOCD, esptool, ESP-IDF, libusb and Python are not used)
 - capabilities:
@@ -287,6 +287,12 @@ Code, fixtures and passing tests are not hardware validation.
   | backup/restore | REAL_HW_VERIFIED | full 4 MiB backup (two identical reads, SHA-256 recorded) and restore with full read-back SHA equal to the backup; original firmware ran again |
   | eFuse access | NOT_IMPLEMENTED | deliberately absent: no eFuse is read for writing or burned |
   | OpenOCD cross-check | NOT_IMPLEMENTED | OpenOCD is not installed; no comparison was possible |
+  | ESP32-S3: Xtensa chain, architecture detection and chip profile | REAL_HW_VERIFIED | ROM download mode: 2 Xtensa TAPs, IDCODE 0x120034e5, IR 5+5; profile only when the IDCODE and the ROM word 0x9 at 0x40001000 both match; image chip id 0x0009; ADR 0038, docs/notes/phase28 |
+  | ESP32-S3: Xtensa debug on core 0 | REAL_HW_VERIFIED | OCD power-up (OCDID 0x0b339fd2), halt/resume (debug level 6), a0-a15/pc/ps/special registers, memory read with fault detection and exception-SR restore, SRAM 32/8-bit write saved and restored, ICOUNT single-step, 2 probed IBREAK slots hit in the ROM loop |
+  | ESP32-S3: core 1 (APP_CPU) | IMPLEMENTED_UNTESTED | implemented; held in reset in ROM download mode (OCDID 0), reported unavailable |
+  | ESP32-S3: core reset (reset kind=hart) | SIMULATED_ONLY | PWRCTL core reset on xtsim only; SoC/system reset refused on the S3 (it would boot the application, which may switch USB-Serial/JTAG off) |
+  | ESP32-S3: flash over SPI1 through the halted core | REAL_HW_VERIFIED | flash pins attached through IO_MUX and restored, eFuse security read-only, JEDEC/SFDP/partition table, read/verify, full 4 MiB backup (two identical reads), erase+program+verify of one unused sector, full restore with whole-flash SHA-256 equal to the backup, gate errors; read about 43-46 KB/s, program about 9 KB/s |
+  | ESP32-S3: ESP image program, app/chip erase, encrypted-chip refusal, mapped-window comparison | SIMULATED_ONLY | only a raw pattern was programmed on hardware; the single app partition holds the user's firmware; the board is unencrypted; the cache is off in download mode |
 
 - verified:
   - USB discovery of 303a:1001 (Espressif USB JTAG/serial debug unit, serial = chip MAC), 3 interfaces: CDC 0/1 and the vendor JTAG interface 2 (bulk OUT 0x02, IN 0x83)
@@ -303,13 +309,15 @@ Code, fixtures and passing tests are not hardware validation.
   - erase of an app partition and full-chip erase on hardware (never run)
   - power loss or unplug during a flash write: deliberately not performed (could brick the only board); a partial write is detected by the verify but not repaired automatically
   - the EPROTO/EILSEQ-as-unplug mapping added after a first failed round (both later rounds returned ENODEV, so that path is covered by code reading only)
-  - ESP32-H2 flash backup/program/reset on hardware (profile exercised only on the simulator); other Espressif chips (ESP32-S3/C3/C5) and external USB-JTAG bridges are refused as unknown
+  - ESP32-H2 flash backup/program/reset on hardware (profile exercised only on the simulator); other Espressif chips (ESP32, ESP32-S2, ESP32-C3, ESP32-C5) and external USB-JTAG bridges are refused as unknown
+  - ESP32-S3: core 1, core reset, booting a programmed image, app/chip erase and long halts with an application's watchdogs enabled (validated in ROM download mode only)
   - comparison with OpenOCD/esptool (not installed)
 - known gaps:
   - flash writes use the CPU-side SPI1 controller while the hart is held in debug mode; the cache/MSPI arbitration is handled by quiescing, but behaviour with a running flash-heavy firmware on the other hart is untested
   - program speed is about 12 KB/s for a single sector including erase; reads are about 65 KB/s, bound by about 2.5 ms per DMI round trip
-  - the chip is named only from the IDCODE plus ROM evidence (inferred); only the ESP32-C6 and ESP32-H2 are mapped, and an ESP32-H2 with a different ROM word (another ROM revision) is refused rather than guessed
+  - the chip is named only from the IDCODE plus ROM evidence (inferred); only the ESP32-C6, ESP32-H2 and ESP32-S3 are mapped, and an ESP32-H2 with a different ROM word (another ROM revision) is refused rather than guessed
   - no program-buffer fallback for memory access; system bus access (32-bit) is required
+  - ESP32-S3: every memory access is a debug load/store by a halted core (memory access halts a running core briefly); flash is bound by USB bandwidth (two DR scans per access); no reset after programming: the cores stay halted until DebugProbe.resume or a manual reset
   - Linux only (usbfs)
 
 ### fake — Deterministic fake instruments (CI and demos)

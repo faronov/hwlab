@@ -37,7 +37,7 @@ type Quiesced struct {
 // Quiesce disables the two timer-group watchdogs and the RTC watchdog and
 // returns what they were. Restore must be called afterwards (it also feeds
 // them, so the firmware gets a full period before the next expiry).
-func Quiesce(ctx context.Context, dm *riscv.DM, c *Chip) (Quiesced, error) {
+func Quiesce(ctx context.Context, dm Bus, c *Chip) (Quiesced, error) {
 	if c == nil {
 		return Quiesced{}, errNoChip
 	}
@@ -69,8 +69,22 @@ func Quiesce(ctx context.Context, dm *riscv.DM, c *Chip) (Quiesced, error) {
 		{Kind: riscv.BusWrite, Addr: lpWDT + lpWDTProtect, Vals: []uint32{wdtKey}},
 		{Kind: riscv.BusWrite, Addr: lpWDT + lpWDTConfig0, Vals: []uint32{q.LP &^ wdtEnable}},
 		{Kind: riscv.BusWrite, Addr: lpWDT + lpWDTProtect, Vals: []uint32{0}},
-	}, swdOps(c, q.SWD|swdAutoFeed)...))
+	}, swdOps(c, q.SWD|c.swdAutoFeed())...))
 	return q, err
+}
+
+func (c *Chip) swdAutoFeed() uint32 {
+	if c.WDT.SWDAutoFeed != 0 {
+		return c.WDT.SWDAutoFeed
+	}
+	return swdAutoFeed
+}
+
+func (c *Chip) swdKey() uint32 {
+	if c.WDT.SWDKey != 0 {
+		return c.WDT.SWDKey
+	}
+	return wdtKey
 }
 
 // swdOps writes SWD_CONF under its write-protect key; nothing for profiles
@@ -81,14 +95,14 @@ func swdOps(c *Chip, conf uint32) []riscv.BusOp {
 	}
 	lp := c.WDT.LP
 	return []riscv.BusOp{
-		{Kind: riscv.BusWrite, Addr: lp + c.WDT.SWDProtect, Vals: []uint32{wdtKey}},
+		{Kind: riscv.BusWrite, Addr: lp + c.WDT.SWDProtect, Vals: []uint32{c.swdKey()}},
 		{Kind: riscv.BusWrite, Addr: lp + c.WDT.SWDConf, Vals: []uint32{conf}},
 		{Kind: riscv.BusWrite, Addr: lp + c.WDT.SWDProtect, Vals: []uint32{0}},
 	}
 }
 
 // Restore feeds and re-enables whatever Quiesce disabled.
-func (q Quiesced) Restore(ctx context.Context, dm *riscv.DM) error {
+func (q Quiesced) Restore(ctx context.Context, dm Bus) error {
 	c := q.chip
 	if c == nil {
 		return errNoChip
@@ -116,7 +130,7 @@ func (q Quiesced) Restore(ctx context.Context, dm *riscv.DM) error {
 // short timeout (about 0.3 s on the slow clock). The caller resumes the hart;
 // the whole digital system, including the USB Serial/JTAG peripheral, then
 // resets and the host sees the device disappear and re-enumerate.
-func ArmSoCReset(ctx context.Context, dm *riscv.DM, c *Chip) error {
+func ArmSoCReset(ctx context.Context, dm Bus, c *Chip) error {
 	if c == nil {
 		return errNoChip
 	}
@@ -137,7 +151,7 @@ func ArmSoCReset(ctx context.Context, dm *riscv.DM, c *Chip) error {
 // set to "reset system". Boot code that runs after a resume (ROM, bootloader,
 // application start-up) disables it, so a reset requested while the hart is
 // parked in early boot has to be re-armed until it sticks.
-func SoCResetArmed(ctx context.Context, dm *riscv.DM, c *Chip) (bool, error) {
+func SoCResetArmed(ctx context.Context, dm Bus, c *Chip) (bool, error) {
 	if c == nil {
 		return false, errNoChip
 	}

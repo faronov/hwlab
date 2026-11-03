@@ -99,6 +99,20 @@ The original PPK2 codec consulted IRNAS `ppk2-api-python`, licensed GPL-2.0;
 [ADR 0008](adr/0008-ppk2-protocol-sources.md) records that source reference.
 This was omitted from the initial license summary. Source availability and
 the absence of a Python runtime dependency do not establish non-derivation
+The Xtensa On-Chip-Debug support (`internal/xtensa`) and the ESP32-S3 profile
+were written independently ([ADR 0038](adr/0038-xtensa-esp32s3.md)). Instruction
+encodings and special-register numbers come from Cadence's public *Xtensa
+Instruction Set Architecture Reference Manual*. OpenOCD's Xtensa and ESP32-S3
+sources (GPL-2.0) were read as a reference only for interface facts (TAP
+instruction codes, debug-register numbers and bits, the OCD-only LDDR32.P /
+SDDR32.P / RFDO encodings, power-up order); no code was copied, translated,
+linked or executed. ESP32-S3 register addresses, eFuse field positions and
+flash-pin numbers were read from ESP-IDF v5.3 headers and `esp_efuse_table.csv`
+(Apache-2.0) and the ESP32-S3 Technical Reference Manual; esptool (GPL-2.0+)
+and its documentation were consulted for facts only (image chip id, SPI1 base,
+watchdog keys, ROM-loader commands). Every constant used on the board was
+checked against the real ESP32-S3 where it could be read.
+
 or GPL compliance. Project licensing and the provenance review remain
 unfinalized; public repository visibility is not license clearance.
 

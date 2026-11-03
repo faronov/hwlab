@@ -20,6 +20,7 @@ import (
 	"github.com/faronov/hwlab/internal/jtag"
 	"github.com/faronov/hwlab/internal/riscv"
 	"github.com/faronov/hwlab/internal/usb"
+	"github.com/faronov/hwlab/internal/xtensa"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/plugins/espusbjtag/esp"
 )
@@ -47,7 +48,7 @@ func spec(c string, d pluginv1.Danger, name, desc, schema string) *pluginv1.Meth
 const devProps = `"interface":{"type":"number","description":"USB interface number of the vendor JTAG interface; default is auto-detected (2 on ESP32-C6). The CDC interfaces are never claimed"},` +
 	`"clock_khz":{"type":"number","description":"requested TCK in kHz, default 4000"},` +
 	`"timeout_ms":{"type":"number"},` +
-	`"hart":{"type":"number","description":"hart index in the debug module, default 0; may also be given per call to address another hart"},` +
+	`"hart":{"type":"number","description":"hart index in the debug module, default 0; may also be given per call to address another hart; on an ESP32-S3 it selects the Xtensa core (0 = PRO_CPU, 1 = APP_CPU)"},` +
 	`"reconnect_timeout_ms":{"type":"number","description":"how long a lost device is waited for (rediscovery by USB serial), default 8000"},` +
 	`"allow_memory_write":{"type":"boolean","description":"DANGEROUS config: permit SRAM writes"},` +
 	`"allow_reset":{"type":"boolean","description":"DANGEROUS config: permit hart/system/SoC resets"},` +
@@ -95,27 +96,27 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 			spec(S, safe, "scan", "reset the TAP and enumerate the chain from the IDCODE/BYPASS stream; repeatable, writes nothing to the target", obj(scanProps)),
 			spec(I, safe, "identify", "IDCODE of the chain with decoded version/part/manufacturer and a chip hint; JTAG identification only, no CPU or memory access", obj(scanProps)),
 			spec(D, safe, "info", "same as JTAGTransport.info", obj(devProps)),
-			spec(D, safe, "chip_info", "RISC-V debug transport and debug module identification (spec version, harts, program buffer, system bus) and the hart state; does not halt anything", obj(devProps)),
-			spec(D, confirm, "halt", "halt the selected hart and confirm it in dmstatus; it stays halted (debug module active) until resume", obj(devProps)),
-			spec(D, confirm, "resume", "resume the selected hart and wait for the acknowledge", obj(devProps)),
-			spec(D, confirm, "read_registers", "read x0-x31, pc (dpc) and the identification CSRs of the selected hart; halts a running hart and resumes it again unless keep_halted", obj(regProps)),
-			spec(M, safe, "read", "read target memory through the RISC-V system bus (no halt); 32-bit accesses, max 4096 bytes inline or up to 4 MiB to a new file with path (SHA-256 returned). The Espressif peripheral window 0x60000000-0x6FFFFFFF needs allow_peripheral", readArgs),
-			spec(M, confirm, "write", "write SRAM through the system bus (needs allow_memory_write): 8/16/32-bit aware (read-modify-write), read back and compared, previous bytes returned. ROM, the flash-mapped window, peripherals and unmapped space are refused; use the flash methods for flash", writeArgs),
-			spec(D, confirm, "step", "single-step the halted hart count times (dcsr.step; default 1, max 1000); each step is confirmed by halt and dcsr.cause=step, the step bit is restored", stepArgs),
-			spec(D, safe, "harts", "per-hart report (availability, run state, XLEN, hartinfo, abstract-command and register access, SBA); halts and resumes nothing", obj(devProps)),
-			spec(D, confirm, "set_breakpoint", "install a hardware execution breakpoint (RISC-V trigger) at an address; the free slot is discovered, never assumed. run_wait_ms>0 resumes and waits for the hit", bpArgs),
+			spec(D, safe, "chip_info", "RISC-V debug transport and debug module identification (spec version, harts, program buffer, system bus) and the hart state; does not halt anything. ESP32-S3 (Xtensa): per-core OCDID/PWRSTAT/DSR of each TAP; the chip profile (ROM word) is only checked when the core is already halted", obj(devProps)),
+			spec(D, confirm, "halt", "halt the selected hart and confirm it in dmstatus; it stays halted (debug module active) until resume. ESP32-S3: debug interrupt (level 6) confirmed by DSR; pc/ps are EPC6/EPS6", obj(devProps)),
+			spec(D, confirm, "resume", "resume the selected hart and wait for the acknowledge. ESP32-S3: restores the debugger scratch register a3 first", obj(devProps)),
+			spec(D, confirm, "read_registers", "read x0-x31, pc (dpc) and the identification CSRs of the selected hart; halts a running hart and resumes it again unless keep_halted. ESP32-S3: a0-a15 (current window), pc, ps, sar, windowbase/windowstart and the LX7 special registers, through RSR/WSR executed via DIR0EXEC", obj(regProps)),
+			spec(M, safe, "read", "read target memory through the RISC-V system bus (no halt); 32-bit accesses, max 4096 bytes inline or up to 4 MiB to a new file with path (SHA-256 returned). The Espressif peripheral window 0x60000000-0x6FFFFFFF needs allow_peripheral. ESP32-S3: memory is only reachable through a halted core: a running core is halted for the read and resumed (an already halted one stays halted)", readArgs),
+			spec(M, confirm, "write", "write SRAM through the system bus (needs allow_memory_write): 8/16/32-bit aware (read-modify-write), read back and compared, previous bytes returned. ROM, the flash-mapped window, peripherals and unmapped space are refused; use the flash methods for flash. ESP32-S3: same rules with the S3 memory map (SRAM 0x3FC88000-0x3FCFFFFF data bus, 0x40370000-0x403DFFFF instruction bus, RTC FAST/SLOW); the core is halted for the write", writeArgs),
+			spec(D, confirm, "step", "single-step the halted hart count times (dcsr.step; default 1, max 1000); each step is confirmed by halt and dcsr.cause=step, the step bit is restored. ESP32-S3: ICOUNT/ICOUNTLEVEL; the core must already be halted", stepArgs),
+			spec(D, safe, "harts", "per-hart report (availability, run state, XLEN, hartinfo, abstract-command and register access, SBA); halts and resumes nothing. ESP32-S3: one entry per Xtensa core/TAP (hart 0 = PRO_CPU, hart 1 = APP_CPU, held in reset in ROM download mode)", obj(devProps)),
+			spec(D, confirm, "set_breakpoint", "install a hardware execution breakpoint (RISC-V trigger) at an address; the free slot is discovered, never assumed. run_wait_ms>0 resumes and waits for the hit. ESP32-S3: IBREAKA/IBREAKENABLE (2 slots on the real chip, probed); only instruction-bus addresses", bpArgs),
 			spec(D, confirm, "clear_breakpoint", "remove a breakpoint installed by this session (address) or all=true; the slot's previous trigger state is restored", clrArgs),
-			spec(D, safe, "list_breakpoints", "enumerate the hart's trigger slots (tselect/tdata1/tdata2) and the breakpoints this session installed", obj(devProps)),
+			spec(D, safe, "list_breakpoints", "enumerate the hart's trigger slots (tselect/tdata1/tdata2) and the breakpoints this session installed. ESP32-S3: IBREAKA0../IBREAKENABLE", obj(devProps)),
 			spec(D, confirm, "wait_halt", "wait for the hart to halt (wait_ms, default 2000) and report the cause; says whether an installed breakpoint was hit", obj(devProps+`,"wait_ms":{"type":"number"}`)),
-			spec(D, confirm, "reset", "reset: kind=hart (hartreset), system (ndmreset, default) or soc (RTC watchdog full chip reset; the USB device re-enumerates and the session is rebuilt by USB serial and identity-checked). Needs allow_reset; soc needs confirm=\"reset-soc\". halt=true stops at the first instruction", resetArgs),
-			spec(D, safe, "reconnect", "drop the session and wait (bounded by reconnect_timeout_ms) for the device with the same USB serial, reopen interface and rebuild TAP/DTM/DM, and verify IDCODE and ROM chip evidence equal the earlier ones", obj(devProps)),
-			spec(F, confirm, "info", "flash identity and geometry (JEDEC, SFDP size, status), eFuse security state (read-only), partition table, protected ranges; halts the CPU and quiesces watchdogs for the call and restores them", obj(devProps)),
+			spec(D, confirm, "reset", "reset: kind=hart (hartreset), system (ndmreset, default) or soc (RTC watchdog full chip reset; the USB device re-enumerates and the session is rebuilt by USB serial and identity-checked). Needs allow_reset; soc needs confirm=\"reset-soc\". halt=true stops at the first instruction. ESP32-S3: only kind=hart (core reset through the debug module, PWRCTL.CoreReset); system and soc are refused", resetArgs),
+			spec(D, safe, "reconnect", "drop the session and wait (bounded by reconnect_timeout_ms) for the device with the same USB serial, reopen interface and rebuild TAP/DTM/DM, and verify IDCODE and ROM chip evidence equal the earlier ones. ESP32-S3: identity is the USB serial, IDCODE, core count and core 0 OCDID", obj(devProps)),
+			spec(F, confirm, "info", "flash identity and geometry (JEDEC, SFDP size, status), eFuse security state (read-only), partition table, protected ranges; halts the CPU and quiesces watchdogs for the call and restores them. ESP32-S3: SPI1 0x60002000 driven by the halted core; the flash pins (IO_MUX GPIO27-32, left in GPIO mode by ROM download mode) are switched to SPI for the call and put back; every running core is halted for the call; mapped_window_check reports the data-bus window 0x3C000000 only when the data cache and MMU map it", obj(devProps)),
 			spec(F, confirm, "read", "physical flash read through the SPI1 controller (not the CPU window): address, length; up to 4096 bytes inline, or any length to a new file with path (+overwrite); SHA-256 returned", flashReadArgs),
 			spec(F, confirm, "verify", "compare a file with physical flash at address without writing; any difference is an error", flashImgArgs),
 			spec(F, confirm, "backup", "read the WHOLE flash twice, require identical SHA-256, store it (mode 0600) with a manifest in dir (default $HWLAB_HOME/artifacts/esp-flash); never modifies flash. The artifact stays local", obj(devProps+`,"dir":{"type":"string"}`)),
 			spec(F, confirm, "erase", "erase flash: mode=region (address,length, 4 KiB aligned; confirm=\"erase-flash-region\"), app (partition label; \"erase-app-partition\") or chip (\"erase-entire-chip\", needs allow_chip_erase). All need allow_flash+allow_erase, backup=<verified full backup .bin>; protected ranges need confirm_protected=\"modify-protected-region\". There is no implicit mode", eraseArgs),
-			spec(F, confirm, "program", "program an image at address, touching only the 4 KiB sectors that change (edge bytes preserved), read back and compared; needs allow_flash, confirm=\"program-flash\", backup=<verified full backup>; ESP images (0xE9) are validated first (truncated/corrupt refused); reset=run|halt|none after success (needs allow_reset)", progArgs),
-			spec(F, confirm, "restore", "restore a verified full backup (path): changes only differing sectors, then compares the whole-flash SHA-256 with the backup; needs allow_flash+allow_erase, confirm=\"restore-flash\", confirm_protected=\"modify-protected-region\"", restoreArgs),
+			spec(F, confirm, "program", "program an image at address, touching only the 4 KiB sectors that change (edge bytes preserved), read back and compared; needs allow_flash, confirm=\"program-flash\", backup=<verified full backup>; ESP images (0xE9) are validated first (truncated/corrupt refused, chip id must match the connected chip); reset=run|halt|none after success (needs allow_reset). ESP32-S3: reset=none only (the default there; a system reset would boot the application), the cores stay halted", progArgs),
+			spec(F, confirm, "restore", "restore a verified full backup (path): changes only differing sectors, then compares the whole-flash SHA-256 with the backup; needs allow_flash+allow_erase, confirm=\"restore-flash\", confirm_protected=\"modify-protected-region\". ESP32-S3: reset=none only, the cores stay halted", restoreArgs),
 		},
 	}
 }
@@ -129,7 +130,7 @@ func wrap(err error) error {
 		return status.Error(codes.DeadlineExceeded, err.Error())
 	case errors.Is(err, usb.ErrDisconnected):
 		return goneErr("%v", transportErr(err))
-	case errors.Is(err, riscv.ErrHaltTimeout):
+	case errors.Is(err, riscv.ErrHaltTimeout), errors.Is(err, xtensa.ErrTimeout):
 		return status.Error(codes.DeadlineExceeded, err.Error())
 	}
 	return status.Error(codes.FailedPrecondition, transportErr(err).Error())
@@ -216,7 +217,7 @@ func (p *Plugin) run(ctx context.Context, s *session, method string, args map[st
 	cctx, cancel := context.WithTimeout(ctx, opTimeoutFor(method))
 	defer cancel()
 	res, err := s.dispatch(cctx, method, args)
-	if err == nil && s.persist && s.dm != nil && s.identity == nil {
+	if err == nil && s.persist && (s.dm != nil || s.xt != nil) && s.identity == nil {
 		// Remember what this device is so that a later reconnect can prove it
 		// is the same one.
 		if got, e := s.captureIdentity(cctx); e == nil {
@@ -227,6 +228,11 @@ func (p *Plugin) run(ctx context.Context, s *session, method string, args map[st
 }
 
 func (s *session) dispatch(cctx context.Context, method string, args map[string]any) (map[string]any, error) {
+	if xtMethods[method] {
+		if x := s.xtensaTarget(cctx); x != nil {
+			return s.xtDispatch(cctx, x, method, args)
+		}
+	}
 	switch method {
 	case "JTAGTransport.info", "DebugProbe.info":
 		return s.facts(), nil
@@ -371,6 +377,11 @@ func (s *session) facts() map[string]any {
 		"proto_version": float64(c.ProtoVersion), "apb_khz": float64(c.APBKHz), "base_khz": float64(c.BaseKHz),
 		"divider": float64(s.probe.Divisor()), "divider_min": float64(c.DivMin), "divider_max": float64(c.DivMax),
 		"tck_khz": float64(s.probe.ClockKHz()), "hart": float64(s.curHart()),
+	}
+	if s.xt != nil {
+		res["target_protocol"] = "Xtensa On-Chip Debug over JTAG (ESP32-S3)"
+		res["reset"] = "hart (core reset through the debug module; needs allow_reset)"
+		res["flash"] = "SPI1 0x60002000 through the halted core (flash pins attached for the call); no reset after program/restore"
 	}
 	return res
 }
@@ -527,6 +538,13 @@ func chipHint(id *jtag.IDCode) map[string]any {
 		return map[string]any{
 			"observed": "IDCODE 0x00010c25", "consistent_with": "ESP32-H2 (observed on a board known to carry one)",
 			"basis":      "an IDCODE match is evidence, not proof; flash and register access additionally require the ROM word to match the ESP32-H2 profile",
+			"confidence": "idcode-only",
+		}
+	}
+	if id.Raw == esp.ChipS3.IDCode {
+		return map[string]any{
+			"observed": "IDCODE 0x120034e5", "consistent_with": "ESP32-S3 (one Xtensa LX7 TAP per core; observed on a board known to carry one)",
+			"basis":      "an IDCODE match is evidence, not proof; memory writes additionally require the ROM word to match the ESP32-S3 profile",
 			"confidence": "idcode-only",
 		}
 	}

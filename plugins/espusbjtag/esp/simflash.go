@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/faronov/hwlab/internal/riscv/rvsim"
+	"github.com/faronov/hwlab/internal/xtensa/xtsim"
 )
 
 // SimFlash is a SYNTHETIC SPI1 controller plus NOR flash for tests: it
@@ -55,6 +56,12 @@ func (f *SimFlash) sfdp() []byte {
 // Device returns the register window to attach to an rvsim target.
 func (f *SimFlash) Device() rvsim.Device {
 	return rvsim.Device{Base: SPI1Base, Size: 0x100, Read: f.read, Write: f.write}
+}
+
+// XtDevice is the controller as an Xtensa simulator peripheral at base (the
+// ESP32-S3 SPI1 0x60002000).
+func (f *SimFlash) XtDevice(base uint32) xtsim.Device {
+	return xtsim.Device{Base: base, Size: 0x100, Read: f.read, Write: f.write}
 }
 
 func (f *SimFlash) read(off uint32) uint32 {

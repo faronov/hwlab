@@ -544,7 +544,7 @@ interface 1 (channel B) stays a UART for the `uart` plugin.
 
 Native Go over Linux usbfs ([ADR 0029](adr/0029-espressif-usb-jtag-riscv-dm.md)):
 no CGO, libusb, OpenOCD, ESP-IDF or Python. The device (`303a:1001`, the built-in USB of the
-ESP32-C6 and ESP32-H2; other chips with the same peripheral are refused by the flash and reset paths) exposes CDC-ACM on interfaces 0/1 and a vendor JTAG
+ESP32-C6, ESP32-H2 and ESP32-S3; other chips with the same peripheral are refused by the flash and reset paths) exposes CDC-ACM on interfaces 0/1 and a vendor JTAG
 interface 2. Only interface 2 is claimed and no kernel driver is detached, so
 `/dev/ttyACMx` stays with `cdc_acm` and keeps working through the `uart` plugin.
 
@@ -593,7 +593,26 @@ interface 2. Only interface 2 is claimed and no kernel driver is detached, so
   flash (writes the board after a fresh full backup): `HWLAB_ESPJTAG_FLASH=1 HWLAB_ESPJTAG_BACKUP_DIR=<dir>
   HWLAB_ESPJTAG_FW=<accept.bin> -run TestHWFlashAcceptance -timeout 25m`; unplug (needs a person):
   `HWLAB_ESPJTAG_UNPLUG=1 -run TestHWUnplugReplug`.
-* Status: see [phase 18](notes/phase18-esp-usb-jtag-results.md) and [phase 19](notes/phase19-esp-flash-debug-results.md) results.
+* ESP32-S3 (Xtensa LX7, [ADR 0038](adr/0038-xtensa-esp32s3.md)): the chain has two Xtensa TAPs (IDCODE `0x120034e5`,
+  IR 5+5, one per core) and the plugin switches to the Xtensa On-Chip-Debug path by itself. `hart` selects the core
+  (0 = PRO_CPU, 1 = APP_CPU). The profile needs the IDCODE and the ROM word `0x9` at `0x40001000`; image chip id `0x0009`.
+  * Use the board in **ROM download mode** (hold BOOT, press RESET). An application that drives the USB port itself
+    (USB OTG/TinyUSB, e.g. an "audio bridge" enumerating with its own VID:PID) switches USB-Serial/JTAG off: the board
+    disappears from `303a:1001` until it is put back into download mode. Core 1 is held in reset in download mode and
+    reports *unavailable*.
+  * There is no system bus: memory access needs a halted core. `MemoryAccess.read/write` halt a running core for the
+    access and resume it; `step` needs a halted core; `chip_info` never halts. `reset` supports `kind=hart` only
+    (simulator-tested); SoC/system reset is refused.
+  * Flash uses the same methods, tokens and gates as the C6, through SPI1 (`0x60002000`) driven by the halted core.
+    The flash pins are switched to the SPI function for the call (download mode leaves them as GPIOs) and put back.
+    Program/restore do not reset (`reset=none` is the default; `run`/`halt` are refused); the cores stay halted until
+    `DebugProbe.resume` or a manual reset. Speeds: read about 43–46 KB/s, program about 9 KB/s (a full 4 MiB backup,
+    two reads, takes about 190 s).
+  * Example: `examples/espusbjtag-s3.yaml` (real, non-destructive). Hardware tests: `HWLAB_ESPJTAG_HW=1
+    HWLAB_ESPJTAG_CHIP=s3 go test -tags hardware -count=1 -v ./plugins/espusbjtag/ -run TestHWS3` (read-only); a full
+    backup needs `HWLAB_ESPJTAG_S3_FLASH_BACKUP=<dir>`, the one-sector write cycle `HWLAB_ESPJTAG_S3_FLASH_WRITE=1
+    HWLAB_ESPJTAG_S3_BACKUP=<backup .bin>` (+ `HWLAB_ESPJTAG_S3_FLASH_RESTORE=1` to restore the backup in the same run).
+* Status: see [phase 18](notes/phase18-esp-usb-jtag-results.md), [phase 19](notes/phase19-esp-flash-debug-results.md) and [phase 28](notes/phase28-esp32s3-xtensa-debug-results.md) (ESP32-S3) results.
 
 ## ST-Link V2 (`stlink`)
 

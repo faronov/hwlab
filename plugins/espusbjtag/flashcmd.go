@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/faronov/hwlab/internal/riscv"
+	"github.com/faronov/hwlab/internal/xtensa"
 	"github.com/faronov/hwlab/plugins/espusbjtag/esp"
 )
 
@@ -40,7 +41,10 @@ const (
 // flashCtx is everything an ESP flash call works with while the hart is
 // halted, the watchdogs are quiesced and the SPI controller is borrowed.
 type flashCtx struct {
-	dm     *riscv.DM
+	dm     *riscv.DM    // RISC-V targets
+	core   *xtensa.Core // ESP32-S3: the halted core doing the accesses
+	bus    esp.Bus      // dm, or the core's esp.XtensaBus
+	hart   int
 	chip   *esp.Chip
 	f      *esp.Flash
 	info   esp.Info
@@ -55,6 +59,9 @@ type flashCtx struct {
 // read-only call resumes a hart it halted. A modifying call that failed
 // leaves the hart halted so that nothing runs from half-written flash.
 func (s *session) flashSession(ctx context.Context, args map[string]any, modify bool, fn func(*flashCtx) error) (err error) {
+	if x := s.xtensaTarget(ctx); x != nil {
+		return s.xtFlashSession(ctx, x, args, modify, fn)
+	}
 	dm, err := s.dmFor(ctx, args)
 	if err != nil {
 		return err
@@ -83,7 +90,7 @@ func (s *session) flashSession(ctx context.Context, args map[string]any, modify 
 	default:
 		return status.Errorf(codes.FailedPrecondition, "hart %d is %s: flash access needs a halted CPU", dm.Hart(), st.State)
 	}
-	fc := &flashCtx{dm: dm, chip: chip, ev: ev}
+	fc := &flashCtx{dm: dm, bus: dm, hart: int(dm.Hart()), chip: chip, ev: ev}
 	var q esp.Quiesced
 	quiesced := false
 	defer func() {
@@ -109,10 +116,16 @@ func (s *session) flashSession(ctx context.Context, args map[string]any, modify 
 	if fc.f, err = esp.OpenFlash(ctx, dm); err != nil {
 		return err
 	}
+	return s.flashPrepare(ctx, fc, modify, fn)
+}
+
+// flashPrepare reads the flash identity, the eFuse security state (and
+// refuses a modification it forbids) and the partition table, then runs fn.
+func (s *session) flashPrepare(ctx context.Context, fc *flashCtx, modify bool, fn func(*flashCtx) error) (err error) {
 	if fc.info, err = fc.f.ReadInfo(ctx); err != nil {
 		return err
 	}
-	if fc.sec, err = esp.ReadSecurity(ctx, dm, chip); err != nil {
+	if fc.sec, err = esp.ReadSecurity(ctx, fc.bus, fc.chip); err != nil {
 		return err
 	}
 	if modify {
@@ -254,6 +267,27 @@ func (fc *flashCtx) backupGate(ctx context.Context, args map[string]any, addr ui
 	return map[string]any{"path": path, "sha256": m.SHA256, "region_matches_flash": true}, nil
 }
 
+// xtResetPolicy: an ESP32-S3 is not reset after programming. A system reset
+// would boot the application, which may disable USB-Serial/JTAG, and is not
+// implemented for the Xtensa path; the cores stay halted instead.
+func (s *session) xtResetPolicy(ctx context.Context, rst string, given bool) (string, error) {
+	if s.dm != nil || s.xtensaTarget(ctx) == nil {
+		return rst, nil
+	}
+	if given && rst != "none" {
+		return "", status.Errorf(codes.FailedPrecondition, "reset=%s is not available on the ESP32-S3 (a system reset would boot the application, which may switch off USB-Serial/JTAG): pass reset=none (the default there); the cores stay halted, resume them with DebugProbe.resume or reset the board by hand", rst)
+	}
+	return "none", nil
+}
+
+func knownImageChips() string {
+	var l []string
+	for _, c := range esp.Chips {
+		l = append(l, fmt.Sprintf("%s 0x%04x", c.Name, c.ImageChipID))
+	}
+	return strings.Join(l, ", ")
+}
+
 // ---- helpers for images and ranges ----
 
 func imageArgs(args map[string]any) (data []byte, path string, err error) {
@@ -319,7 +353,7 @@ func (s *session) flashInfo(ctx context.Context, args map[string]any) (map[strin
 				"chip": fc.chip.Name, "jtag_idcode": fmt.Sprintf("0x%08x", fc.chip.IDCode), "image_chip_id": fmt.Sprintf("0x%04x", fc.chip.ImageChipID),
 				"chip_basis": "profile selected because both the JTAG IDCODE and the ROM word matched it",
 			},
-			"flash_writable": fc.sec.CheckFlashWritable() == nil, "hart": float64(fc.dm.Hart()),
+			"flash_writable": fc.sec.CheckFlashWritable() == nil, "hart": float64(fc.hart),
 			"basis": "JEDEC id (0x9F), SFDP (0x5A) and the status register read through the SPI1 controller, plus eFuse security fields read-only. Nothing was written.",
 		}
 		var ps []any
@@ -346,7 +380,15 @@ func (s *session) flashInfo(ctx context.Context, args map[string]any) (map[strin
 		// Mapped-window cross-check: which app partition does the CPU's flash
 		// window at 0x42000000 currently show?
 		var maps []any
+		if fc.core != nil {
+			maps = append(maps, fc.s3MappedWindow(ctx))
+			res["basis"] = "JEDEC id (0x9F), SFDP (0x5A) and the status register read through the SPI1 controller, plus eFuse security fields read-only. " +
+				"Only SPI1 and the flash-pin IO_MUX registers were changed for the call and put back. Nothing in flash was written."
+		}
 		for _, p := range fc.parts {
+			if fc.core != nil {
+				break
+			}
 			if p.Type != 0x00 || p.Size < 256 {
 				continue
 			}
@@ -653,7 +695,7 @@ func (s *session) flashProgram(ctx context.Context, args map[string]any) (map[st
 			known = known || parsed.ChipID == c.ImageChipID
 		}
 		if !known {
-			return nil, argErr(fmt.Errorf("%s targets chip id 0x%04x, not a supported chip (ESP32-C6 0x%04x, ESP32-H2 0x%04x)", path, parsed.ChipID, esp.ChipIDESP32C6, esp.ChipIDESP32H2))
+			return nil, argErr(fmt.Errorf("%s targets chip id 0x%04x, not a supported chip (%s)", path, parsed.ChipID, knownImageChips()))
 		}
 		if parsed.SizeBytes > len(data) {
 			return nil, argErr(fmt.Errorf("%s: image needs %d bytes but the file has %d", path, parsed.SizeBytes, len(data)))
@@ -664,6 +706,7 @@ func (s *session) flashProgram(ctx context.Context, args map[string]any) (map[st
 	if err != nil {
 		return nil, err
 	}
+	rstGiven := rst != ""
 	if rst == "" {
 		rst = "run"
 	}
@@ -674,6 +717,9 @@ func (s *session) flashProgram(ctx context.Context, args map[string]any) (map[st
 		return nil, err
 	}
 	if err := tokenIs(args, "confirm", tokProgram, "programming flash modifies the firmware"); err != nil {
+		return nil, err
+	}
+	if rst, err = s.xtResetPolicy(ctx, rst, rstGiven); err != nil {
 		return nil, err
 	}
 	if rst != "none" && !s.o.perm.reset {
@@ -756,6 +802,7 @@ func (s *session) flashRestore(ctx context.Context, args map[string]any) (map[st
 	if err != nil {
 		return nil, err
 	}
+	rstGiven := rst != ""
 	if rst == "" {
 		rst = "run"
 	}
@@ -766,6 +813,9 @@ func (s *session) flashRestore(ctx context.Context, args map[string]any) (map[st
 		return nil, err
 	}
 	if err := tokenIs(args, "confirm", tokRestore, "restoring a backup rewrites flash"); err != nil {
+		return nil, err
+	}
+	if rst, err = s.xtResetPolicy(ctx, rst, rstGiven); err != nil {
 		return nil, err
 	}
 	if rst != "none" && !s.o.perm.reset {

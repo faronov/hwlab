@@ -1,6 +1,7 @@
 // Package sim is a SYNTHETIC Espressif USB-JTAG device: a usb.Port that
 // answers the vendor control requests, decodes the nibble command stream and
-// clocks an rvsim RISC-V target. It exists for tests, replay and demos.
+// clocks an rvsim RISC-V target (or, with Config.Xtensa, an xtsim Xtensa
+// chain such as a synthetic ESP32-S3). It exists for tests, replay and demos.
 // Nothing it reports is evidence about real hardware.
 package sim
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/faronov/hwlab/internal/riscv/rvsim"
 	"github.com/faronov/hwlab/internal/usb"
+	"github.com/faronov/hwlab/internal/xtensa/xtsim"
 	"github.com/faronov/hwlab/plugins/espusbjtag/espusb"
 )
 
@@ -27,6 +29,10 @@ type Config struct {
 	// Shared, when set, is the target behind the device instead of a fresh
 	// one, so state (a halted hart) survives reopening the port.
 	Shared *rvsim.Target
+	// Xtensa, when set, is the JTAG chain behind the device instead of the
+	// RISC-V target (Target and Shared are then unused). It is shared by
+	// every Device made from this Config.
+	Xtensa *xtsim.Chain
 	// Caps overrides RealCaps.
 	Caps []byte
 	// MaxPacket is the IN packet size (default 64).
@@ -51,6 +57,7 @@ type Device struct {
 	mu  sync.Mutex
 	cfg Config
 	T   *rvsim.Target
+	clk interface{ Clock(tms, tdi bool) bool }
 
 	closed       bool
 	disconnected bool
@@ -77,7 +84,11 @@ func New(cfg Config) *Device {
 	if t == nil {
 		t = rvsim.New(cfg.Target)
 	}
-	return &Device{cfg: cfg, T: t, fifo: append([]byte(nil), cfg.StaleIn...), failOutAfter: -1}
+	d := &Device{cfg: cfg, T: t, clk: t, fifo: append([]byte(nil), cfg.StaleIn...), failOutAfter: -1}
+	if cfg.Xtensa != nil {
+		d.clk = cfg.Xtensa
+	}
+	return d
 }
 
 // Controls returns the control requests received.
@@ -178,7 +189,7 @@ func (d *Device) BulkOut(ctx context.Context, ep uint8, data []byte, _ time.Dura
 	for _, c := range espusb.Decode(data) {
 		switch {
 		case c < 8:
-			tdo := d.T.Clock(c&2 != 0, c&1 != 0)
+			tdo := d.clk.Clock(c&2 != 0, c&1 != 0)
 			if c&4 != 0 {
 				d.bits = append(d.bits, tdo)
 			}
