@@ -67,8 +67,38 @@ type Flash struct {
 	pinsWas []uint32 // their values before, put back on Close
 	size    int
 	opened  bool
+	// pace is the number of extra CMD reads queued between starting a
+	// transaction and the CMD read that confirms it finished. It starts at 0
+	// and grows only when a transaction is seen unfinished, as in the ESP32-H2
+	// ROM download loader, where SPI1 runs from the 32 MHz XTAL divided by 4.
+	pace int
 	// Counters for diagnostics and tests.
 	Transactions int
+	// Unfinished counts transactions seen still running at their check.
+	Unfinished int
+}
+
+// maxPace bounds the extra CMD reads queued per transaction.
+const maxPace = 64
+
+// slower records an unfinished transaction and lengthens the pause the
+// following pipelined transactions leave before checking for completion.
+func (f *Flash) slower() {
+	f.Unfinished++
+	f.pace = min(max(1, f.pace*2), maxPace)
+}
+
+// Pace reports the current number of extra CMD reads per transaction.
+func (f *Flash) Pace() int { return f.pace }
+
+// checkOps returns the CMD reads that follow a started transaction; the last
+// one is the completion check.
+func (f *Flash) checkOps() []riscv.BusOp {
+	ops := make([]riscv.BusOp, 0, f.pace+1)
+	for i := 0; i <= f.pace; i++ {
+		ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: f.base + spiCmd, Words: 1})
+	}
+	return ops
 }
 
 // OpenFlash prepares the controller: waits until the host is idle and saves
@@ -253,36 +283,39 @@ func unpackWords(w []uint32, n int) []byte {
 }
 
 // run executes a user transaction and returns the bytes read. It waits for the
-// controller to go idle first, and verifies in the same pipelined transfer
-// that the command had completed before the result buffer was read.
+// controller to go idle first, and checks in the same pipelined transfer that
+// the command had completed before the result buffer was read. A transaction
+// still running at the check is waited for and its result read afterwards;
+// it is not repeated.
 func (f *Flash) run(ctx context.Context, t txn) ([]byte, error) {
-	for try := 0; ; try++ {
-		ops := t.ops(f.base)
-		ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: f.base + spiCmd, Words: 1})
-		doneAt := len(ops) - 1
-		if t.miso > 0 {
-			ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: f.base + spiW0, Words: (t.miso + 3) / 4})
-		}
-		r, err := f.dm.BusBatch(ctx, ops)
-		if err != nil {
-			return nil, err
-		}
-		f.Transactions++
-		if r[doneAt][0] == 0 {
-			if t.miso > 0 {
-				return unpackWords(r[doneAt+1], t.miso), nil
-			}
-			return nil, nil
-		}
-		// Not finished when the CMD register was read: wait, then repeat the
-		// whole transaction (reads and WREN are harmless to repeat).
-		if try >= 3 {
-			return nil, fmt.Errorf("%w (CMD=%#x)", ErrController, r[doneAt][0])
-		}
-		if err := f.waitHostIdle(ctx); err != nil {
-			return nil, err
-		}
+	ops := append(t.ops(f.base), f.checkOps()...)
+	doneAt := len(ops) - 1
+	if t.miso > 0 {
+		ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: f.base + spiW0, Words: (t.miso + 3) / 4})
 	}
+	r, err := f.dm.BusBatch(ctx, ops)
+	if err != nil {
+		return nil, err
+	}
+	f.Transactions++
+	if r[doneAt][0] == 0 {
+		if t.miso > 0 {
+			return unpackWords(r[doneAt+1], t.miso), nil
+		}
+		return nil, nil
+	}
+	f.slower()
+	if err := f.waitHostIdle(ctx); err != nil {
+		return nil, fmt.Errorf("%w (CMD=%#x at the check)", err, r[doneAt][0])
+	}
+	if t.miso == 0 {
+		return nil, nil
+	}
+	w, err := f.dm.BusBatch(ctx, []riscv.BusOp{{Kind: riscv.BusRead, Addr: f.base + spiW0, Words: (t.miso + 3) / 4}})
+	if err != nil {
+		return nil, err
+	}
+	return unpackWords(w[0], t.miso), nil
 }
 
 // JEDEC reads manufacturer, memory type and capacity code (command 0x9F).

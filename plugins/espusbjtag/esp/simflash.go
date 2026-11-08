@@ -27,6 +27,12 @@ type SimFlash struct {
 	// before SPI_ATTACH): every user command reads all-ones and changes
 	// nothing. Set and clear it with SetDetached.
 	Detached bool
+	// Latency models a slow SPI clock (the ROM download loader runs SPI1 at
+	// XTAL/4): a user command stays running, with its result not yet in the
+	// buffer, for this many reads of the CMD register.
+	Latency  int
+	running  uint32 // CMD value of the command still running
+	left     int    // CMD reads until it finishes
 	Erases   int
 	Programs int
 	Reads    int
@@ -71,8 +77,21 @@ func (f *SimFlash) XtDevice(base uint32) xtsim.Device {
 func (f *SimFlash) read(off uint32) uint32 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.regs[off/4%uint32(len(f.regs))]
+	i := off / 4 % uint32(len(f.regs))
+	if i == spiCmd/4 && f.left > 0 {
+		f.left--
+		if f.left == 0 {
+			f.exec(f.running)
+		}
+		// Still running: USR set, master state 2, slave state 5 (read data),
+		// as seen on the ESP32-H2 in download mode.
+		return f.running | 0x52
+	}
+	return f.regs[i]
 }
+
+// SetLatency sets Latency under the controller lock.
+func (f *SimFlash) SetLatency(n int) { f.mu.Lock(); f.Latency = n; f.mu.Unlock() }
 
 func (f *SimFlash) write(off, v uint32) {
 	f.mu.Lock()
@@ -80,6 +99,10 @@ func (f *SimFlash) write(off, v uint32) {
 	i := off / 4 % uint32(len(f.regs))
 	if i == spiCmd/4 {
 		f.regs[i] = 0
+		if f.Latency > 0 && v&cmdUSR != 0 {
+			f.running, f.left = v, f.Latency
+			return
+		}
 		f.exec(v)
 		return
 	}

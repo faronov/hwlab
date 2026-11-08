@@ -154,7 +154,7 @@ func (f *Flash) readBatchAt(ctx context.Context, addr uint32, n int) ([]byte, er
 		for off := 0; off < n; off += MaxChunk {
 			c := min(MaxChunk, n-off)
 			ops = append(ops, txn{cmd: 0x0B, addr: addr + uint32(off), hasA: true, dummy: 8, miso: c}.ops(f.base)...)
-			ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: f.base + spiCmd, Words: 1})
+			ops = append(ops, f.checkOps()...)
 			d := len(ops) - 1
 			ops = append(ops, riscv.BusOp{Kind: riscv.BusRead, Addr: f.base + spiW0, Words: (c + 3) / 4})
 			cs = append(cs, chunk{d, d + 1, c})
@@ -176,16 +176,17 @@ func (f *Flash) readBatchAt(ctx context.Context, addr uint32, n int) ([]byte, er
 		if ok {
 			return out, nil
 		}
+		// A chunk was still running at its check: the controller is slower
+		// than the pipelined transfer. Wait for it, then repeat the batch
+		// (reads are harmless to repeat) with a longer pause per chunk.
+		f.slower()
 		if err := f.waitHostIdle(ctx); err != nil {
 			return nil, err
 		}
-		if n > MaxChunk {
-			// Fall back to one transaction at a time: slower but each one is
-			// confirmed finished before its data is read.
-			return f.readSlow(ctx, addr, n)
-		}
 	}
-	return nil, ErrController
+	// Still racing at the longest pause: one transaction at a time, each
+	// confirmed finished before its data is read.
+	return f.readSlow(ctx, addr, n)
 }
 
 func (f *Flash) readSlow(ctx context.Context, addr uint32, n int) ([]byte, error) {

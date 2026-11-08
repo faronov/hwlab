@@ -123,6 +123,63 @@ func TestReadAnyRange(t *testing.T) {
 	}
 }
 
+// TestSlowController covers SPI1 running slower than the pipelined JTAG
+// transfer (the H2 ROM download loader clocks it from XTAL/4): a transaction
+// still running at its check is waited for, not trusted, and the driver
+// lengthens its pause instead of failing. A fast controller never adds one.
+func TestSlowController(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		fast := newRig(t, 1<<20, batch)
+		fill(fast.fl.Mem, 7)
+		ff, _ := fast.flash(t)
+		if _, err := ff.Read(ctx, 0, 4096); err != nil {
+			t.Fatal(err)
+		}
+		if ff.Pace() != 0 || ff.Unfinished != 0 {
+			t.Fatalf("batch=%v: a fast controller grew pace %d (%d unfinished)", batch, ff.Pace(), ff.Unfinished)
+		}
+
+		for _, lat := range []int{3, 40} {
+			r := newRig(t, 1<<20, batch)
+			fill(r.fl.Mem, 8)
+			r.fl.SetLatency(lat)
+			f, info := r.flash(t) // JEDEC and SFDP through the slow path
+			if info.JEDEC != "ef4014" || info.SizeBytes != 1<<20 {
+				t.Fatalf("lat=%d: %+v", lat, info)
+			}
+			for _, c := range []struct {
+				a uint32
+				n int
+			}{{0, 2048}, {63, 130}, {0x1234, 777}} {
+				got, err := f.Read(ctx, c.a, c.n)
+				if err != nil {
+					t.Fatalf("batch=%v lat=%d %+v: %v", batch, lat, c, err)
+				}
+				if !bytes.Equal(got, r.fl.Mem[c.a:int(c.a)+c.n]) {
+					t.Fatalf("batch=%v lat=%d %+v: stale or wrong data", batch, lat, c)
+				}
+			}
+			if f.Unfinished == 0 || f.Pace() == 0 {
+				t.Fatalf("lat=%d: slow controller not detected (pace %d)", lat, f.Pace())
+			}
+			if err := f.Erase(ctx, 0x20000, 0x1000, nil); err != nil {
+				t.Fatal(err)
+			}
+			data := make([]byte, 700)
+			fill(data, 9)
+			if err := f.Program(ctx, 0x20010, data, nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.Verify(ctx, 0x20010, data); err != nil {
+				t.Fatalf("lat=%d: %v", lat, err)
+			}
+			if !bytes.Equal(r.fl.Mem[0x20010:0x20010+700], data) {
+				t.Fatalf("lat=%d: flash content differs", lat)
+			}
+		}
+	}
+}
+
 func TestReadErrors(t *testing.T) {
 	r := newRig(t, 1<<20, false)
 	f, _ := r.flash(t)
