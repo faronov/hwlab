@@ -596,6 +596,10 @@ interface 2. Only interface 2 is claimed and no kernel driver is detached, so
   return address, and the call must stop there with the original `sp`; everything is restored afterwards and no target
   memory is written. The result carries `rom_flash_attach`. Outside the ROM, or on the C6 profile (no entry), a flash
   that does not answer stays an error. The attach lasts until the next reset.
+  In the loader SPI1 runs from the 32 MHz XTAL divided by 4, slower than the pipelined JTAG transfer: a transaction
+  still running at its check is waited for and read afterwards (never trusted or blindly repeated), and the pause
+  before each check grows until batched reads keep up. Tested on a real ESP32-H2 (GD25Q32): attach, verified 4 MiB
+  backup (about 128 s), program of a 270 KiB app at `0x10000` and verify.
 * Examples: `examples/espusbjtag-c6-debug.yaml` (real, non-destructive; SRAM scratch restored).
 * Hardware tests: `HWLAB_ESPJTAG_HW=1 go test -tags hardware -count=1 -v ./plugins/espusbjtag/ -run 'TestHWDebug'`;
   flash (writes the board after a fresh full backup): `HWLAB_ESPJTAG_FLASH=1 HWLAB_ESPJTAG_BACKUP_DIR=<dir>
