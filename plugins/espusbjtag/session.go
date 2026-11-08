@@ -158,6 +158,10 @@ type session struct {
 	// opposed to the one-call session of an ad-hoc invoke.
 	persist bool
 
+	// attached is set when the last flash call had to attach the flash
+	// through the ROM (download loader); mark reports it once.
+	attached map[string]any
+
 	closed bool
 	mu     sync.Mutex // serialises operations
 }

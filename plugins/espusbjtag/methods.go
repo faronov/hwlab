@@ -394,6 +394,10 @@ func (s *session) mark(res map[string]any, real bool) map[string]any {
 	}
 	res["usb_serial"] = s.entry.Dev.Serial
 	res["device"] = s.entry.ID
+	if s.attached != nil {
+		res["rom_flash_attach"] = s.attached
+		s.attached = nil
+	}
 	return res
 }
 

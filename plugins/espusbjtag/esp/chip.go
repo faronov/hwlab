@@ -140,6 +140,12 @@ type Chip struct {
 	// SPI1 sees no flash chip until they are attached (esptool calls the ROM
 	// SPI_ATTACH for the same reason).
 	FlashPins []uint32 `json:"flash_pins_iomux,omitempty"`
+	// ROMSPIAttach is the mask-ROM entry of spi_flash_attach
+	// (esp_rom_spiflash_attach) from the ESP-IDF ROM linker script. It is
+	// called only when the flash does not answer while the hart is halted in
+	// ROM (the download loader has not attached it yet). Zero means the
+	// profile never calls it, and a flash that does not answer stays an error.
+	ROMSPIAttach uint32 `json:"rom_spi_flash_attach,omitempty"`
 }
 
 // EfuseBit is a bit position in the EFUSE_RD_REPEAT_DATA0.. words.
@@ -238,6 +244,8 @@ var ChipH2 = Chip{
 	},
 	WDT:  WDTMap{TIMG0: 0x60009000, TIMG1: 0x6000A000, LP: 0x600B1C00, LPConfig0: 0x00, LPConfig1: 0x04, LPFeed: 0x18, LPProtect: 0x1C, SWDConf: 0x20, SWDProtect: 0x24},
 	SPI1: SPI1Base, EfuseRepeat0: 0x600B0830,
+	// esp32h2.rom.ld (ESP-IDF v5.x, esp-rom-sys 0.1.4): spi_flash_attach = 0x400001d4
+	ROMSPIAttach: 0x400001d4,
 }
 
 // ChipS3 is the ESP32-S3 profile (dual Xtensa LX7; reached through the

@@ -23,9 +23,13 @@ type SimFlash struct {
 	CorruptProgram bool // program flips bit 0 of the first byte of each chunk
 	Protected      bool // write-enable never sets the latch
 	StuckBusy      bool // WIP never clears
-	Erases         int
-	Programs       int
-	Reads          int
+	// Detached models flash pads not yet attached (the ROM download loader
+	// before SPI_ATTACH): every user command reads all-ones and changes
+	// nothing. Set and clear it with SetDetached.
+	Detached bool
+	Erases   int
+	Programs int
+	Reads    int
 }
 
 // NewSimFlash returns an erased flash of size bytes with JEDEC ef4016-style id
@@ -114,9 +118,15 @@ func (f *SimFlash) putW(b []byte) {
 	}
 }
 
+// SetDetached sets Detached under the controller lock (it may be flipped from
+// a simulator hook while the driver is running).
+func (f *SimFlash) SetDetached(v bool) { f.mu.Lock(); f.Detached = v; f.mu.Unlock() }
+
 func (f *SimFlash) exec(cmd uint32) {
 	addr := f.regs[spiAddr/4]
 	switch {
+	case cmd&cmdUSR != 0 && f.Detached:
+		f.putW(make64(0xFF))
 	case cmd&cmdUSR != 0:
 		user, user2 := f.regs[spiUser/4], f.regs[0x20/4]
 		op := byte(user2)
@@ -200,4 +210,12 @@ func (f *SimFlash) erase(cmd uint32, op byte, addr uint32) {
 	f.sr &^= 2
 	f.busy = 2
 	f.Erases++
+}
+
+func make64(v byte) []byte {
+	b := make([]byte, MaxChunk)
+	for i := range b {
+		b[i] = v
+	}
+	return b
 }

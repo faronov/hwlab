@@ -91,6 +91,7 @@ func (s *session) flashSession(ctx context.Context, args map[string]any, modify 
 		return status.Errorf(codes.FailedPrecondition, "hart %d is %s: flash access needs a halted CPU", dm.Hart(), st.State)
 	}
 	fc := &flashCtx{dm: dm, bus: dm, hart: int(dm.Hart()), chip: chip, ev: ev}
+	s.attached = nil
 	var q esp.Quiesced
 	quiesced := false
 	defer func() {
@@ -123,7 +124,15 @@ func (s *session) flashSession(ctx context.Context, args map[string]any, modify 
 // refuses a modification it forbids) and the partition table, then runs fn.
 func (s *session) flashPrepare(ctx context.Context, fc *flashCtx, modify bool, fn func(*flashCtx) error) (err error) {
 	if fc.info, err = fc.f.ReadInfo(ctx); err != nil {
-		return err
+		if !errors.Is(err, esp.ErrNoFlash) || fc.chip.ROMSPIAttach == 0 || fc.dm == nil {
+			return err
+		}
+		// The flash does not answer. If the hart is in ROM this is the
+		// download loader before any SPI_ATTACH: attach it through the ROM,
+		// as esptool does, and read again. Anywhere else it stays an error.
+		if err = s.romAttach(ctx, fc, fc.chip); err != nil {
+			return err
+		}
 	}
 	if fc.sec, err = esp.ReadSecurity(ctx, fc.bus, fc.chip); err != nil {
 		return err
@@ -141,6 +150,35 @@ func (s *session) flashPrepare(ctx context.Context, fc *flashCtx, modify bool, f
 		fc.parts, fc.tabErr = esp.ParsePartitionTable(tb)
 	}
 	return fn(fc)
+}
+
+// romAttach calls the ROM's spi_flash_attach when the hart is halted in
+// ROM, then re-borrows SPI1 (so Close keeps the attached configuration) and
+// reads the flash identity again. What it did is reported with the result.
+func (s *session) romAttach(ctx context.Context, fc *flashCtx, chip *esp.Chip) error {
+	hi, err := fc.dm.HaltedInfo(ctx)
+	if err != nil {
+		return err
+	}
+	if !chip.InDownloadLoader(hi.PC) {
+		return status.Errorf(codes.FailedPrecondition, "the flash does not answer (JEDEC all-ones/zeros) and the hart is halted at 0x%08x, outside the ROM download loader: not attaching it", hi.PC)
+	}
+	if err := fc.f.Close(ctx); err != nil {
+		return err
+	}
+	fc.f = nil
+	at, err := esp.AttachFlashROM(ctx, fc.dm, chip)
+	if err != nil {
+		return err
+	}
+	if fc.f, err = esp.OpenFlash(ctx, fc.dm); err != nil {
+		return err
+	}
+	if fc.info, err = fc.f.ReadInfo(ctx); err != nil {
+		return fmt.Errorf("the ROM attach returned but the flash still does not answer: %w", err)
+	}
+	s.attached, err = toMap(at)
+	return err
 }
 
 // chipProfile identifies the target from the JTAG IDCODE (scanned when the

@@ -55,6 +55,7 @@ var (
 	ErrVerify     = errors.New("flash: verify mismatch")
 	ErrFlashBusy  = errors.New("flash: chip stayed busy (write-in-progress)")
 	ErrController = errors.New("flash: SPI controller did not finish a transaction")
+	ErrNoFlash    = errors.New("flash: JEDEC id says no flash chip answers")
 )
 
 // Flash drives the SPI flash through SPI1.

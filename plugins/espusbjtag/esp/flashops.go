@@ -43,7 +43,7 @@ func (f *Flash) ReadInfo(ctx context.Context) (Info, error) {
 		return Info{}, err
 	}
 	if id == [3]byte{} || id == [3]byte{0xFF, 0xFF, 0xFF} {
-		return Info{}, fmt.Errorf("flash: JEDEC id %x says no flash chip answers", id)
+		return Info{}, fmt.Errorf("%w (JEDEC id %x)", ErrNoFlash, id)
 	}
 	st, err := f.Status(ctx)
 	if err != nil {

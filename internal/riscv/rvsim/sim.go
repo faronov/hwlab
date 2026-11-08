@@ -56,6 +56,10 @@ type Config struct {
 	HartCSRs map[int]map[uint16]uint32
 	// ResetDropsDM makes ndmreset clear the whole debug module state.
 	ResetDropsDM bool
+	// OnResume, when set, is called with the hart index, its pc and GPRs
+	// whenever a hart resumes (not single-steps), before execution is
+	// modelled. Tests use it to model what the code at pc does.
+	OnResume func(hart int, pc uint32, gpr *[32]uint32)
 }
 
 const (
@@ -159,6 +163,9 @@ func (t *Target) Active() bool { return t.active }
 
 // SetGPR sets a general purpose register of hart 0.
 func (t *Target) SetGPR(n int, v uint32) { t.harts[0].gpr[n] = v }
+
+// GPR returns register xN of hart 0.
+func (t *Target) GPR(n int) uint32 { return t.harts[0].gpr[n] }
 
 // SetCSR sets a CSR of hart h.
 func (t *Target) SetCSR(h int, reg uint16, v uint32) { t.harts[h].csr[reg] = v }
@@ -424,6 +431,9 @@ func (t *Target) dmControl(v uint32) {
 		h.resumeAck = true
 		if h.halted {
 			h.halted = false
+			if t.cfg.OnResume != nil && h.csr[0x7B0]&(1<<2) == 0 {
+				t.cfg.OnResume(idx, h.csr[0x7B1], &h.gpr)
+			}
 			t.resume(h)
 		}
 	} else if v>>31&1 == 1 {

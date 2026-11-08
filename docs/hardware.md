@@ -588,6 +588,14 @@ interface 2. Only interface 2 is claimed and no kernel driver is detached, so
   LP_WDT WPROTECT `+0x18` (unchanged); H2 TIMG0/1 `0x60009000`/`0x6000A000`, LP_WDT FEED/WPROTECT `+0x18`/`+0x1C`,
   and the H2 super watchdog gets SWD_AUTO_FEED_EN for the halt (as esptool does) and its old value back afterwards.
   SPI1 (`0x60003000`) and the eFuse RD_REPEAT_DATA0..3 security fields are identical on both.
+* Download mode (ESP32-H2 only): the ROM download loader does not attach the SPI flash until a host sends
+  SPI_ATTACH, so every SPI1 command reads all-ones. When a flash call sees JEDEC all-ones/zeros, the profile has a ROM
+  attach entry (H2 `spi_flash_attach` `0x400001d4`, from the ESP-IDF ROM linker script) and the hart is halted inside
+  the ROM, the plugin calls `spi_flash_attach(0, false)` through the debug module, as esptool's SPI_ATTACH does: all
+  GPRs, `dpc`, `mstatus` and `dcsr` are saved, interrupts are masked, an execute breakpoint on the halted pc is the
+  return address, and the call must stop there with the original `sp`; everything is restored afterwards and no target
+  memory is written. The result carries `rom_flash_attach`. Outside the ROM, or on the C6 profile (no entry), a flash
+  that does not answer stays an error. The attach lasts until the next reset.
 * Examples: `examples/espusbjtag-c6-debug.yaml` (real, non-destructive; SRAM scratch restored).
 * Hardware tests: `HWLAB_ESPJTAG_HW=1 go test -tags hardware -count=1 -v ./plugins/espusbjtag/ -run 'TestHWDebug'`;
   flash (writes the board after a fresh full backup): `HWLAB_ESPJTAG_FLASH=1 HWLAB_ESPJTAG_BACKUP_DIR=<dir>
