@@ -55,13 +55,16 @@ errors. Codes: `INVALID_ARGUMENT`, `BAD_ADDRESS`, `NOT_FOUND`,
 
 * Dangerous operations need `confirm: true` (`CONFIRMATION_REQUIRED`
   otherwise) and the plugin's own `allow_*` configuration
-  (`PERMISSION_DENIED`). Flash erase/program additionally need the plugin
+  (`PERMISSION_DENIED`), set in `config` (e.g. `"config": {"allow_flash": true}`),
+  never in `args`. Flash erase/program additionally need the plugin
   confirmation token; chip erase needs `allow_chip_erase`.
 * Addresses are validated as 64-bit values (decimal or `0x` hex strings, or
   numbers); out-of-range input is `INVALID_ARGUMENT`/`BAD_ADDRESS`.
 * File-path arguments (`path`, `dir`, …) are confined under
   `<HWLAB_HOME>/artifacts`; relative paths land in `artifacts/mcp/`.
-  Escapes (`..`, absolute outside the root, symlinks) → `PATH_DENIED`.
+  Escapes (`..`, absolute outside the root, symlinks) → `PATH_DENIED`; the
+  message names the root. Copy a firmware image into the artifacts directory
+  before programming it.
 * Raw captures and flash images are never returned inline. Use `artifact_*`:
   `artifact_read` is bounded (a 1 MiB request is refused) and confined.
 * Flash programming through generic memory-write is refused.

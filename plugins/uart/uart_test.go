@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -268,6 +269,27 @@ func TestReadWriteOnOpenPort(t *testing.T) {
 	_, bin, _ = invoke(t, p, "ttyACM0", "read", map[string]any{"max_bytes": 4.0, "timeout_ms": 500.0}, nil)
 	if string(bin) != "0123" {
 		t.Errorf("max_bytes: %q", bin)
+	}
+}
+
+func TestReadTextIsNotCutAt200(t *testing.T) {
+	p, fp := newFakePlugin(t)
+	if err := p.OpenDevice(context.Background(), "ttyACM0", nil); err != nil {
+		t.Fatal(err)
+	}
+	line := strings.Repeat("0123456789", 50)
+	fp.push(line)
+	res, _, err := invoke(t, p, "ttyACM0", "read", map[string]any{"max_bytes": 500.0, "timeout_ms": 500.0}, nil)
+	if err != nil || res["text"] != strconv.Quote(line) || res["text_truncated"] != nil {
+		t.Fatalf("a 500-byte read must be shown whole: %v %v", res, err)
+	}
+	fp.push(line)
+	res, bin, err := invoke(t, p, "ttyACM0", "read", map[string]any{"max_bytes": 500.0, "timeout_ms": 500.0, "text_max": 10.0}, nil)
+	if err != nil || len(bin) != 500 || res["text"] != strconv.Quote(line[:10])+"…" || res["text_truncated"] != true || res["note"] == nil {
+		t.Fatalf("text_max: %v %v", res, err)
+	}
+	if _, _, err := invoke(t, p, "ttyACM0", "read", map[string]any{"text_max": 0.0}, nil); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("text_max 0: %v", err)
 	}
 }
 

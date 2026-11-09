@@ -224,12 +224,14 @@ func (a *App) confineFiles(args map[string]any) (map[string]any, error) {
 		}
 		p = filepath.Clean(p)
 		if !within(root, p) && !within(realRoot, p) {
-			return nil, apperr.Newf(apperr.PathDenied, "args.%s: %q is outside the hwlab artifacts directory %s", k, s, root)
+			return nil, apperr.Newf(apperr.PathDenied, "args.%s: %q is outside the hwlab artifacts directory %s: over MCP, "+
+				"file arguments must be inside it (a relative path resolves under %s); copy the file there first", k, s, root, filepath.Join(root, "mcp"))
 		}
 		// Resolve symlinks of the deepest existing ancestor.
 		real, err := evalExisting(p)
 		if err != nil || !within(realRoot, real) {
-			return nil, apperr.Newf(apperr.PathDenied, "args.%s: %q resolves outside the hwlab artifacts directory", k, s)
+			return nil, apperr.Newf(apperr.PathDenied, "args.%s: %q resolves outside the hwlab artifacts directory %s "+
+				"(a symlink or .. leads out of it): copy the file into the directory instead of linking it", k, s, root)
 		}
 		if k != "dir" {
 			if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {

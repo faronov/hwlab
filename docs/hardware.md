@@ -106,7 +106,13 @@ Other keys: `interface`, `speed_khz`, `rtt_host`, `rtt_port`, `rtt_launch`
 (`false` attaches to an RTT server you already run), `rtt_connect_timeout_ms`,
 `rtt_address` (RTT control block address, e.g. from the firmware map file; sent
 as `exec SetRTTAddr`. The J-Link software's own block search did not find a
-block in RAM on the DK, an explicit address did).
+block in RAM on the DK, an explicit address did), `reset: true` (resets the
+target and lets it run in its own Commander session just before RTT attaches;
+a dangerous key, so the capture needs `--yes` / MCP `confirm: true`; the RTT stream
+gets `reset=run`, `reset_start_ns`, `reset_end_ns`; boot output waits in the
+target's RTT buffer until RTT attaches; a target still halted afterwards fails
+the start). A string `reset` (`run`/`halt`/`none`) is the flash methods' argument
+and does not reset at capture start.
 Halt, reset, register reads, memory writes and flashing need `--yes`.
 RTT lines are stamped on host receive, so their clock bound is `[0, +inf)`.
 `rtt: false` makes the device call-only: no long-running Commander session.
@@ -123,7 +129,14 @@ SEGGER's DLL lets other processes share only one probe that a long-running
 session holds, so with two probes run RTT on one and set `rtt: false` on the
 other (`examples/jlink-multiprobe.yaml`). Each Commander call is its own
 session and the target runs again when it ends, so `halt` is confirmed with
-`IsHalted` inside the same call and register reads are one script with the halt.
+`IsHalted` inside the same call. `read_registers` first asks for the CPU state;
+a running core is halted (`h`, confirmed), read and resumed (`g`) in one
+session, a halted one is read and left halted. The result has `was_halted`,
+`halted` (state after the call) and `resumed`. `resume` reports `was_halted`;
+on a core that was already running it succeeds with a note.
+`MemoryAccess.read` returns hex inline; `path=<new file>` (`overwrite=true`
+replaces) writes the bytes there instead and returns `path` and `sha256`, plus
+the hex when at most 4096 bytes.
 udev (used for the SAM-ICE, whose node was root-only; adjust `OWNER`):
 `SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1366", OWNER="alexx", MODE="0600"`,
 then replug the probe.
@@ -147,8 +160,14 @@ over its time limit `TIMEOUT` (only the spawned `JLinkExe` is killed).
 | `program` | `--yes`, `allow_flash` (+`allow_erase` when a bit must go 0→1), token `program-flash`, `backup=` | `.bin` (with `address`) or Intel `.hex`; reads the covering sectors, merges the image, writes only changed sectors with `loadbin` (bytes outside the image are preserved) and reads them all back (`VERIFY_FAILED` on mismatch) |
 | `restore` | `--yes`, `allow_flash`+`allow_erase`, token `restore-flash` | `path=<backup .bin>` whose manifest names this device, base and size; writes differing sectors, then the whole-bank SHA-256 must equal the backup |
 
-`allow_*` count only in the device configuration (`--config allow_flash=true`),
-never in call arguments, and the plugin declares them dangerous. `backup=` must be
+`allow_*` count only in the device configuration (`--config allow_flash=true`,
+MCP `target_op` `"config": {"allow_flash": true}` with `confirm: true`),
+never in call arguments, and the plugin declares them dangerous. The
+`PERMISSION_DENIED` message names the missing key, how to set it, and says so
+when the key was passed as a call argument instead. Over MCP the image, backup
+and other file arguments must be inside `$HWLAB_HOME/artifacts` (relative paths
+resolve under `artifacts/mcp/`); copy the file there first (`PATH_DENIED`
+otherwise). These checks are not bypassable. `backup=` must be
 a backup made by `FlashProgramming.backup` (manifest checked) whose affected sectors
 still equal the flash or are blank; a stale backup is `PRECONDITION_FAILED`.
 The flash geometry for erase/program/restore comes from SEGGER's list and the
@@ -305,7 +324,9 @@ never open ports themselves.
   `max_chunk_bytes`, `max_chunk_ms`. `dtr`/`rts` initial levels are dangerous
   config keys (they reset many boards).
 - Methods: `read`, `status`, `configure`, `flush` are safe; `write` and
-  `set_lines` need `--yes`.
+  `set_lines` need `--yes`. `read` returns `text` (quoted) for the first
+  `text_max` bytes (default 65536, at most 1 MiB; `text_truncated: true` and a
+  note when cut) and `hex` up to 256 bytes; `max_bytes` defaults to 256.
 - Timestamps are when the host read returned; USB-serial latency (e.g. 16 ms
   FTDI default) is not measured, and no precision is claimed.
 - The serial port is exclusive: close other terminals first. On Linux you need

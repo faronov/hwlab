@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/faronov/hwlab/internal/adiv5"
 	"github.com/faronov/hwlab/internal/cortexm"
+	"github.com/faronov/hwlab/internal/ownedtemp"
 	"github.com/faronov/hwlab/internal/usb"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
@@ -101,15 +103,16 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 		RuntimeRequirements: []*pluginv1.RuntimeRequirement{
 			{Name: "JLinkExe", Kind: "binary", Optional: false, Description: desc, Satisfied: ok},
 		},
-		DangerousConfigKeys: []string{"allow_flash", "allow_erase", "allow_chip_erase"},
+		// reset: true resets the target when a capture starts.
+		DangerousConfigKeys: []string{"allow_flash", "allow_erase", "allow_chip_erase", "reset"},
 		Methods: []*pluginv1.MethodSpec{
 			safe(pluginv1.CapDebugProbe, "info", "probe firmware, hardware version and measured target voltage (VTref); needs no target", `{"type":"object"}`),
 			safe(pluginv1.CapDebugProbe, "connect", "connect to the target and report the core; args: "+"target, interface, speed_khz", `{"type":"object","required":["target"],"properties":{`+targetProps+`}}`),
 			confirm(pluginv1.CapDebugProbe, "halt", "halt the target CPU and confirm it with IsHalted; every call is its own commander session and the target runs again when it ends", `{"type":"object","properties":{`+targetProps+`}}`),
-			confirm(pluginv1.CapDebugProbe, "resume", "resume the target CPU and confirm it is running", `{"type":"object","properties":{`+targetProps+`}}`),
+			confirm(pluginv1.CapDebugProbe, "resume", "resume the target CPU and confirm it is running; was_halted tells whether it was halted before (Commander lets the core run again when a session ends, so after halt or read_registers it usually already runs)", `{"type":"object","properties":{`+targetProps+`}}`),
 			confirm(pluginv1.CapDebugProbe, "reset", "reset the target; resumes it unless run=false", `{"type":"object","properties":{`+targetProps+`,"run":{"type":"boolean"}}}`),
-			confirm(pluginv1.CapDebugProbe, "read_registers", "halt the target and read the CPU registers", `{"type":"object","properties":{`+targetProps+`}}`),
-			safe(pluginv1.CapMemoryAccess, "read", "read target memory; args: address, length (bytes, max 1 MiB). May halt the CPU briefly", `{"type":"object","required":["address","length"],"properties":{`+targetProps+`,"address":{},"length":{"type":"number"}}}`),
+			confirm(pluginv1.CapDebugProbe, "read_registers", "read the CPU registers: a running core is halted for the read and resumed in the same session (resumed=true), a halted one stays halted; was_halted and halted report the state before and after", `{"type":"object","properties":{`+targetProps+`}}`),
+			safe(pluginv1.CapMemoryAccess, "read", "read target memory; args: address, length (bytes, max 1 MiB). May halt the CPU briefly. Returns the bytes as hex; path=<new file> writes them there instead (overwrite=true replaces) and returns sha256, plus the hex when at most 4096 bytes", `{"type":"object","required":["address","length"],"properties":{`+targetProps+`,"address":{},"length":{"type":"number"},"path":{"type":"string"},"overwrite":{"type":"boolean"}}}`),
 			confirm(pluginv1.CapMemoryAccess, "write", "write target memory; args: address, data (hex string, max 4096 bytes)", `{"type":"object","required":["address","data"],"properties":{`+targetProps+`,"address":{},"data":{"type":"string"}}}`),
 			safe(pluginv1.CapFlashProgramming, "info", "flash banks, sector size and the canonical SEGGER device name of the configured target (resolved from SEGGER's device list; no probe access)", `{"type":"object","properties":{`+targetProps+flashGeomProps+`}}`),
 			safe(pluginv1.CapFlashProgramming, "read", "read flash with savebin on a halted core (resumed afterwards when it was running; halt=false reads it running); args: address, length; at most 4096 bytes inline as hex, more needs path (a new file; overwrite=true replaces)", `{"type":"object","required":["address","length"],"properties":{`+targetProps+flashGeomProps+`,"address":{},"length":{"type":"number"},"path":{"type":"string"},"overwrite":{"type":"boolean"},"halt":{"type":"boolean"}}}`),
@@ -270,6 +273,11 @@ func (p *Plugin) merged(id string, args map[string]any) map[string]any {
 	defer p.mu.Unlock()
 	m := map[string]any{}
 	for k, v := range p.cfg[id] {
+		if _, capOnly := v.(bool); capOnly && k == "reset" {
+			// reset: true asks for a reset at capture start; it is not the
+			// reset=run|halt|none argument of the flash methods.
+			continue
+		}
 		m[k] = v
 	}
 	for k, v := range args {
@@ -386,7 +394,7 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 	case pluginv1.CapDebugProbe + ".halt":
 		res, err = p.simple(ctx, id, args, []string{"h", "IsHalted"}, false, expect(true))
 	case pluginv1.CapDebugProbe + ".resume":
-		res, err = p.simple(ctx, id, args, []string{"g", "IsHalted"}, false, expect(false))
+		res, err = p.resume(ctx, id, args)
 	case pluginv1.CapDebugProbe + ".reset":
 		script, want := []string{"r"}, true
 		if run, ok := args["run"].(bool); !ok || run {
@@ -452,13 +460,19 @@ func (p *Plugin) info(ctx context.Context, id string) (map[string]any, error) {
 func expect(halted bool) *bool { return &halted }
 
 func (p *Plugin) simple(ctx context.Context, id string, args map[string]any, script []string, wantTarget bool, wantHalted ...*bool) (map[string]any, error) {
+	res, _, err := p.simpleOut(ctx, id, args, script, wantTarget, wantHalted...)
+	return res, err
+}
+
+// simpleOut is simple that also returns the raw commander output.
+func (p *Plugin) simpleOut(ctx context.Context, id string, args map[string]any, script []string, wantTarget bool, wantHalted ...*bool) (map[string]any, string, error) {
 	t, err := p.needTarget(ctx, args)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	out, err := p.run(ctx, id, t, script)
 	if err != nil {
-		return nil, err
+		return nil, out, err
 	}
 	res := targetInfo(out)
 	res["target"] = t.Device
@@ -471,9 +485,9 @@ func (p *Plugin) simple(ctx context.Context, id string, args map[string]any, scr
 		}
 		if len(wantHalted) == 1 && wantHalted[0] != nil && *wantHalted[0] != halted {
 			if *wantHalted[0] {
-				return nil, status.Errorf(codes.Unknown, "J-Link: %v after the halt command (pc %s)", cortexm.ErrNotHalted, pc)
+				return nil, out, status.Errorf(codes.Unknown, "J-Link: %v after the halt command (pc %s)", cortexm.ErrNotHalted, pc)
 			}
-			return nil, status.Errorf(codes.FailedPrecondition, "J-Link: the target is still halted after the call, expected it running")
+			return nil, out, status.Errorf(codes.FailedPrecondition, "J-Link: the target is still halted after the call, expected it running")
 		}
 	}
 	if wantTarget && res["core"] == nil {
@@ -481,6 +495,23 @@ func (p *Plugin) simple(ctx context.Context, id string, args map[string]any, scr
 		res["ok"] = false
 	}
 	res["output"] = tail(out, 12)
+	return res, out, nil
+}
+
+// resume runs the core and reports whether it was halted before: Commander
+// lets the core run again when a session ends, so after halt or
+// read_registers it is usually already running.
+func (p *Plugin) resume(ctx context.Context, id string, args map[string]any) (map[string]any, error) {
+	res, out, err := p.simpleOut(ctx, id, args, []string{"IsHalted", "g", "IsHalted"}, false, expect(false))
+	if err != nil {
+		return nil, err
+	}
+	if was, ok := firstHaltState(out); ok {
+		res["was_halted"] = was
+		if !was {
+			res["note"] = "the core was already running; nothing to resume"
+		}
+	}
 	return res, nil
 }
 
@@ -489,9 +520,24 @@ func (p *Plugin) registers(ctx context.Context, id string, args map[string]any) 
 	if err != nil {
 		return nil, err
 	}
-	out, err := p.run(ctx, id, t, []string{"h", "regs"})
+	wasHalted, err := p.state(ctx, id, t)
 	if err != nil {
 		return nil, err
+	}
+	var script []string
+	if !wasHalted {
+		script = append(script, "h", "IsHalted")
+	}
+	script = append(script, "regs")
+	if !wasHalted {
+		script = append(script, "g")
+	}
+	out, err := p.run(ctx, id, t, append(script, "IsHalted"))
+	if err != nil {
+		return nil, err
+	}
+	if h, ok := firstHaltState(out); !wasHalted && (!ok || !h) {
+		return nil, status.Errorf(codes.Unknown, "J-Link: %v before the register read; nothing was read", cortexm.ErrNotHalted)
 	}
 	regs := parseRegs(out)
 	if len(regs) == 0 {
@@ -501,7 +547,13 @@ func (p *Plugin) registers(ctx context.Context, id string, args map[string]any) 
 	for k, v := range regs {
 		m[k] = v
 	}
-	return map[string]any{"registers": m, "halted": true, "probe_serial": NormalizeSerial(id), "target": t.Device}, nil
+	halted, _, _ := haltState(out)
+	res := map[string]any{"registers": m, "was_halted": wasHalted, "halted": halted, "resumed": !wasHalted && !halted,
+		"probe_serial": NormalizeSerial(id), "target": t.Device}
+	if !wasHalted && halted {
+		res["warning"] = "the core did not report running after the resume (g)"
+	}
+	return res, nil
 }
 
 func (p *Plugin) readMem(ctx context.Context, id string, args map[string]any) (map[string]any, error) {
@@ -517,6 +569,17 @@ func (p *Plugin) readMem(ctx context.Context, id string, args map[string]any) (m
 	if err != nil || n < 1 || n > maxMemBytes {
 		return nil, status.Errorf(codes.InvalidArgument, "length %v: want 1..%d bytes", args["length"], maxMemBytes)
 	}
+	path, err := strArg(args, "path")
+	if err != nil {
+		return nil, err
+	}
+	overwrite, err := boolArg(args, "overwrite", false)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Lstat(path); path != "" && !overwrite && err == nil {
+		return nil, argErr("path %s already exists; pass overwrite=true to replace it", path)
+	}
 	out, err := p.run(ctx, id, t, []string{fmt.Sprintf("mem8 0x%X 0x%X", addr, n)})
 	if err != nil {
 		return nil, err
@@ -525,8 +588,20 @@ func (p *Plugin) readMem(ctx context.Context, id string, args map[string]any) (m
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return map[string]any{"address": fmt.Sprintf("0x%X", addr), "length": float64(n), "hex": hex.EncodeToString(data),
-		"probe_serial": NormalizeSerial(id), "target": t.Device}, nil
+	res := map[string]any{"address": fmt.Sprintf("0x%X", addr), "length": float64(n),
+		"probe_serial": NormalizeSerial(id), "target": t.Device}
+	if path == "" {
+		res["hex"] = hex.EncodeToString(data)
+		return res, nil
+	}
+	if err := ownedtemp.WriteFile(path, data, overwrite); err != nil {
+		return nil, argErr("path %s: %v", path, err)
+	}
+	res["path"], res["sha256"] = path, sha(data)
+	if n <= maxFlashInline {
+		res["hex"] = hex.EncodeToString(data)
+	}
+	return res, nil
 }
 
 func (p *Plugin) writeMem(ctx context.Context, id string, args map[string]any) (map[string]any, error) {
@@ -601,6 +676,12 @@ func (p *Plugin) StartCapture(ctx context.Context, req pluginsdk.CaptureRequest,
 	if err != nil {
 		return nil, nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	// A string reset is the run|halt|none argument of the flash methods, not
+	// a capture option.
+	reset, isBool := cfg["reset"].(bool)
+	if _, isStr := cfg["reset"].(string); !isBool && !isStr && cfg["reset"] != nil {
+		return nil, nil, argErr("reset %v: want true or false", cfg["reset"])
+	}
 	if rc.launch {
 		if _, err := p.cmd.Available(); err != nil {
 			return nil, nil, unavailable(err)
@@ -609,10 +690,22 @@ func (p *Plugin) StartCapture(ctx context.Context, req pluginsdk.CaptureRequest,
 			return nil, nil, err
 		}
 	}
+	var resetAttrs map[string]string
+	if reset {
+		if resetAttrs, err = p.resetAtStart(ctx, req.DeviceID, cfg, req.Clock); err != nil {
+			return nil, nil, err
+		}
+	}
+	withReset := func(a map[string]string) map[string]string {
+		for k, v := range resetAttrs {
+			a[k] = v
+		}
+		return a
+	}
 	if rc.disabled {
 		return &rttCapture{cfg: rc, serial: req.DeviceID, cmd: p.cmd, clock: req.Clock, sink: sink},
 			&pluginsdk.CaptureStart{Streams: []*pluginv1.StreamInfo{{StreamId: rttStream, Kind: "log",
-				Attributes: map[string]string{"source": LogSource, "channel": "0", "rtt": "disabled"}}}}, nil
+				Attributes: withReset(map[string]string{"source": LogSource, "channel": "0", "rtt": "disabled"})}}}, nil
 	}
 	if _, explicit := cfg["rtt_port"]; !explicit && rc.launch {
 		// Each probe's commander serves RTT on its own telnet port; a fixed
@@ -639,7 +732,25 @@ func (p *Plugin) StartCapture(ctx context.Context, req pluginsdk.CaptureRequest,
 		return nil, nil, status.Error(codes.FailedPrecondition, err.Error())
 	}
 	return c, &pluginsdk.CaptureStart{Streams: []*pluginv1.StreamInfo{{StreamId: rttStream, Kind: "log",
-		Attributes: map[string]string{"source": LogSource, "channel": "0", "port": strconv.Itoa(rc.port)}}}}, nil
+		Attributes: withReset(map[string]string{"source": LogSource, "channel": "0", "port": strconv.Itoa(rc.port)})}}}, nil
+}
+
+// resetAtStart resets the target and lets it run, in its own Commander
+// session before RTT is attached (capture config reset: true). Output the
+// firmware writes meanwhile stays in its RTT buffer until the RTT session
+// reads it. The returned stream attributes bracket the reset on the session
+// clock.
+func (p *Plugin) resetAtStart(ctx context.Context, id string, cfg map[string]any, clock *pluginsdk.Clock) (map[string]string, error) {
+	before := clock.Now()
+	res, err := p.simple(ctx, id, cfg, []string{"r", "g", "IsHalted"}, false, expect(false))
+	if err != nil {
+		return nil, status.Errorf(status.Code(err), "reset at capture start: %s", status.Convert(err).Message())
+	}
+	after := clock.Now()
+	if _, ok := res["halted"]; !ok {
+		return nil, status.Errorf(codes.Unknown, "reset at capture start: the commander reported no CPU state after the reset: %v", res["output"])
+	}
+	return map[string]string{"reset": "run", "reset_start_ns": strconv.FormatInt(before, 10), "reset_end_ns": strconv.FormatInt(after, 10)}, nil
 }
 
 func explicitPort(cfg map[string]any) bool { _, ok := cfg["rtt_port"]; return ok }

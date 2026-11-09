@@ -30,6 +30,8 @@ import (
 const (
 	maxWriteBytes = 64 << 10
 	maxReadBytes  = 1 << 20
+	// read quotes at most this many received bytes as text unless text_max says otherwise.
+	defaultTextMax = 64 << 10
 )
 
 // Plugin implements pluginsdk.Plugin.
@@ -101,8 +103,9 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 		Methods: []*pluginv1.MethodSpec{
 			safe("status", "port path, line settings and whether a capture is running", `{"type":"object"}`),
 			safe("configure", "change baud, framing or flow control of the open port", `{"type":"object","properties":{`+lineProps+`}}`),
-			safe("read", "read bytes (not while a capture runs): waits up to timeout_ms for the first byte, then until idle_gap_ms of silence or max_bytes",
-				`{"type":"object","properties":{`+lineProps+`,"max_bytes":{"type":"number"},"timeout_ms":{"type":"number"},"idle_gap_ms":{"type":"number"}}}`),
+			safe("read", "read bytes (not while a capture runs): waits up to timeout_ms for the first byte, then until idle_gap_ms of silence or max_bytes (default 256); "+
+				"text quotes the first text_max bytes (default 65536; text_truncated=true when cut), hex is added up to 256 bytes",
+				`{"type":"object","properties":{`+lineProps+`,"max_bytes":{"type":"number"},"timeout_ms":{"type":"number"},"idle_gap_ms":{"type":"number"},"text_max":{"type":"number"}}}`),
 			confirm("write", "transmit bytes to whatever is attached; give data (text, optional eol none|cr|lf|crlf), hex, or a binary payload (max 64 KiB)",
 				`{"type":"object","properties":{`+lineProps+`,"data":{"type":"string"},"hex":{"type":"string"},"eol":{"enum":["none","cr","lf","crlf"]}}}`),
 			confirm("set_lines", "drive the DTR and/or RTS modem output lines (often resets the target)", `{"type":"object","properties":{"dtr":{"type":"boolean"},"rts":{"type":"boolean"}}}`),
@@ -435,6 +438,10 @@ func (p *Plugin) read(ctx context.Context, id string, args map[string]any) (_ ma
 	if err != nil {
 		return nil, nil, err
 	}
+	textMax, err := intArg(args, "text_max", defaultTextMax, 1, maxReadBytes)
+	if err != nil {
+		return nil, nil, err
+	}
 	d, release, err := p.transient(id, args)
 	if err != nil {
 		return nil, nil, err
@@ -481,7 +488,11 @@ func (p *Plugin) read(ctx context.Context, id string, args map[string]any) (_ ma
 			return nil, nil, status.Errorf(codes.Unavailable, "serial read: %v", err)
 		}
 	}
-	res := map[string]any{"n": len(out), "text": preview(out, 200)}
+	res := map[string]any{"n": len(out), "text": preview(out, textMax)}
+	if len(out) > textMax {
+		res["text_truncated"] = true
+		res["note"] = fmt.Sprintf("text shows the first %d of %d bytes: raise text_max (up to %d) or read in smaller max_bytes chunks", textMax, len(out), maxReadBytes)
+	}
 	if len(out) <= 256 {
 		res["hex"] = hex.EncodeToString(out)
 	}

@@ -119,14 +119,29 @@ func (p *Plugin) perm(id, key string) bool {
 	return v
 }
 
-func (p *Plugin) needFlash(id string, erase bool) error {
-	if !p.perm(id, "allow_flash") {
-		return denied("flash modification needs allow_flash=true in the device configuration")
+func (p *Plugin) needFlash(id string, args map[string]any, erase bool) error {
+	if err := p.needPerm(id, args, "allow_flash", "flash modification"); err != nil {
+		return err
 	}
-	if erase && !p.perm(id, "allow_erase") {
-		return denied("erasing flash needs allow_erase=true in the device configuration")
+	if erase {
+		return p.needPerm(id, args, "allow_erase", "erasing flash")
 	}
 	return nil
+}
+
+// needPerm refuses what unless the device configuration grants key, and says
+// how to grant it. args are the merged call arguments: key in them only
+// means the caller passed it as a call argument.
+func (p *Plugin) needPerm(id string, args map[string]any, key, what string) error {
+	if p.perm(id, key) {
+		return nil
+	}
+	hint := ""
+	if v, _ := args[key].(bool); v {
+		hint = key + " was passed as a call argument, where it is ignored; "
+	}
+	return denied("%s needs %s=true in the device configuration (%sMCP target_op: \"config\": {\"%s\": true} with confirm: true; "+
+		"CLI: --config %s=true --yes). Call arguments never grant it.", what, key, hint, key, key)
 }
 
 func defaultBackupDir() string {
@@ -900,7 +915,7 @@ func (p *Plugin) program(ctx context.Context, id string, args map[string]any) (m
 		if fl != FlashLoaderPHY62xx {
 			return nil, argErr("unknown flash_loader %q (supported: %s)", fl, FlashLoaderPHY62xx)
 		}
-		if err := p.needFlash(id, false); err != nil {
+		if err := p.needFlash(id, args, false); err != nil {
 			return nil, err
 		}
 		if err := tokenIs(args, "confirm", tokProgram, "programming flash"); err != nil {
@@ -922,7 +937,7 @@ func (p *Plugin) program(ctx context.Context, id string, args map[string]any) (m
 		}
 		return p.programPHY62xx(ctx, id, t, path, args)
 	}
-	if err := p.needFlash(id, false); err != nil {
+	if err := p.needFlash(id, args, false); err != nil {
 		return nil, err
 	}
 	if err := tokenIs(args, "confirm", tokProgram, "programming flash"); err != nil {
@@ -966,8 +981,10 @@ func (p *Plugin) program(ctx context.Context, id string, args map[string]any) (m
 		copy(want[w.addr-lo:], w.data)
 		imgBytes = append(imgBytes, w.data...)
 	}
-	if needsErase(cur[0], want) && !p.perm(id, "allow_erase") {
-		return nil, denied("this image needs sectors erased (a bit must go from 0 to 1): that needs allow_erase=true in the device configuration")
+	if needsErase(cur[0], want) {
+		if err := p.needPerm(id, args, "allow_erase", "this image needs sectors erased (a bit must go from 0 to 1): that"); err != nil {
+			return nil, err
+		}
 	}
 	bpath, b, m, err := backupFor(args, "backup", g)
 	if err != nil {
@@ -1015,12 +1032,12 @@ func (p *Plugin) flashErase(ctx context.Context, id string, args map[string]any)
 	if mode != "region" && mode != "chip" {
 		return nil, argErr("mode %q: want region or chip (there is no implicit mode)", mode)
 	}
-	if err := p.needFlash(id, true); err != nil {
+	if err := p.needFlash(id, args, true); err != nil {
 		return nil, err
 	}
 	if mode == "chip" {
-		if !p.perm(id, "allow_chip_erase") {
-			return nil, denied("erasing the whole flash needs allow_chip_erase=true in the device configuration")
+		if err := p.needPerm(id, args, "allow_chip_erase", "erasing the whole flash"); err != nil {
+			return nil, err
 		}
 		if err := tokenIs(args, "confirm", tokEraseChip, "whole-flash erase"); err != nil {
 			return nil, err
@@ -1090,7 +1107,7 @@ func (p *Plugin) flashErase(ctx context.Context, id string, args map[string]any)
 }
 
 func (p *Plugin) flashRestore(ctx context.Context, id string, args map[string]any) (map[string]any, error) {
-	if err := p.needFlash(id, true); err != nil {
+	if err := p.needFlash(id, args, true); err != nil {
 		return nil, err
 	}
 	if err := tokenIs(args, "confirm", tokRestore, "restoring flash"); err != nil {

@@ -2,6 +2,7 @@ package jlink
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -343,6 +344,45 @@ func TestReadMemory(t *testing.T) {
 	}
 }
 
+func TestReadMemoryToPath(t *testing.T) {
+	f := &fakeCmd{out: "20000000 = DE AD BE EF\n"}
+	p, path := NewWith(t.TempDir(), f), filepath.Join(t.TempDir(), "mem.bin")
+	args := map[string]any{"target": "X", "address": "0x20000000", "length": float64(4), "path": path}
+	res, err := invoke(t, p, "MemoryAccess", "read", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(path); err != nil || hex.EncodeToString(b) != "deadbeef" {
+		t.Fatalf("file %x %v", b, err)
+	}
+	if res["path"] != path || res["sha256"] != sha([]byte{0xde, 0xad, 0xbe, 0xef}) || res["hex"] != "deadbeef" {
+		t.Errorf("result %v", res)
+	}
+	runs := len(f.runs)
+	if _, err := invoke(t, p, "MemoryAccess", "read", args); status.Code(err) != codes.InvalidArgument || len(f.runs) != runs {
+		t.Errorf("an existing file must be refused before the probe is used: %v (runs %d -> %d)", err, runs, len(f.runs))
+	}
+	args["overwrite"] = true
+	if _, err := invoke(t, p, "MemoryAccess", "read", args); err != nil {
+		t.Errorf("overwrite: %v", err)
+	}
+
+	var line strings.Builder
+	line.WriteString("20000000 =")
+	for range maxFlashInline + 1 {
+		line.WriteString(" AB")
+	}
+	f.out = line.String() + "\n"
+	big := filepath.Join(t.TempDir(), "big.bin")
+	res, err = invoke(t, p, "MemoryAccess", "read", map[string]any{"target": "X", "address": "0x20000000", "length": float64(maxFlashInline + 1), "path": big})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, err := os.Stat(big); err != nil || st.Size() != maxFlashInline+1 || res["hex"] != nil {
+		t.Errorf("a large read to a file must not be inlined: %v %v", res["hex"] != nil, err)
+	}
+}
+
 func TestParseMemWords(t *testing.T) {
 	b, err := parseMem("20000000 = 04030201 08070605\n", 4, 8)
 	if err != nil || fmt.Sprintf("%x", b) != "0102030405060708" {
@@ -367,8 +407,38 @@ func TestWriteMemoryScript(t *testing.T) {
 	}
 }
 
-func TestRegisters(t *testing.T) {
-	f := &fakeCmd{out: "PC = 000010D4, CycleCnt = 00000000\nR0 = 00000001, R1 = 20000400, R13(SP) = 20001000\nXPSR = 61000000\n"}
+const regsOut = "PC = 000010D4, CycleCnt = 00000000\nR0 = 00000001, R1 = 20000400, R13(SP) = 20001000\nXPSR = 61000000\n"
+
+// regsReply plays Commander for read_registers: the IsHalted-only probe
+// session reports startHalted; the read session reports halted after "h" and
+// running after "g".
+func regsReply(startHalted bool) func([]string) string {
+	state := func(h bool) string {
+		if h {
+			return "CPU is halted (PC = 0x000010D4).\n"
+		}
+		return "CPU is not halted.\n"
+	}
+	return func(script []string) string {
+		h, out := startHalted, ""
+		for _, c := range script {
+			switch c {
+			case "h":
+				h = true
+			case "g":
+				h = false
+			case "regs":
+				out += regsOut
+			case "IsHalted":
+				out += state(h)
+			}
+		}
+		return out
+	}
+}
+
+func TestRegistersRestoreRunState(t *testing.T) {
+	f := &fakeCmd{reply: regsReply(false)}
 	res, err := invoke(t, NewWith(t.TempDir(), f), "DebugProbe", "read_registers", map[string]any{"target": "X"})
 	if err != nil {
 		t.Fatal(err)
@@ -376,6 +446,52 @@ func TestRegisters(t *testing.T) {
 	regs := res["registers"].(map[string]any)
 	if regs["PC"] != "000010D4" || regs["R13(SP)"] != "20001000" || regs["XPSR"] != "61000000" {
 		t.Errorf("regs: %v", regs)
+	}
+	if res["was_halted"] != false || res["halted"] != false || res["resumed"] != true || res["warning"] != nil {
+		t.Errorf("a running core must be resumed after the read: %v", res)
+	}
+	if got := strings.Join(f.last().script, ","); got != "h,IsHalted,regs,g,IsHalted" {
+		t.Errorf("script %q", got)
+	}
+
+	f = &fakeCmd{reply: regsReply(true)}
+	res, err = invoke(t, NewWith(t.TempDir(), f), "DebugProbe", "read_registers", map[string]any{"target": "X"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["was_halted"] != true || res["halted"] != true || res["resumed"] != false {
+		t.Errorf("a halted core must stay halted: %v", res)
+	}
+	if got := strings.Join(f.last().script, ","); got != "regs,IsHalted" {
+		t.Errorf("a halted core needs no h/g: %q", got)
+	}
+
+	f = &fakeCmd{reply: func(script []string) string {
+		if len(script) == 1 {
+			return "CPU is not halted.\n"
+		}
+		return "CPU is not halted.\n" + regsOut
+	}}
+	if _, err := invoke(t, NewWith(t.TempDir(), f), "DebugProbe", "read_registers", map[string]any{"target": "X"}); status.Code(err) != codes.Unknown {
+		t.Errorf("registers read from a core that did not halt: %v", err)
+	}
+}
+
+func TestResumeReportsPriorState(t *testing.T) {
+	f := &fakeCmd{out: "CPU is not halted.\nCPU is not halted.\n"}
+	res, err := invoke(t, NewWith(t.TempDir(), f), "DebugProbe", "resume", map[string]any{"target": "X"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["was_halted"] != false || res["halted"] != false || res["note"] == nil {
+		t.Errorf("resume of a running core: %v", res)
+	}
+	if got := strings.Join(f.last().script, ","); got != "IsHalted,g,IsHalted" {
+		t.Errorf("script %q", got)
+	}
+	f.out = "CPU is halted (PC = 0x000010D4).\nCPU is not halted.\n"
+	if res, err = invoke(t, NewWith(t.TempDir(), f), "DebugProbe", "resume", map[string]any{"target": "X"}); err != nil || res["was_halted"] != true || res["note"] != nil {
+		t.Errorf("resume of a halted core: %v %v", res, err)
 	}
 }
 

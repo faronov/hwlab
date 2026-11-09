@@ -360,3 +360,74 @@ func TestRTTFalseHoldsNoCommanderSession(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCaptureResetRunsBeforeRTT(t *testing.T) {
+	port, done := rttServer(t, []string{"boot\n"}, 20*time.Millisecond)
+	defer done()
+	f := &fakeCmd{out: "CPU is not halted.\n"}
+	p := NewWith(t.TempDir(), f)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c, start, err := p.StartCapture(ctx, pluginsdk.CaptureRequest{DeviceID: "683123456",
+		Config: map[string]any{"target": "X", "rtt_port": float64(port), "reset": true}, Clock: pluginsdk.NewClock(1_000)}, pluginsdk.NewTestSink(16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.runs) != 1 || strings.Join(f.runs[0].script, ",") != "r,g,IsHalted" || len(f.started) != 1 {
+		t.Errorf("the reset must run once, before the RTT session: runs %+v started %d", f.runs, len(f.started))
+	}
+	a := start.Streams[0].Attributes
+	if a["reset"] != "run" || a["reset_start_ns"] == "" || a["reset_end_ns"] < a["reset_start_ns"] {
+		t.Errorf("stream attributes %v", a)
+	}
+	cancel()
+	if err := c.Wait(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCaptureReset(t *testing.T) {
+	start := func(f *fakeCmd, cfg map[string]any) (*pluginv1.StreamInfo, error) {
+		cfg["rtt"] = false
+		_, s, err := NewWith(t.TempDir(), f).StartCapture(context.Background(), pluginsdk.CaptureRequest{DeviceID: "683123456",
+			Config: cfg, Clock: pluginsdk.NewClock(0)}, pluginsdk.NewTestSink(4))
+		if err != nil {
+			return nil, err
+		}
+		return s.Streams[0], nil
+	}
+	f := &fakeCmd{out: "CPU is not halted.\n"}
+	if s, err := start(f, map[string]any{"target": "X", "reset": true}); err != nil || s.Attributes["reset"] != "run" || len(f.runs) != 1 {
+		t.Errorf("rtt:false must still reset: %v %v runs=%d", s, err, len(f.runs))
+	}
+	f = &fakeCmd{out: "CPU is not halted.\n"}
+	for _, v := range []any{false, "halt"} {
+		if s, err := start(f, map[string]any{"target": "X", "reset": v}); err != nil || s.Attributes["reset"] != "" || len(f.runs) != 0 {
+			t.Errorf("reset=%v must not reset: %v %v", v, s, err)
+		}
+	}
+	if _, err := start(f, map[string]any{"target": "X", "reset": float64(1)}); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("reset=1: %v", err)
+	}
+	f = &fakeCmd{out: "CPU is halted (PC = 0x00000100).\n"}
+	if _, err := start(f, map[string]any{"target": "X", "reset": true}); err == nil || !strings.Contains(err.Error(), "reset at capture start") {
+		t.Errorf("a target left halted after the reset must fail the start: %v", err)
+	}
+	f = &fakeCmd{out: "nothing\n"}
+	if _, err := start(f, map[string]any{"target": "X", "reset": true}); status.Code(err) != codes.Unknown {
+		t.Errorf("an unconfirmed reset must fail the start: %v", err)
+	}
+}
+
+func TestConfigResetIsNotTheFlashResetArgument(t *testing.T) {
+	p := NewWith(t.TempDir(), &fakeCmd{})
+	if err := p.OpenDevice(context.Background(), "683123456", map[string]any{"target": "X", "reset": true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.merged("683123456", nil)["reset"]; ok {
+		t.Error("the capture reset: true must not reach method arguments")
+	}
+	if got := p.merged("683123456", map[string]any{"reset": "halt"})["reset"]; got != "halt" {
+		t.Errorf("call argument reset: %v", got)
+	}
+}

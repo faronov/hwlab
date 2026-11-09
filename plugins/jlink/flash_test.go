@@ -433,6 +433,15 @@ func TestFlashModificationIsGated(t *testing.T) {
 			t.Errorf("%s: a refused call wrote flash: %s", name, scripts(f, 0))
 		}
 	}
+	// The refusal says how to grant the permission and why the call argument did not.
+	_, err := invoke(t, p, "FlashProgramming", "program", prog("allow_flash", true))
+	if msg := status.Convert(err).Message(); !strings.Contains(msg, `"config": {"allow_flash": true}`) || !strings.Contains(msg, "--config allow_flash=true") ||
+		!strings.Contains(msg, "passed as a call argument, where it is ignored") {
+		t.Errorf("unhelpful refusal: %v", err)
+	}
+	if _, err := invoke(t, p, "FlashProgramming", "program", prog()); strings.Contains(err.Error(), "call argument, where") {
+		t.Errorf("no call-argument hint without the argument: %v", err)
+	}
 	// A tampered backup is refused even when its manifest is intact.
 	p, f, _ := efrPlugin(t, "allow_flash", "allow_erase")
 	b, _ := os.ReadFile(good)

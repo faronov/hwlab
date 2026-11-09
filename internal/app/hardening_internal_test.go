@@ -175,6 +175,11 @@ func TestConfineFiles(t *testing.T) {
 			}
 		}
 	}
+	for _, p := range []string{"/etc/passwd", filepath.Join(root, "escape", "x.bin")} {
+		if _, err := a.confineFiles(map[string]any{"path": p}); err == nil || !strings.Contains(err.Error(), root) || !strings.Contains(err.Error(), "copy the file") {
+			t.Errorf("%q: the refusal must name the artifacts directory and say how to get the file in: %v", p, err)
+		}
+	}
 
 	out, err := a.confineFiles(map[string]any{"path": "bk/fw.bin", "address": "0x10"})
 	if err != nil {
