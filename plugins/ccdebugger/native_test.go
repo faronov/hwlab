@@ -106,6 +106,30 @@ func TestNativeInfoAndCapabilities(t *testing.T) {
 	}
 }
 
+func TestSmartRF04ChipconIsDiscoveredToolOnly(t *testing.T) {
+	sr := map[string]string{"idVendor": "11a0", "idProduct": "eb20", "product": "SmartRF04DD", "busnum": "2", "devnum": "54"}
+	o := &opens{}
+	p := NewWithNative(sysfsWith(t, sr), &fakeTool{}, o.open)
+	devs, _ := p.ListDevices(context.Background())
+	if len(devs) != 1 || devs[0].Properties["vid"] != "11a0" || devs[0].Properties["native"] != "false" {
+		t.Fatalf("SmartRF04 discovery: %v", devs)
+	}
+	if pluginv1.HasCapability(devs[0].Capabilities, pluginv1.CapMemoryAccess) || !pluginv1.HasCapability(devs[0].Capabilities, pluginv1.CapFlashProgramming) {
+		t.Fatalf("SmartRF04 capabilities: %v", devs[0].Capabilities)
+	}
+	tool := &fakeTool{out: "  Programmer: SmartRF04EB\n  Target: CC2530\n"}
+	p = NewWithNative(sysfsWith(t, sr), tool, o.open)
+	if err := p.OpenDevice(context.Background(), "usb-2-54", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := invoke(t, p, pluginv1.CapDebugProbe, "info", "usb-2-54", nil); err != nil {
+		t.Fatalf("auto backend info: %v", err)
+	}
+	if len(o.addrs) != 0 || len(tool.runs) != 1 || strings.Join(tool.runs[0].args, " ") != "-d 2:54 -t" {
+		t.Fatalf("auto backend did not use cc-tool: native=%v runs=%v", o.addrs, tool.runs)
+	}
+}
+
 func TestNativeSmartRFBoardIsToolOnly(t *testing.T) {
 	sr := map[string]string{"idVendor": "0451", "idProduct": "16a0", "product": "SmartRF05", "serial": "S5", "busnum": "2", "devnum": "9"}
 	o := &opens{}

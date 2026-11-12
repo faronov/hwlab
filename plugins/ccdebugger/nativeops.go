@@ -178,8 +178,8 @@ func (p *Plugin) nativeSession(id string) (*native.Debugger, error) {
 	if found == nil {
 		return nil, status.Errorf(codes.NotFound, "CC-Debugger %q is not connected", id)
 	}
-	if found.PID != "16a2" {
-		return nil, status.Errorf(codes.FailedPrecondition, "%s (%s:%s) is not supported by the native backend, which implements the CC-Debugger 0451:16a2 only; use backend=cc-tool", found.Product, TIVID, found.PID)
+	if found.VID != TIVID || found.PID != "16a2" {
+		return nil, status.Errorf(codes.FailedPrecondition, "%s (%s:%s) is not supported by the native backend, which implements the CC-Debugger 0451:16a2 only; use backend=cc-tool", found.Product, found.VID, found.PID)
 	}
 	b, n, _ := strings.Cut(found.Address, ":")
 	bus, _ := strconv.Atoi(b)
@@ -535,5 +535,17 @@ func (p *Plugin) useNative(id string) (bool, error) {
 		}
 		return true, nil
 	}
-	return p.open != nil, nil
+	return p.open != nil && p.nativeAdapter(id), nil
+}
+
+// nativeAdapter reports whether a connected device is the CC-Debugger the
+// native backend implements; other cc-tool programmers stay on cc-tool.
+func (p *Plugin) nativeAdapter(id string) bool {
+	all := scanSysfs(p.sysfs)
+	for _, d := range all {
+		if deviceID(d, all) == id {
+			return d.VID == TIVID && d.PID == "16a2"
+		}
+	}
+	return true
 }

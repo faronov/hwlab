@@ -15,16 +15,23 @@ const (
 	DefaultSysfs = "/sys/bus/usb/devices"
 )
 
-// knownProducts are the programmers cc-tool lists as supported (VID 0451).
+// ChipconVID is the legacy Chipcon vendor id used by SmartRF04 boards.
+const ChipconVID = "11a0"
+
+// knownProducts are the programmers cc-tool lists as supported, keyed by
+// "vid:pid".
 var knownProducts = map[string]string{
-	"16a2": "CC Debugger",
-	"16a0": "SmartRF05 Evaluation Board",
+	TIVID + ":16a2":      "CC Debugger",
+	TIVID + ":16a0":      "SmartRF05 Evaluation Board",
+	ChipconVID + ":db20": "SmartRF04 Evaluation Board",
+	ChipconVID + ":eb20": "SmartRF04 Evaluation Board (Chinese)",
 }
 
 // Debugger is a CC-Debugger found on the USB bus.
 type Debugger struct {
 	Serial  string
 	Product string
+	VID     string
 	PID     string
 	Address string // cc-tool "bus:device" address
 	Path    string
@@ -43,16 +50,16 @@ func scanSysfs(root string) []Debugger {
 	entries, _ := filepath.Glob(filepath.Join(root, "*"))
 	var out []Debugger
 	for _, e := range entries {
-		if !strings.EqualFold(readTrim(filepath.Join(e, "idVendor")), TIVID) {
-			continue
-		}
+		vid := strings.ToLower(readTrim(filepath.Join(e, "idVendor")))
 		pid := strings.ToLower(readTrim(filepath.Join(e, "idProduct")))
-		if _, ok := knownProducts[pid]; !ok {
+		name, ok := knownProducts[vid+":"+pid]
+		if !ok {
 			continue
 		}
 		d := Debugger{
 			Serial:  readTrim(filepath.Join(e, "serial")),
 			Product: readTrim(filepath.Join(e, "product")),
+			VID:     vid,
 			PID:     pid,
 			Path:    e,
 		}
@@ -60,7 +67,7 @@ func scanSysfs(root string) []Debugger {
 			d.Address = b + ":" + n
 		}
 		if d.Product == "" {
-			d.Product = knownProducts[pid]
+			d.Product = name
 		}
 		out = append(out, d)
 	}

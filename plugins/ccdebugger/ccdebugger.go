@@ -153,7 +153,7 @@ func (p *Plugin) ListDevices(context.Context) ([]*pluginv1.Device, error) {
 	all := scanSysfs(p.sysfs)
 	var out []*pluginv1.Device
 	for _, d := range all {
-		nat := p.open != nil && d.PID == "16a2"
+		nat := p.open != nil && d.VID == TIVID && d.PID == "16a2"
 		var c []*pluginv1.Capability
 		switch {
 		case nat:
@@ -166,7 +166,7 @@ func (p *Plugin) ListDevices(context.Context) ([]*pluginv1.Device, error) {
 		}
 		out = append(out, &pluginv1.Device{
 			Id: deviceID(d, all), Name: d.Product, Serial: d.Serial, Transport: "usb", Capabilities: c,
-			Properties: map[string]string{"vid": TIVID, "pid": d.PID, "usb_address": d.Address, "cc_tool": fmt.Sprint(tool), "native": fmt.Sprint(nat)},
+			Properties: map[string]string{"vid": d.VID, "pid": d.PID, "usb_address": d.Address, "cc_tool": fmt.Sprint(tool), "native": fmt.Sprint(nat)},
 		})
 	}
 	return out, nil
@@ -254,6 +254,9 @@ func (p *Plugin) run(ctx context.Context, id string, args map[string]any, extra 
 	// native session is dropped, and any debug session it had is gone.
 	p.dropSession(id)
 	out, err := p.tool.Run(ctx, argv)
+	if strings.Contains(strings.ToLower(out), "no target detected") {
+		return out, status.Error(codes.FailedPrecondition, "cc-tool: the programmer answers but no target is detected; connect and power the target board")
+	}
 	if err != nil {
 		if f := failure(out); f != "" {
 			return out, status.Errorf(codes.Unavailable, "cc-tool: %s", f)

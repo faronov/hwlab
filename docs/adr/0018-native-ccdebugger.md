@@ -50,8 +50,10 @@ breakpoints, with an explicit permission model.
 
 `cc-tool` remains an optional subprocess backend (ADR 0013) for what native does
 not do: `read_mac`, `reset` to run, flash `read`, `read_info_page`, `erase`,
-`program`, and for the legacy PID 16a0. `backend=auto` uses native when it is
-available and the op is native; `backend=cc-tool` forces the fallback. A native
+`program`, and for the other cc-tool programmers (SmartRF05EB 0451:16a0,
+SmartRF04 11a0:db20/eb20). `backend=auto` uses native only for the 0451:16a2
+CC Debugger when it is available and the op is native; other programmers use
+cc-tool. `backend=cc-tool` forces the fallback. A native
 session holds USB interface 0, so any cc-tool operation first drops the native
 session (the debug session is lost and must be re-attached).
 

@@ -28,7 +28,9 @@ tool. The generic `DebugProbe` model must not assume otherwise.
 `JLinkExe` (ADR 0012): no cgo, no bundled third-party binary, every vendor
 detail confined to the plugin.
 
-- **Discovery needs no external tool**: sysfs scan for VID 0451 PID 16a2/16a0
+- **Discovery needs no external tool**: sysfs scan for the programmers cc-tool
+  supports: 0451:16a2 (CC Debugger), 0451:16a0 (SmartRF05EB) and the Chipcon
+  SmartRF04 boards 11a0:db20/11a0:eb20
   (the id is the USB serial, `serial@bus:dev` if serials collide). Without
   `cc-tool` the device is `operations=discovery-only`, `missing=cc-tool`, with an
   install hint.

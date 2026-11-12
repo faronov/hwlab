@@ -211,6 +211,11 @@ func TestNotFoundAndMissingTool(t *testing.T) {
 	if status.Code(err) != codes.Unavailable || !strings.Contains(err.Error(), "CC2541 not found") {
 		t.Fatalf("%v", err)
 	}
+	p = NewWith(sysfsWith(t, ccDebugger), &fakeTool{out: "Programmer: SmartRF04DD\n  No target detected\n"})
+	_, err = invoke(t, p, pluginv1.CapDebugProbe, "info", "90000003", nil)
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "no target is detected") {
+		t.Fatalf("%v", err)
+	}
 }
 
 func TestReadFlashRefusesOverwriteAndHashes(t *testing.T) {
