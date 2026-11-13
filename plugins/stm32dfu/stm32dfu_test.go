@@ -3,6 +3,7 @@ package stm32dfuplugin
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -363,8 +364,17 @@ func TestProgramVerifyRestore(t *testing.T) {
 	}
 }
 
+// vec is a two-word vector table (initial SP, reset vector).
+func vec(sp, pc uint32) []byte {
+	b := make([]byte, 8)
+	binary.LittleEndian.PutUint32(b, sp)
+	binary.LittleEndian.PutUint32(b[4:], pc)
+	return b
+}
+
 func TestLeave(t *testing.T) {
 	r, id, d := single(t, sim.Config{SFSA: 0xCB}, nil)
+	d.SetFlash(0x08000000, vec(0x20030000, 0x08000101))
 	r.fail(t, codes.PermissionDenied, "allow_reset", id, flash, "leave", map[string]any{"confirm": "leave-dfu"})
 	_ = r.CloseDevice(context.Background(), id)
 	if err := r.OpenDevice(context.Background(), id, allowAll); err != nil {
@@ -375,7 +385,214 @@ func TestLeave(t *testing.T) {
 	if m["left_dfu"] != true || !d.Gone() || d.Leaves != 1 || d.Erases != 0 || d.Programs != 0 {
 		t.Fatalf("%v", m)
 	}
+	if m["vector_table"] != "0x08000000" || m["initial_sp"] != "0x20030000" || m["reset_vector"] != "0x08000101" || m["entry_point"] != "0x08000100" ||
+		m["vectors_source"] != "upload" || m["manifest_confirmed"] != true || m["region"] != "user flash" {
+		t.Fatalf("%v", m)
+	}
+	if d.JumpBase != 0x08000000 || d.JumpSP != 0x20030000 || d.JumpPC != 0x08000101 {
+		t.Fatalf("jump 0x%08x 0x%08x 0x%08x", d.JumpBase, d.JumpSP, d.JumpPC)
+	}
 	if _, err := r.call(id, dbg, "chip_info", nil); err == nil {
 		t.Fatal("the device is still reachable after leaving")
 	}
+}
+
+func TestLeaveToSRAM(t *testing.T) {
+	r, id, d := single(t, sim.Config{SFSA: 0xCB}, allowAll)
+	d.SetSRAM(0x20008000, vec(0x20010000, 0x20008201))
+	m := r.must(t, id, flash, "leave", map[string]any{"confirm": "leave-dfu", "address": "0x20008000"})
+	if m["region"] != "SRAM1" || m["initial_sp"] != "0x20010000" || m["entry_point"] != "0x20008200" || m["vectors_source"] != "upload" || d.JumpBase != 0x20008000 || d.JumpPC != 0x20008201 {
+		t.Fatalf("%v jump 0x%08x", m, d.JumpBase)
+	}
+}
+
+func TestLeaveRefusals(t *testing.T) {
+	type c struct {
+		name   string
+		base   uint32
+		sp, pc uint32
+		args   map[string]any
+		code   codes.Code
+		sub    string
+	}
+	cases := []c{
+		{"misaligned", 0x08000100, 0x20030000, 0x08000301, nil, codes.InvalidArgument, "aligned to 0x200"},
+		{"boot RAM", 0x20000000, 0x20030000, 0x20000201, nil, codes.OutOfRange, "SRAM1"},
+		{"SRAM2a", 0x20030000, 0x20030000, 0x20030201, nil, codes.OutOfRange, "SRAM1"},
+		{"system memory", 0x1FFF0000, 0x20030000, 0x1FFF0201, nil, codes.OutOfRange, "SRAM1"},
+		{"at SFSA", 0x080CB000, 0x20030000, 0x080CB201, nil, codes.OutOfRange, "user flash"},
+		{"SP above SRAM1", 0x08000000, 0x20030008, 0x08000101, nil, codes.FailedPrecondition, "initial SP"},
+		{"SP below SRAM", 0x08000000, 0x1FFFFFF8, 0x08000101, nil, codes.FailedPrecondition, "initial SP"},
+		{"erased SP", 0x08000000, 0xFFFFFFFF, 0xFFFFFFFF, nil, codes.FailedPrecondition, "initial SP"},
+		{"SP unaligned", 0x08000000, 0x20010004, 0x08000101, nil, codes.FailedPrecondition, "8-byte"},
+		{"no Thumb bit", 0x08000000, 0x20030000, 0x08000100, nil, codes.FailedPrecondition, "Thumb"},
+		{"PC in SRAM from flash", 0x08000000, 0x20030000, 0x20004001, nil, codes.FailedPrecondition, "user flash"},
+		{"PC in secure flash", 0x08000000, 0x20030000, 0x080CB001, nil, codes.FailedPrecondition, "user flash"},
+		{"PC in flash from SRAM", 0x20004000, 0x20030000, 0x08000101, nil, codes.FailedPrecondition, "SRAM1"},
+		{"PC in boot RAM", 0x20004000, 0x20030000, 0x20000101, nil, codes.FailedPrecondition, "SRAM1"},
+		{"asserted mismatch", 0x08000000, 0x20030000, 0x08000101, map[string]any{"vector_sp": "0x20030000", "vector_pc": "0x08000201"}, codes.FailedPrecondition, "asserted"},
+		{"half asserted", 0x08000000, 0x20030000, 0x08000101, map[string]any{"vector_sp": "0x20030000"}, codes.InvalidArgument, "together"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, id, d := single(t, sim.Config{SFSA: 0xCB}, allowAll)
+			if tc.base >= 0x20000000 {
+				d.SetSRAM(tc.base, vec(tc.sp, tc.pc))
+			} else if tc.base >= 0x08000000 && tc.base < 0x080CB000 {
+				d.SetFlash(tc.base, vec(tc.sp, tc.pc))
+			}
+			args := map[string]any{"confirm": "leave-dfu", "address": fmt.Sprintf("0x%08x", tc.base)}
+			for k, v := range tc.args {
+				args[k] = v
+			}
+			r.fail(t, tc.code, tc.sub, id, flash, "leave", args)
+			if d.Gone() || d.Leaves != 0 {
+				t.Fatal("left DFU")
+			}
+		})
+	}
+}
+
+func TestLeaveCallerAssertedVectors(t *testing.T) {
+	r, id, d := single(t, sim.Config{SFSA: 0xCB, NoRAMUpload: true}, allowAll)
+	d.SetSRAM(0x20004000, vec(0x20030000, 0x20004101))
+	r.fail(t, codes.FailedPrecondition, "vector_sp", id, flash, "leave", map[string]any{"confirm": "leave-dfu", "address": "0x20004000"})
+	r.fail(t, codes.FailedPrecondition, "Thumb", id, flash, "leave", map[string]any{"confirm": "leave-dfu", "address": "0x20004000", "vector_sp": "0x20030000", "vector_pc": "0x20004100"})
+	if d.Gone() {
+		t.Fatal("left")
+	}
+	m := r.must(t, id, flash, "leave", map[string]any{"confirm": "leave-dfu", "address": "0x20004000", "vector_sp": "0x20030000", "vector_pc": "0x20004101"})
+	if m["vectors_source"] != "caller-asserted" || m["vectors_note"] == nil || m["initial_sp"] != "0x20030000" || d.JumpPC != 0x20004101 {
+		t.Fatalf("%v", m)
+	}
+}
+
+func TestLeaveOutcomes(t *testing.T) {
+	r, id, d := single(t, sim.Config{SFSA: 0xCB}, allowAll)
+	d.SetFlash(0x08000000, vec(0x20030000, 0x08000101))
+	d.LeaveDrop = true
+	m := r.must(t, id, flash, "leave", map[string]any{"confirm": "leave-dfu"})
+	if m["manifest_confirmed"] != false || m["manifest_note"] == nil || !d.Gone() {
+		t.Fatalf("%v", m)
+	}
+	r, id, d = single(t, sim.Config{SFSA: 0xCB}, allowAll)
+	d.SetFlash(0x08000000, vec(0x20030000, 0x08000101))
+	d.LeaveState = 5
+	if _, err := r.call(id, flash, "leave", map[string]any{"confirm": "leave-dfu"}); err == nil || !strings.Contains(err.Error(), "dfuMANIFEST") || d.Gone() {
+		t.Fatalf("%v", err)
+	}
+	r.must(t, id, dbg, "chip_info", nil)
+}
+
+var allowMem = map[string]any{"allow_memory_write": true}
+
+func TestMemoryWrite(t *testing.T) {
+	r, id, d := single(t, sim.Config{SFSA: 0xCB}, allowMem)
+	m := r.must(t, id, mem, "write", map[string]any{"address": "0x20004000", "hex": "0x01 02 03 04 05", "confirm": "write-memory"})
+	if m["verify"] != "match" || m["length"] != float64(5) || m["end"] != "0x20004005" || !bytes.Equal(d.SRAM(0x20004000, 5), []byte{1, 2, 3, 4, 5}) {
+		t.Fatalf("%v", m)
+	}
+	m = r.must(t, id, mem, "write", map[string]any{"address": "0x2002FFFE", "data": "aabb", "confirm": "write-memory"})
+	if m["verify"] != "match" || !bytes.Equal(d.SRAM(0x2002FFFE, 2), []byte{0xAA, 0xBB}) {
+		t.Fatalf("%v", m)
+	}
+	img := make([]byte, 0x2C000)
+	for i := range img {
+		img[i] = byte(i*13 + 5)
+	}
+	m = r.must(t, id, mem, "write", map[string]any{"address": "0x20004000", "path": writeFile(t, img), "confirm": "write-memory"})
+	if m["verify"] != "match" || !bytes.Equal(d.SRAM(0x20004000, len(img)), img) {
+		t.Fatalf("%v", m)
+	}
+	if d.Erases != 0 || d.Programs != 0 || d.OBWrites != 0 {
+		t.Fatal("flash touched")
+	}
+}
+
+func TestMemoryWriteRefusals(t *testing.T) {
+	r, id, d := single(t, sim.Config{SFSA: 0xCB}, allowMem)
+	ok := map[string]any{"address": "0x20004000", "hex": "0102", "confirm": "write-memory"}
+	with := func(kv ...any) map[string]any {
+		m := map[string]any{}
+		for k, v := range ok {
+			m[k] = v
+		}
+		for i := 0; i < len(kv); i += 2 {
+			if kv[i+1] == nil {
+				delete(m, kv[i].(string))
+			} else {
+				m[kv[i].(string)] = kv[i+1]
+			}
+		}
+		return m
+	}
+	r.fail(t, codes.PermissionDenied, "", id, mem, "write", with("confirm", "write"))
+	r.fail(t, codes.PermissionDenied, "", id, mem, "write", with("confirm", nil))
+	r.fail(t, codes.InvalidArgument, "address", id, mem, "write", with("address", nil))
+	r.fail(t, codes.InvalidArgument, "not both", id, mem, "write", with("data", "0304"))
+	r.fail(t, codes.InvalidArgument, "not both", id, mem, "write", with("path", writeFile(t, []byte{1, 2})))
+	r.fail(t, codes.InvalidArgument, "pass hex", id, mem, "write", with("hex", nil))
+	r.fail(t, codes.InvalidArgument, "at most", id, mem, "write", with("hex", strings.Repeat("00", 4097)))
+	r.fail(t, codes.InvalidArgument, "at most", id, mem, "write", with("hex", nil, "path", writeFile(t, make([]byte, 0x2C001))))
+	r.fail(t, codes.InvalidArgument, "at least 2", id, mem, "write", with("hex", "01"))
+	r.fail(t, codes.InvalidArgument, "hex", id, mem, "write", with("hex", "zz"))
+	for addr, sub := range map[string]string{
+		"0x20003FF0": "bootloader's own RAM", "0x20000000": "bootloader's own RAM", "0x2002FFFF": "SRAM2a", "0x20030000": "SRAM2a",
+		"0x20038000": "SRAM2b", "0x08000000": "flash", "0x00000000": "flash", "0x40000000": "peripheral", "0xE0042000": "peripheral", "0x10000000": "outside SRAM",
+	} {
+		r.fail(t, codes.OutOfRange, sub, id, mem, "write", with("address", addr))
+	}
+	if d.RAMWrites != 0 || d.Erases != 0 || d.Programs != 0 || d.BadDownloads != 0 {
+		t.Fatalf("sent: ram %d", d.RAMWrites)
+	}
+	// Without allow_memory_write.
+	r2, id2, d2 := single(t, sim.Config{Serial: "NOMEM", SFSA: 0xCB}, allowAll)
+	r2.fail(t, codes.PermissionDenied, "allow_memory_write", id2, mem, "write", ok)
+	// Not an STM32WB5x.
+	r3, id3, d3 := single(t, sim.Config{Serial: "NOTWB", SFSA: 0xCB, NoDBGMCU: true, NoOBAlt: true}, allowMem)
+	r3.fail(t, codes.FailedPrecondition, "UNSUPPORTED_BY_ATTACHED_HW", id3, mem, "write", ok)
+	if d2.RAMWrites != 0 || d3.RAMWrites != 0 {
+		t.Fatal("written")
+	}
+}
+
+func TestMemoryWriteVerify(t *testing.T) {
+	r, id, d := single(t, sim.Config{SFSA: 0xCB, NoRAMUpload: true}, allowMem)
+	m := r.must(t, id, mem, "write", map[string]any{"address": "0x20004000", "hex": "01020304", "confirm": "write-memory"})
+	if m["verify"] != "unavailable" || m["verify_note"] == nil || d.RAMWrites != 1 || !bytes.Equal(d.SRAM(0x20004000, 4), []byte{1, 2, 3, 4}) {
+		t.Fatalf("%v", m)
+	}
+	r.must(t, id, dbg, "chip_info", nil)
+	r, id, d = single(t, sim.Config{SFSA: 0xCB}, allowMem)
+	d.CorruptProgram = true
+	r.fail(t, codes.DataLoss, "verify=mismatch", id, mem, "write", map[string]any{"address": "0x20004000", "hex": "01020304", "confirm": "write-memory"})
+}
+
+func TestCommandListAndVersion(t *testing.T) {
+	r, id, _ := single(t, sim.Config{SFSA: 0xCB}, nil)
+	m := r.must(t, id, ident, "identify", nil)
+	names := fmt.Sprint(m["dfuse_commands_decoded"])
+	if m["dfuse_commands"] != "00214192" || names != "[get-command set-address-pointer erase read-unprotect]" || m["read_unprotect_supported"] != true {
+		t.Fatalf("%v", m)
+	}
+	info := r.must(t, id, dbg, "info", nil)
+	if info["bootloader_version"] != "2.2" || info["bcd_device"] != "0x2200" || info["dfuse_commands"] != "00214192" {
+		t.Fatalf("%v", info)
+	}
+	r, id, _ = single(t, sim.Config{Serial: "H5", SFSA: 0xCB, NoReadUnprotect: true}, nil)
+	m = r.must(t, id, ident, "identify", nil)
+	if m["dfuse_commands"] != "002141" || m["read_unprotect_supported"] != false {
+		t.Fatalf("%v", m)
+	}
+}
+
+func TestReadProtectionAndMinimumRead(t *testing.T) {
+	r, id, d := single(t, sim.Config{SFSA: 0xCB}, nil)
+	r.fail(t, codes.InvalidArgument, "2..", id, mem, "read", map[string]any{"address": "0x08000000", "length": 1})
+	m := r.must(t, id, mem, "read", map[string]any{"address": "0x08000001", "length": 3})
+	if m["hex"] != hex.EncodeToString(d.Flash()[1:4]) {
+		t.Fatalf("%v", m)
+	}
+	r, id, _ = single(t, sim.Config{Serial: "RDP", SFSA: 0xCB, RDPActive: true}, nil)
+	r.fail(t, codes.FailedPrecondition, "errVENDOR", id, mem, "read", map[string]any{"address": "0x20004000", "length": 4})
 }

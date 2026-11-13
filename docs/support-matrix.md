@@ -611,12 +611,13 @@ Code, fixtures and passing tests are not hardware validation.
   | Capability | Status | Evidence |
   |---|---|---|
   | USB discovery | SIMULATED_ONLY | every 0483:df11 device, id stm32dfu/<USB serial> (<serial>@<port> for duplicates) |
-  | descriptors and alt-setting memory map | SIMULATED_ONLY | DFU functional descriptor (wTransferSize, attributes), bcdDevice as bootloader version, DfuSe alt strings parsed into r/e/w segments |
-  | memory read (UPLOAD) | SIMULATED_ONLY | SRAM, option bytes, OTP, system region; 4 KiB inline or a file; never at or above SFSA |
+  | descriptors and alt-setting memory map | SIMULATED_ONLY | DFU functional descriptor (wTransferSize, attributes), bcdDevice MSB (BCD) as bootloader version, DfuSe alt strings parsed into r/e/w segments, the Get command list decoded |
+  | memory read (UPLOAD) | SIMULATED_ONLY | SRAM, option bytes, OTP, system region; 2..4096 bytes inline or a file; never at or above SFSA |
+  | memory write (SRAM1) | SIMULATED_ONLY | SRAM1 [0x20004000, 0x20030000) only, allow_memory_write + confirm=write-memory; read back with UPLOAD (verify=match/mismatch, or unavailable when the ROM refuses it) |
   | secure boundary (SFSA) | SIMULATED_ONLY | FLASH_SFR option word at 0x1FFF8070 with its complement, cross-checked with the flash size and the flash alt; read-only when ambiguous |
   | flash backup / erase / program / verify / restore | SIMULATED_ONLY | page erase 0x41+address and DNLOAD inside [0x08000000, SFSA*4K) only, backup gate, tokens, allow_* permissions, read-back verify |
   | fus_info | SIMULATED_ONLY | reference table 0x20030000 and the word at 0x20030030 decoded like the ST-LINK plugin |
-  | leave DFU | SIMULATED_ONLY | set address 0x08000000, zero-length DNLOAD, GETSTATUS |
+  | leave DFU | SIMULATED_ONLY | vector table in user flash below SFSA or SRAM1, SP/reset vector read (or caller-asserted) and checked; set address, zero-length DNLOAD, GETSTATUS=dfuMANIFEST |
 
 - verified:
   - the DfuSe state machine, errors, dfuDNBUSY and the write guard against an in-process simulator of an STM32WB55 ROM bootloader (SFSA 0xCB, 0xF4, 0xE1)
@@ -626,7 +627,9 @@ Code, fixtures and passing tests are not hardware validation.
   - the real alt strings and wTransferSize
   - whether the ROM allows UPLOAD from SRAM2a, OTP and DBGMCU
   - SetAlternateInterface on macOS against the ROM
-  - leave semantics on the WB ROM
+  - leave semantics on the WB ROM (jump to flash or SRAM1)
+  - DNLOAD/UPLOAD in SRAM1 on the WB ROM
+  - the real bcdDevice and the dfuDNBUSY answer to the first GETSTATUS
 - known gaps:
   - STM32WB5x only (other STM32 ROM bootloaders get descriptors and non-flash reads; their flash is refused)
   - option bytes are never written; no mass erase, no read unprotect

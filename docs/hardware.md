@@ -723,7 +723,7 @@ It uses no dfu-util, STM32CubeProgrammer, libusb or cgo. **Simulator-tested only
 * Device: the STM32 system bootloader in USB DFU mode, `0483:df11` ("DFU in FS Mode"), for example a P-NUCLEO-WB55
   USB dongle (MB1293C) with BOOT0 selected. Device id: `stm32dfu/<USB serial>`. Duplicates get `<serial>@<port>`.
   On Linux the DFU interface needs a udev rule like the ST-LINK one, with `ATTR{idProduct}=="df11"`.
-* Options: `timeout_ms`, `allow_flash`, `allow_erase`, `allow_reset`.
+* Options: `timeout_ms`, `allow_flash`, `allow_erase`, `allow_reset`, `allow_memory_write`.
 * Read only (no confirmation):
   * `hwlab target info|identify --device stm32dfu/<serial>`;
   * `target flash info`;
@@ -743,10 +743,20 @@ It uses no dfu-util, STM32CubeProgrammer, libusb or cgo. **Simulator-tested only
     needs `allow_flash`, plus `allow_erase` when a programmed double word must change;
   * `target flash restore --yes --path B.bin --token restore-flash` needs `allow_flash` and `allow_erase`.
     Never restore a backup onto a device that has joined a Zigbee network.
-* `hwlab target dfu leave --yes --token leave-dfu --config allow_reset=true` sets the address to 0x08000000,
-  sends a zero-length download and reads the status. The device leaves USB. With BOOT0 still selected, the next
-  hardware reset returns to the bootloader.
-* Never sent: mass erase, read unprotect, any download to the option bytes or another non-flash alternate setting.
+* `hwlab target memory write --yes --address 0x20004000 --arg hex=0102.. --token write-memory --config allow_memory_write=true`
+  (or `--path img.bin`, up to 176 KiB; `--arg data=` is an alias of `hex`, up to 4 KiB) writes SRAM1 only: the whole
+  range must lie in [0x20004000, 0x20030000). The bootloader's RAM below, SRAM2a/2b, flash and peripherals are
+  refused. The data is read back: `verify=match`, a mismatch is an error, and `verify=unavailable` when the ROM
+  refuses UPLOAD from SRAM.
+* `hwlab target dfu leave --yes --token leave-dfu --config allow_reset=true [--address 0x20004000]` jumps through
+  the vector table at `--address` (default 0x08000000, aligned to 0x200; user flash below SFSA×4K or SRAM1).
+  The SP and reset vector are read first and must be an 8-byte aligned SP in 0x20000000..0x20030000 and a Thumb
+  entry in the same region. If the ROM refuses reading that SRAM, pass `--arg vector_sp=.. --arg vector_pc=..`
+  from the image (reported as caller-asserted). Then it sets the address, sends a zero-length download and
+  expects dfuMANIFEST; a disconnect instead is reported as `manifest_confirmed=false`. The device leaves USB.
+  With BOOT0 still selected, the next hardware reset returns to the bootloader.
+* Never sent: mass erase, read unprotect, any download to the option bytes or another non-flash alternate setting,
+  any download to the bootloader's RAM 0x20000000..0x20003FFF. Every transfer is 2..2048 bytes (AN3156).
   FUS operations stay with `stlink`.
 * Simulator: `HWLAB_STM32DFU_SIM=1..3` adds synthetic bootloaders with SFSA 0xCB, 0xF4 and 0xE1.
 

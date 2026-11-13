@@ -16,12 +16,12 @@ import (
 )
 
 // Device-level settings.
-var deviceKeys = []string{"timeout_ms", "allow_flash", "allow_erase", "allow_reset"}
+var deviceKeys = []string{"timeout_ms", "allow_flash", "allow_erase", "allow_reset", "allow_memory_write"}
 
 // permKeys widen what a session may do; all are dangerous configuration.
-var permKeys = []string{"allow_flash", "allow_erase", "allow_reset"}
+var permKeys = []string{"allow_flash", "allow_erase", "allow_reset", "allow_memory_write"}
 
-type perms struct{ flash, erase, reset bool }
+type perms struct{ flash, erase, reset, memWrite bool }
 
 type options struct {
 	timeout time.Duration // one DFU command (DNLOAD + status polling)
@@ -79,6 +79,8 @@ func parseOptions(base options, cfg map[string]any) (options, error) {
 			o.perm.erase = b
 		case "allow_reset":
 			o.perm.reset = b
+		case "allow_memory_write":
+			o.perm.memWrite = b
 		}
 	}
 	return o, nil

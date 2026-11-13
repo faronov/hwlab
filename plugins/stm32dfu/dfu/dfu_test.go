@@ -3,6 +3,7 @@ package dfu
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -184,11 +185,172 @@ func TestReadWriteErase(t *testing.T) {
 func TestLeave(t *testing.T) {
 	ctx := context.Background()
 	cl, d := newClient(t, sim.Config{SFSA: 0xCB})
-	if err := cl.Leave(ctx, 0x08000000); err != nil {
+	d.SetSRAM(0x20004000, []byte{0x00, 0x00, 0x03, 0x20, 0x01, 0x41, 0x00, 0x20})
+	res, err := cl.Leave(ctx, 0x20004000)
+	if err != nil || !res.Manifest || res.Note != "" {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if !d.Gone() || d.Leaves != 1 || d.UnsafeCount() != 0 || d.JumpBase != 0x20004000 || d.JumpSP != 0x20030000 || d.JumpPC != 0x20004101 {
+		t.Fatalf("gone %v leaves %d jump 0x%08x sp 0x%08x pc 0x%08x", d.Gone(), d.Leaves, d.JumpBase, d.JumpSP, d.JumpPC)
+	}
+	// Set-address, its two GETSTATUS, the zero-length download (wValue 2)
+	// and the manifestation GETSTATUS.
+	tail := strings.Join(d.Log[len(d.Log)-4:], "|")
+	if tail != "GETSTATUS|GETSTATUS|DNLOAD 2 |GETSTATUS" {
+		t.Fatalf("log tail %q", tail)
+	}
+}
+
+func TestLeaveOutcomes(t *testing.T) {
+	ctx := context.Background()
+	// Dropping off the bus instead of answering is the expected
+	// non-manifestation-tolerant outcome, reported as unconfirmed.
+	cl, d := newClient(t, sim.Config{SFSA: 0xCB})
+	d.LeaveDrop = true
+	res, err := cl.Leave(ctx, 0x08000000)
+	if err != nil || res.Manifest || !strings.Contains(res.Note, "dfuMANIFEST was not observed") || !d.Gone() {
+		t.Fatalf("drop: %+v %v", res, err)
+	}
+	// Any state but dfuMANIFEST is a protocol error and the device stays.
+	cl, d = newClient(t, sim.Config{SFSA: 0xCB})
+	d.LeaveState = uint8(StateDnloadIdle)
+	if _, err := cl.Leave(ctx, 0x08000000); !errors.Is(err, ErrProtocol) || d.Gone() || d.Leaves != 0 {
+		t.Fatalf("wrong state: %v gone %v", err, d.Gone())
+	}
+	// Leave without a selected alternate setting is refused before sending.
+	d = sim.New(sim.Config{SFSA: 0xCB})
+	cl = New(d.Port(), 0, 1024)
+	if _, err := cl.Leave(ctx, 0x08000000); !errors.Is(err, ErrRefused) || d.Leaves != 0 {
+		t.Fatalf("no alt: %v", err)
+	}
+}
+
+// Every command is a DNLOAD followed by two GETSTATUS: the first starts it
+// (dfuDNBUSY), the second reports dfuDNLOAD-IDLE.
+func TestCommandTakesTwoGetStatus(t *testing.T) {
+	ctx := context.Background()
+	cl, d := newClient(t, sim.Config{SFSA: 0xCB})
+	n := len(d.Log)
+	if err := cl.SetAddress(ctx, 0x08001000); err != nil {
 		t.Fatal(err)
 	}
-	if !d.Gone() || d.Leaves != 1 || d.UnsafeCount() != 0 {
-		t.Fatalf("gone %v leaves %d", d.Gone(), d.Leaves)
+	if got := strings.Join(d.Log[n:], "|"); got != "DNLOAD 0 2100100008|GETSTATUS|GETSTATUS" {
+		t.Fatalf("log %q", got)
+	}
+	if st, err := cl.GetState(ctx); err != nil || st != StateDnloadIdle {
+		t.Fatalf("state %v %v", st, err)
+	}
+}
+
+func TestErrorClasses(t *testing.T) {
+	ctx := context.Background()
+	cl, _ := newClient(t, sim.Config{SFSA: 0xCB})
+	// errTARGET: an address the bootloader does not serve.
+	if _, err := cl.Read(ctx, 0x30000000, 16); !errors.Is(err, ErrTarget) || !errors.Is(err, ErrDevice) {
+		t.Fatalf("bad address: %v", err)
+	}
+	if st, err := cl.GetState(ctx); err != nil || st != StateIdle {
+		t.Fatalf("after errTARGET: %v %v", st, err)
+	}
+	// errVENDOR: read protection.
+	cl, d := newClient(t, sim.Config{SFSA: 0xCB, RDPActive: true})
+	if _, err := cl.Read(ctx, 0x08000000, 16); !errors.Is(err, ErrProtected) || errors.Is(err, ErrTarget) {
+		t.Fatalf("rdp read: %v", err)
+	}
+	cl.SetWriteWindow(0, 0x08000000, 0x08000000+0xCB*4096)
+	if err := cl.ErasePage(ctx, 0x08001000); !errors.Is(err, ErrProtected) {
+		t.Fatalf("rdp erase: %v", err)
+	}
+	if st, err := cl.GetState(ctx); err != nil || st != StateIdle || d.Erases != 0 {
+		t.Fatalf("after errVENDOR: %v %v", st, err)
+	}
+	// The command list is still available under RDP.
+	cmds, err := cl.GetCommands(ctx)
+	if err != nil || string(cmds) != "\x00\x21\x41\x92" {
+		t.Fatalf("commands %x %v", cmds, err)
+	}
+	if CommandName(0x21) != "set-address-pointer" || CommandName(0x92) != "read-unprotect" || CommandName(0x55) != "0x55" {
+		t.Fatal("command names")
+	}
+}
+
+func TestReadSizes(t *testing.T) {
+	ctx := context.Background()
+	for _, xfer := range []int{1024, 4096, 6} {
+		cl, d := newClient(t, sim.Config{SFSA: 0xCB, Xfer: xfer})
+		cl.TransferSize = xfer
+		want := d.Flash()[:5000]
+		for _, n := range []int{2, 3, 1025, 2049, 5000} {
+			got, err := cl.Read(ctx, 0x08000000, n)
+			if err != nil || string(got) != string(want[:n]) {
+				t.Fatalf("xfer %d n %d: %v", xfer, n, err)
+			}
+		}
+		if _, err := cl.Read(ctx, 0x08000000, 1); !errors.Is(err, ErrProtocol) {
+			t.Fatalf("1-byte read: %v", err)
+		}
+		for _, l := range d.Log {
+			var v, n int
+			if _, err := fmt.Sscanf(l, "UPLOAD %d %d", &v, &n); err == nil && v != 0 && (n < 2 || n > 2048) {
+				t.Fatalf("xfer %d: %s", xfer, l)
+			}
+		}
+	}
+}
+
+func TestRAMWindow(t *testing.T) {
+	ctx := context.Background()
+	cl, d := newClient(t, sim.Config{SFSA: 0xCB})
+	// SetRAMWindow never reaches the bootloader's RAM.
+	cl.SetRAMWindow(0, 0x20000000, 0x20030000)
+	data := []byte{1, 2, 3, 4, 5}
+	if err := cl.Write(ctx, 0x20003FFE, data); !errors.Is(err, ErrRefused) {
+		t.Fatalf("boot RAM: %v", err)
+	}
+	if err := cl.Write(ctx, 0x2002FFFE, data); !errors.Is(err, ErrRefused) {
+		t.Fatalf("past the window: %v", err)
+	}
+	if err := cl.Write(ctx, 0x20004000, data[:1]); !errors.Is(err, ErrRefused) {
+		t.Fatalf("1 byte: %v", err)
+	}
+	if err := cl.SetAddress(ctx, 0x20004000); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		block uint16
+		data  []byte
+	}{{3, make([]byte, 8)}, {2, make([]byte, 1)}, {2, make([]byte, 2049)}} {
+		if err := cl.dnload(ctx, c.block, c.data, time.Second); !errors.Is(err, ErrRefused) {
+			t.Fatalf("block %d len %d: %v", c.block, len(c.data), err)
+		}
+	}
+	// Inside the window, including a 1-byte tail.
+	big := make([]byte, 2049)
+	for i := range big {
+		big[i] = byte(i * 7)
+	}
+	if err := cl.Write(ctx, 0x20004000, big); err != nil {
+		t.Fatal(err)
+	}
+	if string(d.SRAM(0x20004000, len(big))) != string(big) || d.RAMWrites != 3 {
+		t.Fatalf("ram writes %d", d.RAMWrites)
+	}
+	// The window belongs to one alternate setting.
+	if err := cl.SelectAlt(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := cl.Write(ctx, 0x20004000, data); !errors.Is(err, ErrRefused) {
+		t.Fatalf("other alt: %v", err)
+	}
+	cl.CloseWriteWindow()
+	if err := cl.SelectAlt(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := cl.Write(ctx, 0x20004000, data); !errors.Is(err, ErrRefused) {
+		t.Fatalf("closed: %v", err)
+	}
+	if d.UnsafeCount() != 0 || d.RAMWrites != 3 {
+		t.Fatalf("unsafe %d ram writes %d", d.UnsafeCount(), d.RAMWrites)
 	}
 }
 

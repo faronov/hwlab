@@ -3,8 +3,9 @@
 // client run unchanged against it. It models the DFU state machine
 // (including dfuDNBUSY and dfuMANIFEST), wTransferSize, the alternate
 // setting strings, the STM32WB option bytes with complements, the secure
-// flash area, the double-word programming rule and the SRAM2a FUS tables,
-// and it counts every command a safe host must never send.
+// flash area, the double-word programming rule, SRAM downloads, the SRAM2a
+// FUS tables, the AN3156 error codes (errTARGET, errVENDOR) and the jump
+// on leave, and it counts every command a safe host must never send.
 package sim
 
 import (
@@ -30,6 +31,9 @@ const (
 	OBSize      = 0x80
 	SRAMBase    = 0x20000000
 	SRAMSize    = 0x40000
+	BootRAMEnd  = 0x20004000 // the bootloader's own RAM: a download below is unsafe
+	SRAM1End    = 0x20030000 // SRAM2a (FUS tables) starts here: a download at or above is unsafe
+	BCD         = 0x2200     // synthetic bcdDevice: bootloader version 2.2 (AN3156: BCD in the MSB)
 	DBGMCUAddr  = 0xE0042000
 	DefaultXfer = 1024
 )
@@ -57,6 +61,13 @@ type Config struct {
 	BadOBComplement bool
 	// NoOBAlt drops the option-bytes alternate setting.
 	NoOBAlt bool
+	// RDPActive makes memory uploads, downloads and erases fail with
+	// errVENDOR (read protection active).
+	RDPActive bool
+	// NoRAMUpload makes uploads from SRAM fail with errTARGET.
+	NoRAMUpload bool
+	// NoReadUnprotect drops 0x92 from the command list (as on STM32H5).
+	NoReadUnprotect bool
 }
 
 // Device is the simulated bootloader.
@@ -79,8 +90,17 @@ type Device struct {
 	busyPolls int
 	gone      bool
 
-	// Counters of what the host made the device do.
-	Erases, Programs, MassErases, Unprotects, OBWrites, Leaves, BadDownloads int
+	// Counters of what the host made the device do. RAMWrites counts SRAM
+	// data downloads.
+	Erases, Programs, MassErases, Unprotects, OBWrites, Leaves, BadDownloads, RAMWrites int
+	// JumpBase, JumpSP and JumpPC record the vector table the bootloader
+	// jumped to on leave.
+	JumpBase, JumpSP, JumpPC uint32
+	// LeaveDrop makes the device drop off USB instead of answering the
+	// manifestation GETSTATUS; LeaveState (non-zero) makes it answer that
+	// state and stay in DFU.
+	LeaveDrop  bool
+	LeaveState uint8
 	// Log records every class request.
 	Log []string
 	// FailUploadAt makes an UPLOAD covering this address fail (0: never).
@@ -181,6 +201,20 @@ func (d *Device) SetFlash(addr uint32, b []byte) {
 	copy(d.flash[addr-FlashBase:], b)
 }
 
+// SRAM returns a copy of n bytes of SRAM at addr.
+func (d *Device) SRAM(addr uint32, n int) []byte {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]byte(nil), d.sram[addr-SRAMBase:addr-SRAMBase+uint32(n)]...)
+}
+
+// SetSRAM changes SRAM behind the host's back (tests).
+func (d *Device) SetSRAM(addr uint32, b []byte) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	copy(d.sram[addr-SRAMBase:], b)
+}
+
 // OptionBytes returns a copy of the option bytes.
 func (d *Device) OptionBytes() []byte {
 	d.mu.Lock()
@@ -204,7 +238,7 @@ func (d *Device) UnsafeCount() int {
 
 // USBDevice is the descriptor the device presents to discovery.
 func (d *Device) USBDevice() usb.Device {
-	return usb.Device{VID: 0x0483, PID: 0xdf11, BCD: 0x0200, Manufacturer: "STMicroelectronics", Product: "DFU in FS Mode",
+	return usb.Device{VID: 0x0483, PID: 0xdf11, BCD: BCD, Manufacturer: "STMicroelectronics", Product: "DFU in FS Mode",
 		Serial: d.cfg.Serial, SerialRaw: d.cfg.Serial, SysName: "sim-" + d.cfg.Serial, Configuration: 1, SpeedMbps: 12,
 		Interfaces: []usb.Interface{{Number: 0, Class: 0xfe, Name: d.alts[0]}}}
 }
@@ -275,7 +309,7 @@ func (p *port) ControlIn(_ context.Context, rt, req uint8, value, index uint16, 
 	if rt == 0x80 && req == 6 {
 		switch value >> 8 {
 		case 1:
-			b := []byte{18, 1, 0x00, 0x01, 0, 0, 0, 64, 0x83, 0x04, 0x11, 0xdf, 0x00, 0x02, 1, 2, 3, 1}
+			b := []byte{18, 1, 0x00, 0x01, 0, 0, 0, 64, 0x83, 0x04, 0x11, 0xdf, BCD & 0xFF, BCD >> 8, 1, 2, 3, 1}
 			return clip(b), nil
 		case 2:
 			return clip(d.configDesc()), nil
@@ -321,9 +355,20 @@ func (p *port) ControlIn(_ context.Context, rt, req uint8, value, index uint16, 
 			} else {
 				d.execute()
 			}
-		case 6: // MANIFEST-SYNC
+		case 6: // MANIFEST-SYNC: the leave runs now
+			switch {
+			case d.LeaveDrop:
+				d.gone = true
+				d.Leaves++
+				d.jump()
+				return nil, errGone
+			case d.LeaveState != 0:
+				d.state = 2
+				return []byte{0, 0, 0, 0, d.LeaveState, 0}, nil
+			}
 			d.state = 7
 			d.Leaves++
+			d.jump()
 			b := []byte{d.status, 10, 0, 0, d.state, 0}
 			d.gone = true
 			return b, nil
@@ -339,16 +384,28 @@ func (p *port) ControlIn(_ context.Context, rt, req uint8, value, index uint16, 
 		}
 		if value == 0 {
 			d.state = 9
+			if d.cfg.NoReadUnprotect {
+				return clip([]byte{0x00, 0x21, 0x41}), nil
+			}
 			return clip([]byte{0x00, 0x21, 0x41, 0x92}), nil
 		}
-		if value == 1 || length > d.cfg.Xfer {
+		// AN3156: 2..2048 bytes; blocks above 2 only with full transfers
+		// (where both readings of its address formula agree).
+		if value == 1 || length > d.cfg.Xfer || length < 2 || length > 2048 || (value > 2 && length != d.cfg.Xfer) {
 			d.fail(0x0F)
+			return nil, usb.ErrStall
+		}
+		if d.cfg.RDPActive {
+			d.fail(0x0B) // errVENDOR
 			return nil, usb.ErrStall
 		}
 		addr := uint64(d.ptr) + uint64(value-2)*uint64(d.cfg.Xfer)
 		b, ok := d.read(addr, length)
+		if d.cfg.NoRAMUpload && addr < SRAMBase+SRAMSize && addr+uint64(length) > SRAMBase {
+			ok = false
+		}
 		if !ok || (d.FailUploadAt != 0 && uint64(d.FailUploadAt) >= addr && uint64(d.FailUploadAt) < addr+uint64(length)) {
-			d.fail(0x08) // errADDRESS
+			d.fail(0x01) // errTARGET
 			return nil, usb.ErrStall
 		}
 		d.state = 9
@@ -385,7 +442,7 @@ func (p *port) ControlOut(_ context.Context, rt, req uint8, value, index uint16,
 			d.state = 6
 			return nil
 		}
-		if len(data) > d.cfg.Xfer {
+		if len(data) > d.cfg.Xfer || value >= 2 && (len(data) < 2 || len(data) > 2048) {
 			d.fail(0x0F)
 			return usb.ErrStall
 		}
@@ -449,9 +506,13 @@ func (d *Device) execute() {
 			d.ptr = binary.LittleEndian.Uint32(data[1:])
 		case len(data) == 5 && data[0] == 0x41:
 			a := uint64(binary.LittleEndian.Uint32(data[1:]))
+			if d.cfg.RDPActive {
+				d.fail(0x0B)
+				return
+			}
 			if a < FlashBase || a >= d.secureBase() {
 				d.BadDownloads++
-				d.fail(0x08)
+				d.fail(0x01)
 				return
 			}
 			pg := (a - FlashBase) / PageSize * PageSize
@@ -472,20 +533,42 @@ func (d *Device) execute() {
 		}
 		return
 	}
-	if blk == 1 {
+	if blk != 2 {
+		// Block 1 is reserved; above 2 the AN3156 address formula is
+		// ambiguous and a safe host never relies on it.
 		d.BadDownloads++
 		d.fail(0x0F)
 		return
 	}
-	addr := uint64(d.ptr) + uint64(blk-2)*uint64(d.cfg.Xfer)
-	if strings.Contains(d.alts[d.alt], "Option") || addr >= OBBase && addr < OBBase+OBSize {
+	addr := uint64(d.ptr)
+	end := addr + uint64(len(data))
+	if strings.Contains(d.alts[d.alt], "Option") || addr < OBBase+OBSize && end > OBBase {
 		d.OBWrites++
 		d.fail(0x03)
 		return
 	}
-	if addr < FlashBase || addr+uint64(len(data)) > d.secureBase() || len(data)%8 != 0 || addr%8 != 0 || !strings.Contains(d.alts[d.alt], "Flash") {
+	if d.cfg.RDPActive {
+		d.fail(0x0B)
+		return
+	}
+	if addr < SRAMBase+SRAMSize && end > SRAMBase {
+		if addr < BootRAMEnd || end > SRAM1End || !strings.Contains(d.alts[d.alt], "Flash") {
+			d.BadDownloads++
+			d.fail(0x01)
+			return
+		}
+		copy(d.sram[addr-SRAMBase:], data)
+		d.ptr = uint32(addr) // AN3156 5.5: the pointer of the last download is kept
+		if d.CorruptProgram {
+			d.CorruptProgram = false
+			d.sram[addr-SRAMBase] ^= 0x01
+		}
+		d.RAMWrites++
+		return
+	}
+	if addr < FlashBase || end > d.secureBase() || len(data)%8 != 0 || addr%8 != 0 || !strings.Contains(d.alts[d.alt], "Flash") {
 		d.BadDownloads++
-		d.fail(0x08)
+		d.fail(0x01)
 		return
 	}
 	if d.FailProgram {
@@ -503,9 +586,19 @@ func (d *Device) execute() {
 		}
 	}
 	copy(d.flash[off:], data)
+	d.ptr = uint32(addr)
 	if d.CorruptProgram {
 		d.CorruptProgram = false
 		d.flash[off] ^= 0x01
 	}
 	d.Programs++
+}
+
+// jump records the vector table at the address pointer (AN3156: the MSP
+// from ptr, the reset handler from ptr+4).
+func (d *Device) jump() {
+	d.JumpBase = d.ptr
+	if b, ok := d.read(uint64(d.ptr), 8); ok {
+		d.JumpSP, d.JumpPC = binary.LittleEndian.Uint32(b), binary.LittleEndian.Uint32(b[4:])
+	}
 }

@@ -79,15 +79,55 @@ type Status struct {
 	IString     uint8
 }
 
+// DFU bStatus codes AN3156 gives a DfuSe meaning.
+const (
+	StatusOK     = 0x00
+	StatusTarget = 0x01 // errTARGET: the address is not allowed
+	StatusVendor = 0x0B // errVENDOR: read protection is active
+)
+
 // Errors.
 var (
 	// ErrRefused marks a download the guard refused; nothing was sent.
 	ErrRefused = errors.New("dfu: refused by the hwlab guard")
 	// ErrDevice marks a DFU error status reported by the device.
 	ErrDevice = errors.New("dfu: device reported an error")
+	// ErrTarget is errTARGET: the bootloader does not allow the address
+	// (AN3156). It wraps ErrDevice.
+	ErrTarget = fmt.Errorf("%w: errTARGET, the address is not allowed", ErrDevice)
+	// ErrProtected is errVENDOR: read protection is active (AN3156). It
+	// wraps ErrDevice.
+	ErrProtected = fmt.Errorf("%w: errVENDOR, read protection is active", ErrDevice)
 	// ErrProtocol marks an answer that does not follow DFU.
 	ErrProtocol = errors.New("dfu: protocol violation")
 )
+
+// MaxXfer is the AN3156 bound of one UPLOAD or data DNLOAD; MinXfer the
+// smallest one.
+const (
+	MinXfer = 2
+	MaxXfer = 2048
+)
+
+// The bootloader's own SRAM (AN3156: it uses RAM from 0x20000000; hwlab
+// reserves the first 16 KiB). No download may land there.
+const (
+	BootRAMLo = 0x20000000
+	BootRAMHi = 0x20004000
+)
+
+// deviceErr maps a non-OK GETSTATUS to ErrTarget, ErrProtected or
+// ErrDevice.
+func deviceErr(what string, st Status) error {
+	kind := ErrDevice
+	switch st.Code {
+	case StatusTarget:
+		kind = ErrTarget
+	case StatusVendor:
+		kind = ErrProtected
+	}
+	return fmt.Errorf("%w (%s: %s in %s)", kind, what, StatusName(st.Code), st.State)
+}
 
 // Client drives one claimed DFU interface. It is not safe for concurrent
 // use; the plugin serialises calls per session.
@@ -110,6 +150,10 @@ type Client struct {
 	flashAltSet bool
 	winLo       uint32
 	winHi       uint32
+	ramAlt      uint8
+	ramSet      bool
+	ramLo       uint32
+	ramHi       uint32
 	leaving     bool
 	// Downloads counts the DNLOAD requests actually sent.
 	Downloads int
@@ -142,7 +186,21 @@ func (c *Client) SetWriteWindow(flashAlt uint8, lo, hi uint32) {
 }
 
 // CloseWriteWindow refuses every erase and data download again.
-func (c *Client) CloseWriteWindow() { c.flashAltSet, c.winLo, c.winHi = false, 0, 0 }
+func (c *Client) CloseWriteWindow() {
+	c.flashAltSet, c.winLo, c.winHi = false, 0, 0
+	c.CloseRAMWindow()
+}
+
+// SetRAMWindow allows data downloads (never erases) on the given alternate
+// setting inside [lo, hi), clipped so that it never reaches the
+// bootloader's own RAM below BootRAMHi. lo >= hi closes it.
+func (c *Client) SetRAMWindow(alt uint8, lo, hi uint32) {
+	lo = max(lo, BootRAMHi)
+	c.ramAlt, c.ramSet, c.ramLo, c.ramHi = alt, lo < hi, lo, hi
+}
+
+// CloseRAMWindow refuses RAM downloads again.
+func (c *Client) CloseRAMWindow() { c.ramSet, c.ramLo, c.ramHi = false, 0, 0 }
 
 // Window reports the current write window.
 func (c *Client) Window() (alt uint8, lo, hi uint32, open bool) {
@@ -158,6 +216,10 @@ func (c *Client) checkDownload(block uint16, data []byte) error {
 	inWindow := func(addr uint32, n int) bool {
 		return c.flashAltSet && c.winLo < c.winHi && c.altKnown && c.alt == c.flashAlt &&
 			addr >= c.winLo && uint64(addr)+uint64(n) <= uint64(c.winHi)
+	}
+	inRAM := func(addr uint32, n int) bool {
+		return c.ramSet && c.altKnown && c.alt == c.ramAlt && addr >= c.ramLo && addr >= BootRAMHi &&
+			uint64(addr)+uint64(n) <= uint64(c.ramHi)
 	}
 	switch {
 	case len(data) == 0:
@@ -186,22 +248,39 @@ func (c *Client) checkDownload(block uint16, data []byte) error {
 		return refused("DfuSe command 0x%02x (%d bytes) is not one hwlab sends", data[0], len(data))
 	case block == 1:
 		return refused("block 1 is reserved")
+	case block != 2:
+		// AN3156 computes the address from wBlockNum and a transfer size it
+		// defines ambiguously; hwlab sets the pointer before every block.
+		return refused("data block %d: hwlab sends every data download as block 2 after an explicit set-address", block)
+	case len(data) < MinXfer || len(data) > MaxXfer:
+		return refused("a data download is %d..%d bytes (AN3156), not %d", MinXfer, MaxXfer, len(data))
 	}
 	if !c.ptrKnown {
 		return refused("no address pointer was set")
 	}
-	addr := uint64(c.ptr) + uint64(block-2)*uint64(c.TransferSize)
-	if addr > 0xFFFFFFFF || !inWindow(uint32(addr), len(data)) {
+	addr := c.ptr
+	if overlapsBootRAM(addr, len(data)) {
+		return refused("data download at 0x%08x+%d touches the bootloader's own RAM 0x%08x..0x%08x", addr, len(data), uint32(BootRAMLo), uint32(BootRAMHi-1))
+	}
+	if !inWindow(addr, len(data)) && !inRAM(addr, len(data)) {
 		return refused("data download at 0x%08x+%d (alt %d) is outside the write window %s", addr, len(data), c.alt, c.windowString())
 	}
 	return nil
 }
 
+func overlapsBootRAM(addr uint32, n int) bool {
+	return uint64(addr) < BootRAMHi && uint64(addr)+uint64(n) > BootRAMLo
+}
+
 func (c *Client) windowString() string {
-	if !c.flashAltSet || c.winLo >= c.winHi {
-		return "(closed: the secure boundary is not established)"
+	w := "flash (closed: the secure boundary is not established)"
+	if c.flashAltSet && c.winLo < c.winHi {
+		w = fmt.Sprintf("flash [0x%08x, 0x%08x) on alt %d", c.winLo, c.winHi, c.flashAlt)
 	}
-	return fmt.Sprintf("[0x%08x, 0x%08x) on alt %d", c.winLo, c.winHi, c.flashAlt)
+	if c.ramSet {
+		w += fmt.Sprintf(", RAM [0x%08x, 0x%08x) on alt %d", c.ramLo, c.ramHi, c.ramAlt)
+	}
+	return w
 }
 
 // GetStatus issues DFU_GETSTATUS.
@@ -290,7 +369,8 @@ func (c *Client) SelectAlt(ctx context.Context, alt uint8) error {
 // Alt reports the selected alternate setting.
 func (c *Client) Alt() (uint8, bool) { return c.alt, c.altKnown }
 
-// dnload sends one DNLOAD after the guard and waits for it to complete.
+// dnload sends one DNLOAD after the guard and completes it with the
+// AN3156 GETSTATUS sequence.
 func (c *Client) dnload(ctx context.Context, block uint16, data []byte, bound time.Duration) error {
 	if err := c.checkDownload(block, data); err != nil {
 		return err
@@ -302,32 +382,52 @@ func (c *Client) dnload(ctx context.Context, block uint16, data []byte, bound ti
 	if err := c.Port.ControlOut(ctx, typeOut, ReqDnload, block, c.Iface, data); err != nil {
 		return err
 	}
-	return c.wait(ctx, bound, StateDnloadIdle)
+	return c.wait(ctx, bound)
 }
 
-// wait polls GETSTATUS, honouring bwPollTimeout, until the device leaves
-// the busy states; a non-OK status is cleared and returned as ErrDevice.
-func (c *Client) wait(ctx context.Context, bound time.Duration, want State) error {
+func (c *Client) poll(st Status) time.Duration {
+	return min(max(st.PollTimeout, time.Millisecond), c.MaxPoll)
+}
+
+// wait completes a DNLOAD as AN3156 describes: the first GETSTATUS starts
+// the command and reports dfuDNBUSY with bwPollTimeout (figure 6 also
+// accepts dfuDNLOAD-IDLE); after waiting bwPollTimeout a second GETSTATUS
+// must report dfuDNLOAD-IDLE. dfuDNBUSY again is polled within the bound
+// (USB DFU 1.1). An error status is cleared and returned as ErrTarget,
+// ErrProtected or ErrDevice.
+func (c *Client) wait(ctx context.Context, bound time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
-	for {
+	status := func(n int) (Status, error) {
 		st, err := c.GetStatus(ctx)
 		if err != nil {
+			return st, err
+		}
+		if st.Code != StatusOK || st.State == StateError {
+			return st, errors.Join(deviceErr(fmt.Sprintf("GETSTATUS %d", n), st), c.ClrStatus(ctx))
+		}
+		return st, nil
+	}
+	st, err := status(1)
+	if err != nil {
+		return err
+	}
+	if st.State != StateDnBusy && st.State != StateDnloadIdle {
+		return fmt.Errorf("%w: the first GETSTATUS after a download reported %s, not dfuDNBUSY", ErrProtocol, st.State)
+	}
+	for n := 2; ; n++ {
+		if err := c.Sleep(ctx, c.poll(st)); err != nil {
+			return fmt.Errorf("device still busy: %w", err)
+		}
+		if st, err = status(n); err != nil {
 			return err
 		}
-		if st.Code != 0 || st.State == StateError {
-			cerr := c.ClrStatus(ctx)
-			return errors.Join(fmt.Errorf("%w: %s in %s", ErrDevice, StatusName(st.Code), st.State), cerr)
-		}
 		switch st.State {
-		case want:
+		case StateDnloadIdle:
 			return nil
 		case StateDnBusy, StateDnloadSync:
-			if err := c.Sleep(ctx, min(max(st.PollTimeout, time.Millisecond), c.MaxPoll)); err != nil {
-				return fmt.Errorf("device still busy: %w", err)
-			}
 		default:
-			return fmt.Errorf("%w: unexpected %s waiting for %s", ErrProtocol, st.State, want)
+			return fmt.Errorf("%w: GETSTATUS %d after a download reported %s, not dfuDNLOAD-IDLE", ErrProtocol, n, st.State)
 		}
 	}
 }
@@ -362,55 +462,122 @@ func (c *Client) GetCommands(ctx context.Context) ([]byte, error) {
 	}
 	b, err := c.Port.ControlIn(ctx, typeIn, ReqUpload, 0, c.Iface, 16)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(c.uploadErr(ctx, "get commands", err), c.recover(ctx))
 	}
 	return b, c.EnsureIdle(ctx)
+}
+
+// CommandName names a DfuSe command byte from the Get command list.
+func CommandName(b byte) string {
+	switch b {
+	case CmdGetCommands:
+		return "get-command"
+	case CmdSetAddress:
+		return "set-address-pointer"
+	case CmdErase:
+		return "erase"
+	case CmdReadUnprotect:
+		return "read-unprotect"
+	}
+	return fmt.Sprintf("0x%02x", b)
+}
+
+// uploadErr classifies a failed UPLOAD: a stall leaves the reason in
+// GETSTATUS (errTARGET for an address that is not allowed, errVENDOR with
+// read protection active).
+func (c *Client) uploadErr(ctx context.Context, what string, err error) error {
+	if !errors.Is(err, usb.ErrStall) || ctx.Err() != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	st, serr := c.GetStatus(ctx)
+	if serr != nil || st.Code == StatusOK {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	return fmt.Errorf("%s: %w: %w", what, deviceErr("UPLOAD", st), err)
 }
 
 // readWindow is the most read after one set-address.
 const readWindow = 32 << 10
 
-// Read uploads n bytes from addr on the selected alternate setting.
+// chunk is the size of one UPLOAD or data DNLOAD.
+func (c *Client) chunk() int { return min(c.TransferSize, MaxXfer) }
+
+// Read uploads n bytes (at least MinXfer) from addr on the selected
+// alternate setting.
 func (c *Client) Read(ctx context.Context, addr uint32, n int) ([]byte, error) {
-	if c.TransferSize < 1 {
-		return nil, fmt.Errorf("%w: wTransferSize is 0", ErrProtocol)
+	if c.TransferSize < MinXfer {
+		return nil, fmt.Errorf("%w: wTransferSize is %d", ErrProtocol, c.TransferSize)
+	}
+	if n < MinXfer {
+		return nil, fmt.Errorf("%w: an upload is %d..%d bytes (AN3156), not %d", ErrProtocol, MinXfer, MaxXfer, n)
 	}
 	if uint64(addr)+uint64(n) > 1<<32 {
 		return nil, errors.New("dfu: read passes the end of the address space")
 	}
 	out := make([]byte, 0, n)
-	for off := 0; off < n; off += readWindow {
+	for off := 0; off < n; {
 		w := min(readWindow, n-off)
+		if r := n - off - w; r > 0 && r < MinXfer {
+			w -= MinXfer // never leave a tail shorter than one upload
+		}
 		b, err := c.readOnce(ctx, addr+uint32(off), w)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, b...)
+		off += w
 	}
 	return out, nil
 }
 
+// readOnce reads n >= MinXfer bytes. Transfers of exactly wTransferSize
+// follow one set-address as blocks 2, 3, ... (the AN3156 address formula is
+// unambiguous for them); anything shorter is block 2 after its own
+// set-address. A 1-byte remainder is read as the last two bytes of the
+// range, so nothing outside it is read.
 func (c *Client) readOnce(ctx context.Context, addr uint32, n int) ([]byte, error) {
 	if err := c.EnsureIdle(ctx); err != nil {
 		return nil, err
 	}
-	if err := c.SetAddress(ctx, addr); err != nil {
-		return nil, err
-	}
-	if err := c.Abort(ctx); err != nil {
-		return nil, err
-	}
 	out := make([]byte, 0, n)
-	for blk := 2; len(out) < n; blk++ {
-		want := min(c.TransferSize, n-len(out))
-		b, err := c.Port.ControlIn(ctx, typeIn, ReqUpload, uint16(blk), c.Iface, want)
-		if err != nil {
-			return nil, errors.Join(fmt.Errorf("upload 0x%08x: %w", addr+uint32(len(out)), err), c.recover(ctx))
+	seq := c.chunk() == c.TransferSize
+	for len(out) < n {
+		rem := n - len(out)
+		from, skip := addr+uint32(len(out)), 0
+		if rem < MinXfer {
+			from, skip = from-1, 1
 		}
-		if len(b) != want {
-			return nil, errors.Join(fmt.Errorf("%w: upload at 0x%08x returned %d of %d bytes", ErrDevice, addr+uint32(len(out)), len(b), want), c.recover(ctx))
+		// DNLOAD (set-address) needs dfuIDLE or dfuDNLOAD-IDLE and UPLOAD
+		// needs dfuIDLE or dfuUPLOAD-IDLE: ABORT between them.
+		if len(out) > 0 {
+			if err := c.Abort(ctx); err != nil {
+				return nil, err
+			}
 		}
-		out = append(out, b...)
+		if err := c.SetAddress(ctx, from); err != nil {
+			return nil, errors.Join(err, c.recover(ctx))
+		}
+		if err := c.Abort(ctx); err != nil {
+			return nil, err
+		}
+		blocks := 1
+		if seq && rem >= c.chunk() {
+			blocks = rem / c.chunk()
+		}
+		for i := 0; i < blocks; i++ {
+			want := min(c.chunk(), rem+skip)
+			b, err := c.Port.ControlIn(ctx, typeIn, ReqUpload, uint16(2+i), c.Iface, want)
+			if err != nil {
+				return nil, errors.Join(c.uploadErr(ctx, fmt.Sprintf("upload 0x%08x", from), err), c.recover(ctx))
+			}
+			if len(b) != want {
+				return nil, errors.Join(fmt.Errorf("%w: upload at 0x%08x returned %d of %d bytes", ErrDevice, from, len(b), want), c.recover(ctx))
+			}
+			out = append(out, b[skip:]...)
+			rem -= want - skip
+			from += uint32(want)
+			skip = 0
+		}
 	}
 	return out, c.Abort(ctx)
 }
@@ -428,74 +595,90 @@ func (c *Client) recover(ctx context.Context) error {
 	return nil
 }
 
-// Write downloads data at addr on the selected alternate setting. The
-// target pages must already be erased.
+// Write downloads data (at least MinXfer bytes) at addr on the selected
+// alternate setting. Flash pages must already be erased. Every block is
+// sent as block 2 after its own set-address: AN3156 section 5.5 says the
+// bootloader keeps the pointer of the last download, and its address
+// formula is ambiguous for blocks above 2. A 1-byte remainder is written
+// as the last two bytes of data.
 func (c *Client) Write(ctx context.Context, addr uint32, data []byte) error {
-	if c.TransferSize < 1 {
-		return fmt.Errorf("%w: wTransferSize is 0", ErrProtocol)
+	if c.TransferSize < MinXfer {
+		return fmt.Errorf("%w: wTransferSize is %d", ErrProtocol, c.TransferSize)
+	}
+	if len(data) < MinXfer {
+		return fmt.Errorf("%w: a download is %d..%d bytes (AN3156), not %d", ErrRefused, MinXfer, MaxXfer, len(data))
 	}
 	if err := c.EnsureIdle(ctx); err != nil {
 		return err
 	}
-	// Keep each window's block numbers small and the pointer explicit.
-	win := c.TransferSize * 32
-	for off := 0; off < len(data); off += win {
-		chunk := data[off:min(off+win, len(data))]
-		if err := c.SetAddress(ctx, addr+uint32(off)); err != nil {
+	for off := 0; off < len(data); {
+		n := min(c.chunk(), len(data)-off)
+		if n < MinXfer {
+			off, n = len(data)-MinXfer, MinXfer
+		}
+		at := addr + uint32(off)
+		if err := c.SetAddress(ctx, at); err != nil {
 			return errors.Join(err, c.recover(ctx))
 		}
-		for i, blk := 0, uint16(2); i < len(chunk); i, blk = i+c.TransferSize, blk+1 {
-			b := chunk[i:min(i+c.TransferSize, len(chunk))]
-			if err := c.dnload(ctx, blk, b, c.CmdTimeout); err != nil {
-				return errors.Join(fmt.Errorf("download 0x%08x: %w", addr+uint32(off+i), err), c.recover(ctx))
-			}
+		err := c.dnload(ctx, 2, data[off:off+n], c.CmdTimeout)
+		c.ptrKnown = false
+		if err != nil {
+			return errors.Join(fmt.Errorf("download 0x%08x: %w", at, err), c.recover(ctx))
 		}
-		if err := c.Abort(ctx); err != nil {
-			return err
-		}
+		off += n
 	}
-	return nil
+	return c.Abort(ctx)
 }
 
-// Leave makes the bootloader leave DFU and jump to addr: set the address
-// pointer, a zero-length DNLOAD, then GETSTATUS starts the manifestation.
-// The device drops off the bus; a disconnect at that point is success.
-func (c *Client) Leave(ctx context.Context, addr uint32) error {
+// LeaveResult is how the manifestation ended.
+type LeaveResult struct {
+	// Manifest is true when GETSTATUS reported dfuMANIFEST (AN3156); false
+	// when the device dropped off the bus before answering it.
+	Manifest bool
+	// Note explains an unconfirmed leave.
+	Note string
+}
+
+// Leave makes the bootloader leave DFU and jump to the vector table at
+// addr (AN3156 "Leave DFU mode"): set the address pointer, a zero-length
+// DNLOAD, then GETSTATUS must report dfuMANIFEST. The bootloader is not
+// manifestation tolerant: it disconnects and jumps, so a USB error after
+// that status is the expected outcome.
+func (c *Client) Leave(ctx context.Context, addr uint32) (LeaveResult, error) {
 	if err := c.EnsureIdle(ctx); err != nil {
-		return err
+		return LeaveResult{}, err
 	}
 	if err := c.SetAddress(ctx, addr); err != nil {
-		return err
+		return LeaveResult{}, err
 	}
 	if err := c.checkLeave(); err != nil {
-		return err
+		return LeaveResult{}, err
 	}
 	c.leaving = true
 	defer func() { c.leaving = false }()
+	// AN3156 leaves wValue open; block 2 (the pointer itself) is what
+	// dfu-util sends.
 	if err := c.checkDownload(2, nil); err != nil {
-		return err
+		return LeaveResult{}, err
 	}
 	c.Downloads++
 	if err := c.Port.ControlOut(ctx, typeOut, ReqDnload, 2, c.Iface, nil); err != nil {
-		if gone(err) {
-			return nil
-		}
-		return err
+		return LeaveResult{}, fmt.Errorf("leave: the zero-length download failed: %w", err)
 	}
 	st, err := c.GetStatus(ctx)
 	if err != nil {
-		if gone(err) {
-			return nil
+		if errors.Is(err, usb.ErrDisconnected) || errors.Is(err, usb.ErrTimeout) {
+			return LeaveResult{Note: "the device dropped off USB before answering the manifestation GETSTATUS (" + err.Error() + "): dfuMANIFEST was not observed"}, nil
 		}
-		return err
+		return LeaveResult{}, fmt.Errorf("leave: GETSTATUS: %w", err)
 	}
-	if st.Code != 0 {
-		return errors.Join(fmt.Errorf("%w: leave: %s in %s", ErrDevice, StatusName(st.Code), st.State), c.ClrStatus(ctx))
+	if st.Code != StatusOK || st.State == StateError {
+		return LeaveResult{}, errors.Join(deviceErr("leave", st), c.ClrStatus(ctx))
 	}
-	if st.State != StateManifest && st.State != StateManifestSync && st.State != StateManifestWaitReset && st.State != StateDnBusy {
-		return fmt.Errorf("%w: leave: unexpected %s after the zero-length download", ErrProtocol, st.State)
+	if st.State != StateManifest {
+		return LeaveResult{}, fmt.Errorf("%w: leave: GETSTATUS reported %s after the zero-length download, not dfuMANIFEST", ErrProtocol, st.State)
 	}
-	return nil
+	return LeaveResult{Manifest: true}, nil
 }
 
 func (c *Client) checkLeave() error {
@@ -503,8 +686,4 @@ func (c *Client) checkLeave() error {
 		return refused("leave needs a selected alternate setting and address pointer")
 	}
 	return nil
-}
-
-func gone(err error) bool {
-	return errors.Is(err, usb.ErrDisconnected) || errors.Is(err, usb.ErrStall) || errors.Is(err, usb.ErrTimeout)
 }

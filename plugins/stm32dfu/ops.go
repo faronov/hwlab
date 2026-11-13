@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/faronov/hwlab/internal/ownedtemp"
+	"github.com/faronov/hwlab/internal/usb"
 	"github.com/faronov/hwlab/plugins/stlink/stm32"
 	"github.com/faronov/hwlab/plugins/stm32dfu/dfu"
 )
@@ -26,10 +27,6 @@ const (
 
 	periph1Lo, periph1Hi = 0x40000000, 0x5FFFFFFF
 	periph2Lo            = 0xE0000000
-
-	tokLeave = "leave-dfu"
-	// The bootloader jumps to the vector table at the start of flash.
-	leaveAddr = flashBase
 )
 
 func argErr(err error) error { return status.Error(codes.InvalidArgument, err.Error()) }
@@ -155,7 +152,26 @@ func (s *session) dfuFacts() map[string]any {
 	}
 	res["alt_settings"] = alts
 	res["dfu_interface"] = float64(s.iface)
+	s.commandFacts(res)
 	return res
+}
+
+// commandFacts reports the AN3156 Get command list (UPLOAD block 0) once it
+// has been read.
+func (s *session) commandFacts(res map[string]any) {
+	if s.commands == nil {
+		return
+	}
+	names := []any{}
+	unprotect := false
+	for _, b := range s.commands {
+		names = append(names, dfu.CommandName(b))
+		unprotect = unprotect || b == dfu.CmdReadUnprotect
+	}
+	res["dfuse_commands"] = hex.EncodeToString(s.commands)
+	res["dfuse_commands_decoded"] = names
+	res["read_unprotect_supported"] = unprotect
+	res["dfuse_commands_note"] = "the bootloader's Get command list (AN3156); hwlab sends only set-address and page erase, never mass erase or read unprotect"
 }
 
 func (s *session) identify(ctx context.Context, full bool) (map[string]any, error) {
@@ -175,16 +191,22 @@ func (s *session) identify(ctx context.Context, full bool) (map[string]any, erro
 			return nil, err
 		}
 		res["dfu_state"], res["dfu_status"] = st.State.String(), dfu.StatusName(st.Code)
+	}
+	if s.commands == nil {
 		cmds, err := s.c.GetCommands(ctx)
-		if err == nil {
-			res["dfuse_commands"] = hex.EncodeToString(cmds)
-		} else {
+		if err != nil {
+			if errors.Is(err, usb.ErrDisconnected) {
+				return nil, err
+			}
 			res["dfuse_commands_error"] = err.Error()
 			if e2 := s.c.EnsureIdle(ctx); e2 != nil {
 				return nil, e2
 			}
+		} else {
+			s.commands = cmds
 		}
 	}
+	s.commandFacts(res)
 	return s.mark(res), nil
 }
 
@@ -214,11 +236,11 @@ func parseRead(args map[string]any) (readReq, error) {
 	if path != "" {
 		limit = maxReadFile
 	}
-	if !ok || nf < 1 || nf > float64(limit) || nf != math.Trunc(nf) {
+	if !ok || nf < dfu.MinXfer || nf > float64(limit) || nf != math.Trunc(nf) {
 		if path == "" {
-			return readReq{}, argErr(fmt.Errorf("length: want an integer 1..%d bytes inline (pass path=<new file> for up to %d bytes)", maxReadBytes, maxReadFile))
+			return readReq{}, argErr(fmt.Errorf("length: want an integer 2..%d bytes inline (an AN3156 upload is at least 2 bytes; pass path=<new file> for up to %d bytes)", maxReadBytes, maxReadFile))
 		}
-		return readReq{}, argErr(fmt.Errorf("length: want an integer 1..%d bytes", limit))
+		return readReq{}, argErr(fmt.Errorf("length: want an integer 2..%d bytes", limit))
 	}
 	n := int(nf)
 	if uint64(addr)+uint64(n) > 1<<32 {
@@ -342,30 +364,4 @@ func (s *session) fusInfo(ctx context.Context) (map[string]any, error) {
 	}
 	res["basis"] = "SRAM2a as the ROM bootloader left it: it starts CPU2's FUS, which writes the FUS-layout device information table (key 0xA94656B9) the reference table points at; ST documents the FUS version as the word at 0x20030030 (STM32_Programmer_CLI -r32 0x20030030). Read only"
 	return s.mark(res), nil
-}
-
-// ---- leave ----
-
-func (s *session) leave(ctx context.Context, args map[string]any) (map[string]any, error) {
-	if !s.o.perm.reset {
-		return nil, denied("leaving DFU needs allow_reset=true in the device configuration")
-	}
-	if err := tokenIs(args, "confirm", tokLeave, "leaving DFU (the bootloader jumps to the application)"); err != nil {
-		return nil, err
-	}
-	alt := s.flashAltSetting()
-	if alt == nil {
-		return nil, status.Error(codes.FailedPrecondition, "no flash alternate setting at 0x08000000 to leave through")
-	}
-	if err := s.c.SelectAlt(ctx, alt.Alt); err != nil {
-		return nil, err
-	}
-	if err := s.c.Leave(ctx, leaveAddr); err != nil {
-		return nil, err
-	}
-	s.left = true
-	return s.mark(map[string]any{
-		"left_dfu": true, "jump_address": hexw(leaveAddr),
-		"note": "the bootloader was told to leave DFU and jump to 0x08000000; the device leaves USB. With BOOT0 still selected (the dongle's switch/jumper) the next hardware reset or power cycle returns to the ROM bootloader",
-	}), nil
 }

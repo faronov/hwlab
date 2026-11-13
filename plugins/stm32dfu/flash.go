@@ -12,6 +12,8 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/faronov/hwlab/plugins/stm32dfu/dfu"
 )
 
 // Tokens shared with the ST-LINK plugin.
@@ -151,6 +153,9 @@ func rangeArgs(args map[string]any, t *target, what string) (uint32, int, error)
 	if n == 0 {
 		return 0, 0, argErr(fmt.Errorf("%s: length must be at least 1 byte", what))
 	}
+	if what == "read" && n < dfu.MinXfer {
+		return 0, 0, argErr(fmt.Errorf("read: length must be at least %d bytes (an AN3156 upload is 2..2048 bytes)", dfu.MinXfer))
+	}
 	if !t.contains(addr, n) {
 		return 0, 0, status.Errorf(codes.OutOfRange, "%s: [0x%08x, +%d) is outside the user flash 0x%08x..0x%08x (the secure area from SFSA 0x%02x is never touched)", what, addr, n, uint32(flashBase), t.secure, t.sfsa)
 	}
@@ -238,6 +243,9 @@ func (s *session) flashVerify(ctx context.Context, args map[string]any) (map[str
 	addr, err := toAddr(args["address"])
 	if err != nil {
 		return nil, argErr(err)
+	}
+	if len(img) < dfu.MinXfer {
+		return nil, argErr(fmt.Errorf("image %s: at least %d bytes (an AN3156 upload is 2..2048 bytes)", path, dfu.MinXfer))
 	}
 	if !t.contains(addr, len(img)) {
 		return nil, status.Errorf(codes.OutOfRange, "image %s (%d bytes) at 0x%08x does not fit the user flash 0x%08x..0x%08x", path, len(img), addr, uint32(flashBase), t.secure)

@@ -122,9 +122,9 @@ additionally need the plugin's own confirmation token (--token).`,
 		c.Flags().StringVar(&f.space, "space", "", "memory space (plugin specific, e.g. xdata, code, flash)")
 		c.Flags().StringVar(&f.address, "address", "", "start address")
 		c.Flags().StringVar(&f.length, "length", "", "length in bytes")
-		c.Flags().StringVar(&f.path, "path", "", "write the data to this new file")
+		c.Flags().StringVar(&f.path, "path", "", "read: write the data to this new file; write (stm32dfu): the file to download")
 	}
-	mem.AddCommand(add("read", "Read target memory", "memory-read", memArgs), add("write", "Write target RAM (--arg data=HEX)", "memory-write", memArgs))
+	mem.AddCommand(add("read", "Read target memory", "memory-read", memArgs), add("write", "Write target RAM (--arg data=HEX; stm32dfu: SRAM1 0x20004000..0x2002FFFF only, --arg hex=HEX or --path FILE, --token write-memory, --config allow_memory_write=true)", "memory-write", memArgs))
 	fl := &cobra.Command{Use: "flash", Short: "Target flash"}
 	flArgs := func(c *cobra.Command) {
 		c.Flags().StringVar(&f.path, "path", "", "image or output file")
@@ -175,7 +175,9 @@ additionally need the plugin's own confirmation token (--token).`,
 	)
 	dfu := &cobra.Command{Use: "dfu", Short: "STM32 ROM USB DFU bootloader (DfuSe)"}
 	dfu.AddCommand(
-		add("leave", "Leave DFU and jump to the application at 0x08000000 (--token leave-dfu; with BOOT0 still selected the next reset returns to the bootloader)", "dfu-leave", nil),
+		add("leave", "Leave DFU and jump through a vector table checked first (--token leave-dfu; --address user flash below SFSA, default 0x08000000, or SRAM1 0x20004000..; --arg vector_sp=.. --arg vector_pc=.. when the ROM refuses reading that SRAM; with BOOT0 still selected the next reset returns to the bootloader)", "dfu-leave", func(c *cobra.Command) {
+			c.Flags().StringVar(&f.address, "address", "", "vector table base, aligned to 0x200 (default 0x08000000)")
+		}),
 	)
 	jt := &cobra.Command{Use: "jtag", Short: "JTAG chain (probe transport, no CPU debug)"}
 	jt.AddCommand(

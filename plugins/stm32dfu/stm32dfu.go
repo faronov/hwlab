@@ -21,7 +21,11 @@
 //     setting are never sent.
 //   - Erase/program/restore need allow_flash (+allow_erase), the stlink
 //     confirmation tokens and a verified backup taken under the same SFSA.
-//   - Leaving DFU needs allow_reset and confirm="leave-dfu".
+//   - Memory writes go only to SRAM1 [0x20004000, 0x20030000) and need
+//     allow_memory_write and confirm="write-memory"; the bootloader's own
+//     RAM below 0x20004000, SRAM2a/2b, flash and peripherals are refused.
+//   - Leaving DFU needs allow_reset and confirm="leave-dfu"; the vector
+//     table (flash below SFSA*4K or SRAM1) is read and checked first.
 package stm32dfuplugin
 
 import (
@@ -190,9 +194,9 @@ func capAttrs() map[string]string {
 		"interface":       "USB DFU 1.1 + ST DfuSe (system-memory bootloader)",
 		"transport":       "usb-control",
 		"target_protocol": "stm32-dfuse-rom",
-		"memory_access":   "read only (DfuSe UPLOAD); never at or above the STM32WB secure start",
+		"memory_access":   "read (DfuSe UPLOAD), never at or above the STM32WB secure start; write SRAM1 0x20004000..0x2002FFFF only (allow_memory_write, confirm=write-memory)",
 		"flash":           "STM32WB5x user flash below SFSA only: page erase/program (allow_flash/allow_erase, tokens, verified backup)",
-		"reset":           "leave DFU (allow_reset, confirm=leave-dfu)",
+		"reset":           "leave DFU to a checked vector table in user flash or SRAM1 (allow_reset, confirm=leave-dfu)",
 	}
 }
 
@@ -238,7 +242,9 @@ func (p *Plugin) ListDevices(context.Context) ([]*pluginv1.Device, error) {
 	return out, nil
 }
 
-func bcd(v uint16) string { return fmt.Sprintf("%x.%x", v>>8, v&0xFF) }
+// bcd decodes the bootloader version: AN3156 puts it in the MSB of
+// bcdDevice as BCD (0x2000 is version 2.0).
+func bcd(v uint16) string { return fmt.Sprintf("%x.%x", v>>12, v>>8&0xF) }
 
 func (p *Plugin) find(id string) (Entry, error) {
 	var ids []string
