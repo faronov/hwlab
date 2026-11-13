@@ -715,6 +715,41 @@ driver): bulk OUT 0x02, IN 0x81 (replies), IN 0x83 (SWO, unused). V2 and V2-1 (`
   unplug (needs a person): add `HWLAB_STLINK_UNPLUG=1 -run HWUnplugReplug -timeout 40m` (a unique progress-log path is printed; `HWLAB_STLINK_UNPLUG_LOG` selects an explicit operator-owned log).
 * Status: [phase 20](notes/phase20-stlink-results.md), [phase 21](notes/phase21-stlink-stm32f1-results.md), [phase 29](notes/phase29-stm32wb-fus-results.md).
 
+## STM32 ROM USB DFU bootloader (`stm32dfu`)
+
+Native Go DfuSe client over `internal/usb` control transfers ([ADR 0040](adr/0040-stm32-dfuse-rom-bootloader.md)).
+It uses no dfu-util, STM32CubeProgrammer, libusb or cgo. **Simulator-tested only; not yet validated on hardware.**
+
+* Device: the STM32 system bootloader in USB DFU mode, `0483:df11` ("DFU in FS Mode"), for example a P-NUCLEO-WB55
+  USB dongle (MB1293C) with BOOT0 selected. Device id: `stm32dfu/<USB serial>`. Duplicates get `<serial>@<port>`.
+  On Linux the DFU interface needs a udev rule like the ST-LINK one, with `ATTR{idProduct}=="df11"`.
+* Options: `timeout_ms`, `allow_flash`, `allow_erase`, `allow_reset`.
+* Read only (no confirmation):
+  * `hwlab target info|identify --device stm32dfu/<serial>`;
+  * `target flash info`;
+  * `target stm32wb fus-info`;
+  * `target memory read --address 0x1FFF8000 --length 128`, the option bytes. Other reads:
+    * SRAM;
+    * OTP;
+    * peripherals and the system region with `--arg allow_peripheral=true`;
+    * flash below SFSA×4K.
+* SFSA is read from the FLASH_SFR option word at 0x1FFF8070 and checked against its complement, the flash size and
+  the flash alternate setting. If it cannot be established, the plugin stays read-only.
+* Destructive calls work only on STM32WB5x user flash below SFSA×4K. Each needs `--yes` and a verified backup
+  from `target flash backup --yes` taken under the same SFSA:
+  * `target flash erase --yes --mode region --address A --length N --token erase-flash-region --arg backup=B.bin`
+    needs `--config allow_flash=true --config allow_erase=true`;
+  * `target flash program --yes --path img.bin --arg address=0x08000000 --token program-flash --arg backup=B.bin`
+    needs `allow_flash`, plus `allow_erase` when a programmed double word must change;
+  * `target flash restore --yes --path B.bin --token restore-flash` needs `allow_flash` and `allow_erase`.
+    Never restore a backup onto a device that has joined a Zigbee network.
+* `hwlab target dfu leave --yes --token leave-dfu --config allow_reset=true` sets the address to 0x08000000,
+  sends a zero-length download and reads the status. The device leaves USB. With BOOT0 still selected, the next
+  hardware reset returns to the bootloader.
+* Never sent: mass erase, read unprotect, any download to the option bytes or another non-flash alternate setting.
+  FUS operations stay with `stlink`.
+* Simulator: `HWLAB_STM32DFU_SIM=1..3` adds synthetic bootloaders with SFSA 0xCB, 0xF4 and 0xE1.
+
 ## Native USB probes on macOS
 
 `internal/usb` has a macOS backend ([ADR 0035](adr/0035-macos-iokit-usb.md)):

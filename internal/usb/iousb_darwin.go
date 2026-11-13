@@ -80,15 +80,25 @@ func Open(d Device, ifnum int, opt OpenOptions) (Port, error) {
 	if d.RegistryID == 0 {
 		p.dev.RegistryID = registryID(dev)
 	}
-	var n uint8
-	if kr := intf.call(slotIfGetNumEndpoints, uintptr(unsafe.Pointer(&n))); kr != kIOReturnSuccess {
+	if kr := p.loadPipes(); kr != kIOReturnSuccess {
 		_ = p.Close()
 		return nil, mapIOReturn("count endpoints", kr)
 	}
+	return p, nil
+}
+
+// loadPipes rebuilds the endpoint-address to pipe-reference map of the
+// current alternate setting.
+func (p *iokitPort) loadPipes() uint32 {
+	var n uint8
+	if kr := p.intf.call(slotIfGetNumEndpoints, uintptr(unsafe.Pointer(&n))); kr != kIOReturnSuccess {
+		return kr
+	}
+	p.pipes = map[uint8]pipe{}
 	for ref := uint8(1); ref <= n; ref++ {
 		var dir, num, typ, interval uint8
 		var mps uint16
-		kr := intf.call(slotIfGetPipeProperties, uintptr(ref), uintptr(unsafe.Pointer(&dir)), uintptr(unsafe.Pointer(&num)),
+		kr := p.intf.call(slotIfGetPipeProperties, uintptr(ref), uintptr(unsafe.Pointer(&dir)), uintptr(unsafe.Pointer(&num)),
 			uintptr(unsafe.Pointer(&typ)), uintptr(unsafe.Pointer(&mps)), uintptr(unsafe.Pointer(&interval)))
 		if kr != kIOReturnSuccess {
 			continue
@@ -99,7 +109,28 @@ func Open(d Device, ifnum int, opt OpenOptions) (Port, error) {
 		}
 		p.pipes[addr] = pipe{ref: ref, typ: typ, maxPacket: int(mps)}
 	}
-	return p, nil
+	return kIOReturnSuccess
+}
+
+// SetAltSetting selects an alternate setting of the open interface
+// (SetAlternateInterface, which sends SET_INTERFACE) and reloads its pipes.
+func (p *iokitPort) SetAltSetting(ctx context.Context, alt uint8) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.checkOpen(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	kr := p.io.do(func() uint32 { return p.intf.call(slotIfSetAlternateInterface, uintptr(alt)) })
+	if kr != kIOReturnSuccess {
+		return p.mapErr(fmt.Sprintf("set alternate setting %d", alt), kr)
+	}
+	if kr := p.loadPipes(); kr != kIOReturnSuccess {
+		return p.mapErr("count endpoints", kr)
+	}
+	return nil
 }
 
 func openErr(d Device, ifnum int, opt OpenOptions, kr uint32) error {

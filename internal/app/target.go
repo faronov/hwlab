@@ -60,6 +60,9 @@ var TargetOps = map[string][2]string{
 	"fus-delete-stack":  {pluginv1.CapFlashProgramming, "fus_delete_stack"},
 	"fus-install-stack": {pluginv1.CapFlashProgramming, "fus_install_stack"},
 	"fus-start-stack":   {pluginv1.CapFlashProgramming, "fus_start_stack"},
+	// STM32 ROM USB DFU bootloader (stm32dfu plugin): leave DFU and jump to
+	// the application.
+	"dfu-leave": {pluginv1.CapFlashProgramming, "leave"},
 	// JTAG probe transport (FTDI/MPSSE): enumerate and identify the TAP
 	// chain. Neither touches target registers or memory.
 	"jtag-scan":     {pluginv1.CapJTAGScan, "scan"},

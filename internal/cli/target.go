@@ -173,6 +173,10 @@ additionally need the plugin's own confirmation token (--token).`,
 		add("fus-install-stack", "Install a wireless stack (DANGEROUS; --path STACK.bin --address ADDR --token install-wireless-stack --arg image_sha256=.. --arg expect_new_stack_version=.. --arg backup=BACKUP.bin)", "fus-install-stack", flArgs),
 		add("fus-start-stack", "Start the installed wireless stack (--token start-wireless-stack)", "fus-start-stack", nil),
 	)
+	dfu := &cobra.Command{Use: "dfu", Short: "STM32 ROM USB DFU bootloader (DfuSe)"}
+	dfu.AddCommand(
+		add("leave", "Leave DFU and jump to the application at 0x08000000 (--token leave-dfu; with BOOT0 still selected the next reset returns to the bootloader)", "dfu-leave", nil),
+	)
 	jt := &cobra.Command{Use: "jtag", Short: "JTAG chain (probe transport, no CPU debug)"}
 	jt.AddCommand(
 		add("scan", "Reset the TAPs and enumerate the JTAG chain (IDCODE/BYPASS)", "jtag-scan", nil),
@@ -191,7 +195,7 @@ additionally need the plugin's own confirmation token (--token).`,
 		add("wait-halt", "Wait for the CPU to halt (--arg wait_ms=N) and report the cause", "wait-halt", nil),
 		add("reconnect", "Drop the session and rediscover the same device by serial", "reconnect", nil),
 		add("set-speed", "Change the probe clock (--arg khz=N)", "set-speed", nil),
-		mem, fl, bp, wp, cc, wb, jt,
+		mem, fl, bp, wp, cc, wb, dfu, jt,
 	)
 	return root
 }

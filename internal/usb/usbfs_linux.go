@@ -69,7 +69,14 @@ var (
 	ioctlReset           = ioc(iocNone, 20, 0)
 	ioctlClearHalt       = ioc(iocRead, 21, unsafe.Sizeof(uint32(0)))
 	ioctlCapabilities    = ioc(iocRead, 26, unsafe.Sizeof(uint32(0)))
+	ioctlSetInterface    = ioc(iocRead, 4, unsafe.Sizeof(setInterface{}))
 )
+
+// setInterface is struct usbdevfs_setinterface.
+type setInterface struct {
+	iface uint32
+	alt   uint32
+}
 
 // slice is the longest single blocking transfer for IN reads, so that a
 // cancelled context is noticed promptly.
@@ -344,6 +351,24 @@ func (p *port) ClearHalt(endpoint uint8) error {
 	ep := uint32(endpoint)
 	if err := p.ioctl(ioctlClearHalt, unsafe.Pointer(&ep)); err != nil {
 		return p.mapErr(fmt.Sprintf("clear halt 0x%02x", endpoint), err)
+	}
+	return nil
+}
+
+// SetAltSetting selects an alternate setting of the claimed interface (usbfs
+// SETINTERFACE, which sends the standard SET_INTERFACE request).
+func (p *port) SetAltSetting(ctx context.Context, alt uint8) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.open(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	si := setInterface{iface: uint32(p.iface), alt: uint32(alt)}
+	if err := p.ioctl(ioctlSetInterface, unsafe.Pointer(&si)); err != nil {
+		return p.mapErr(fmt.Sprintf("set alternate setting %d", alt), err)
 	}
 	return nil
 }

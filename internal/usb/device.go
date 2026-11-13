@@ -140,6 +140,13 @@ type HaltClearer interface {
 	ClearHalt(endpoint uint8) error
 }
 
+// AltSetter is implemented by ports that can select an alternate setting of
+// the opened interface through the OS (usbfs SETINTERFACE, IOKit
+// SetAlternateInterface), so that the host's view of the endpoints follows.
+type AltSetter interface {
+	SetAltSetting(ctx context.Context, alt uint8) error
+}
+
 // DeviceResetter is implemented by ports that can issue a USB port reset
 // (USBDEVFS_RESET) to recover a wedged device. The interface stays claimed.
 type DeviceResetter interface {

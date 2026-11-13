@@ -331,15 +331,43 @@ func (f *FUS) ReadDeviceInfo(ctx context.Context) (DeviceInfo, error) {
 	if err != nil {
 		return d, err
 	}
-	d.TablePtr = ptr
-	if ptr < wbSRAM2a || ptr+0x60 > wbSRAM2aEnd || ptr&3 != 0 {
-		d.Layout = "none"
-		return d, nil
+	if !DeviceInfoPtrValid(ptr) {
+		return DeviceInfo{TablePtr: ptr, Layout: "none"}, nil
 	}
-	raw, err := f.C.Read(ctx, ptr, 0x60)
+	raw, err := f.C.Read(ctx, ptr, DeviceInfoLen)
 	if err != nil {
 		return d, err
 	}
+	return DecodeDeviceInfo(ptr, raw), nil
+}
+
+// Coprocessor mailbox locations shared with other transports (the ROM USB
+// DFU bootloader reads the same SRAM2a words).
+const (
+	SRAM2aBase = wbSRAM2a
+	SRAM2aEnd  = wbSRAM2aEnd
+	// RefTable holds the pointer to the device information table.
+	RefTable = wbSRAM2a + tblRef
+	// DeviceInfoLen is how many bytes of the device information table are
+	// decoded.
+	DeviceInfoLen = 0x60
+)
+
+// DeviceInfoPtrValid reports whether a reference-table pointer can address
+// a device information table inside SRAM2a.
+func DeviceInfoPtrValid(ptr uint32) bool {
+	return ptr >= wbSRAM2a && ptr+DeviceInfoLen <= wbSRAM2aEnd && ptr&3 == 0
+}
+
+// DecodeDeviceInfo decodes DeviceInfoLen bytes of a device information
+// table read from ptr. It is pure, so every transport decodes identically.
+func DecodeDeviceInfo(ptr uint32, raw []byte) DeviceInfo {
+	d := DeviceInfo{TablePtr: ptr}
+	if !DeviceInfoPtrValid(ptr) || len(raw) < DeviceInfoLen {
+		d.Layout = "none"
+		return d
+	}
+	raw = raw[:DeviceInfoLen]
 	d.Raw = raw
 	w := func(o int) uint32 { return binary.LittleEndian.Uint32(raw[o:]) }
 	switch {
@@ -356,7 +384,7 @@ func (f *FUS) ReadDeviceInfo(ctx context.Context) (DeviceInfo, error) {
 		d.SafeBoot, d.FUSVersion, d.FUSMemSize = w(0), Version(w(4)), w(8)
 		d.StackVersion, d.StackMemSize, d.InfoStack = Version(w(16)), w(20), w(24)
 	}
-	return d, nil
+	return d
 }
 
 // Hold sets DEMCR.VC_CORERESET so that every system reset (ours or the

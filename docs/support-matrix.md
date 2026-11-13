@@ -33,6 +33,7 @@ Code, fixtures and passing tests are not hardware validation.
 | scpi: Rigol profile | partial | synthetic | synthetic | native | no |
 | scpi: Siglent profile | partial | synthetic | synthetic | native | no |
 | stlink: native Go ST-Link V2 protocol (Linux usbfs or macOS IOKit) + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 and WB55 (real silicon) and F4 (simulator only) flash layers + STM32WB coprocessor FUS | partial | real-hardware-partial | real | native | no |
+| stm32dfu: native USB DFU 1.1 + ST DfuSe control transfers | complete | synthetic | synthetic | native | no |
 | telink: native SWS/SWire over UART | complete | real-hardware-partial | real | native | no (was inherited from plugins/uart on darwin) |
 | uart: serial (go.bug.st/serial) | complete | real-hardware-partial | real | native | no (device listing on darwin without cgo is a /dev/cu.* glob without VID/PID) |
 | usbcap: usbmon text input | partial | synthetic | synthetic | native | no |
@@ -599,6 +600,37 @@ Code, fixtures and passing tests are not hardware validation.
   - the probe sends no reply to DEBUG_EXIT; close sends it without waiting (a 2 s stall was fixed on real hardware)
   - genuine or counterfeit status of the probe is not determined
   - Linux only (usbfs)
+
+### stm32dfu — STM32 ROM USB DFU bootloader (DfuSe, 0483:df11): STM32WB5x user flash below SFSA
+
+**native USB DFU 1.1 + ST DfuSe control transfers**
+
+- implementation: complete; validation: synthetic; dependency: native (the internal/usb layer (Linux usbfs, macOS IOKit through purego); dfu-util, STM32CubeProgrammer and libusb are not used (ADR 0040))
+- capabilities:
+
+  | Capability | Status | Evidence |
+  |---|---|---|
+  | USB discovery | SIMULATED_ONLY | every 0483:df11 device, id stm32dfu/<USB serial> (<serial>@<port> for duplicates) |
+  | descriptors and alt-setting memory map | SIMULATED_ONLY | DFU functional descriptor (wTransferSize, attributes), bcdDevice as bootloader version, DfuSe alt strings parsed into r/e/w segments |
+  | memory read (UPLOAD) | SIMULATED_ONLY | SRAM, option bytes, OTP, system region; 4 KiB inline or a file; never at or above SFSA |
+  | secure boundary (SFSA) | SIMULATED_ONLY | FLASH_SFR option word at 0x1FFF8070 with its complement, cross-checked with the flash size and the flash alt; read-only when ambiguous |
+  | flash backup / erase / program / verify / restore | SIMULATED_ONLY | page erase 0x41+address and DNLOAD inside [0x08000000, SFSA*4K) only, backup gate, tokens, allow_* permissions, read-back verify |
+  | fus_info | SIMULATED_ONLY | reference table 0x20030000 and the word at 0x20030030 decoded like the ST-LINK plugin |
+  | leave DFU | SIMULATED_ONLY | set address 0x08000000, zero-length DNLOAD, GETSTATUS |
+
+- verified:
+  - the DfuSe state machine, errors, dfuDNBUSY and the write guard against an in-process simulator of an STM32WB55 ROM bootloader (SFSA 0xCB, 0xF4, 0xE1)
+  - mass erase, read unprotect and option-byte downloads are never sent (counted by the simulator)
+- unverified:
+  - any real ROM bootloader (the P-NUCLEO-WB55 USB dongle is to be validated read-only first)
+  - the real alt strings and wTransferSize
+  - whether the ROM allows UPLOAD from SRAM2a, OTP and DBGMCU
+  - SetAlternateInterface on macOS against the ROM
+  - leave semantics on the WB ROM
+- known gaps:
+  - STM32WB5x only (other STM32 ROM bootloaders get descriptors and non-flash reads; their flash is refused)
+  - option bytes are never written; no mass erase, no read unprotect
+  - no FUS operations (the ROM starts the FUS; upgrades go through the ST-LINK plugin)
 
 ### telink — Telink TLSR825x (SWire)
 

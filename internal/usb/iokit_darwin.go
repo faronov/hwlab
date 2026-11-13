@@ -73,6 +73,7 @@ const (
 	slotIfOpen                   = 8
 	slotIfClose                  = 9
 	slotIfGetNumEndpoints        = 19
+	slotIfSetAlternateInterface  = 22
 	slotIfGetPipeProperties      = 26
 	slotIfAbortPipe              = 28
 	slotIfReadPipe               = 31

@@ -496,6 +496,22 @@ func Registry() []Entry {
 			Unverified: []string{"restore on hardware", "UART ISP", "BL602/BL616 and other Bouffalo chips", "the cause of the helper losing USB frames of 64 bytes or more (worked around)"},
 			Gaps:       []string{"BL702 only", "no chip erase, efuse or flash-protection commands", "needs the vendor eflash_loader binary"},
 		}}},
+		{Plugin: "stm32dfu", Title: "STM32 ROM USB DFU bootloader (DfuSe, 0483:df11): STM32WB5x user flash below SFSA", Backends: []Backend{{
+			Name: "native USB DFU 1.1 + ST DfuSe control transfers", Implementation: ImplComplete, Validation: ValSynthetic, Fixture: FixtureSynthetic,
+			Dependency: DepNative, Dependencies: "the internal/usb layer (Linux usbfs, macOS IOKit through purego); dfu-util, STM32CubeProgrammer and libusb are not used (ADR 0040)", Cgo: "no",
+			Capabilities: []Capability{
+				{"USB discovery", CapSimulatedOnly, "every 0483:df11 device, id stm32dfu/<USB serial> (<serial>@<port> for duplicates)"},
+				{"descriptors and alt-setting memory map", CapSimulatedOnly, "DFU functional descriptor (wTransferSize, attributes), bcdDevice as bootloader version, DfuSe alt strings parsed into r/e/w segments"},
+				{"memory read (UPLOAD)", CapSimulatedOnly, "SRAM, option bytes, OTP, system region; 4 KiB inline or a file; never at or above SFSA"},
+				{"secure boundary (SFSA)", CapSimulatedOnly, "FLASH_SFR option word at 0x1FFF8070 with its complement, cross-checked with the flash size and the flash alt; read-only when ambiguous"},
+				{"flash backup / erase / program / verify / restore", CapSimulatedOnly, "page erase 0x41+address and DNLOAD inside [0x08000000, SFSA*4K) only, backup gate, tokens, allow_* permissions, read-back verify"},
+				{"fus_info", CapSimulatedOnly, "reference table 0x20030000 and the word at 0x20030030 decoded like the ST-LINK plugin"},
+				{"leave DFU", CapSimulatedOnly, "set address 0x08000000, zero-length DNLOAD, GETSTATUS"},
+			},
+			Verified:   []string{"the DfuSe state machine, errors, dfuDNBUSY and the write guard against an in-process simulator of an STM32WB55 ROM bootloader (SFSA 0xCB, 0xF4, 0xE1)", "mass erase, read unprotect and option-byte downloads are never sent (counted by the simulator)"},
+			Unverified: []string{"any real ROM bootloader (the P-NUCLEO-WB55 USB dongle is to be validated read-only first)", "the real alt strings and wTransferSize", "whether the ROM allows UPLOAD from SRAM2a, OTP and DBGMCU", "SetAlternateInterface on macOS against the ROM", "leave semantics on the WB ROM"},
+			Gaps:       []string{"STM32WB5x only (other STM32 ROM bootloaders get descriptors and non-flash reads; their flash is refused)", "option bytes are never written; no mass erase, no read unprotect", "no FUS operations (the ROM starts the FUS; upgrades go through the ST-LINK plugin)"},
+		}}},
 		{Plugin: "wstk", Title: "Silicon Labs Wireless Starter Kit (BRD4001A mainboard: AEM energy, PTI packet trace)", Backends: []Backend{
 			{
 				Name: "native USB: J-Link EMUCOM channels of the kit's on-board J-Link (kit control 0x10000, AEM 0x10002)", Implementation: ImplPartial, Validation: ValHardwarePartial, Fixture: FixtureReal,
