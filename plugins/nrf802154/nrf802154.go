@@ -4,6 +4,12 @@
 // artifact (link type 283, 802.15.4 TAP, so channel/RSSI/LQI are visible in
 // Wireshark) and streams packet events into the session timeline. tshark is an
 // optional decoding layer; raw capture never needs it.
+//
+// The zigbee-rs radio lab firmware speaks the same protocol plus a guarded
+// "transmit" extension (protocol/radiolab.go); the plugin detects it with a
+// version probe and offers PacketInjection.transmit only on that firmware.
+// The dongle's Open DFU bootloader is listed as its own device so firmware
+// can be (re)flashed with FlashProgramming.dfu_program.
 package nrf802154
 
 import (
@@ -46,9 +52,17 @@ type Plugin struct {
 	dec   *decode.Tshark
 	quiet time.Duration // command quiet period override (tests); 0 = default
 
-	mu   sync.Mutex
-	busy map[string]bool // serial port -> in use by a capture or scan
-	cfg  map[string]map[string]any
+	mu       sync.Mutex
+	busy     map[string]bool // serial port -> in use by a capture or scan
+	cfg      map[string]map[string]any
+	captures map[string]*capture          // serial port -> running capture
+	firmware map[string]protocol.Firmware // serial port -> last version probe
+
+	txl      txLimiter
+	auditMu  sync.Mutex
+	auditDir string // transmit audit directory override (tests)
+
+	dfuTimeout time.Duration // per-response DFU timeout override (tests); 0 = default
 }
 
 // New returns the plugin with real serial enumeration.
@@ -56,7 +70,44 @@ func New() *Plugin { return NewWith(usbserial.List, usbserial.Open(115200), &dec
 
 // NewWith injects the port lister, opener and decoder (tests).
 func NewWith(list usbserial.Lister, open usbserial.Opener, dec *decode.Tshark) *Plugin {
-	return &Plugin{list: list, open: open, dec: dec, busy: map[string]bool{}, cfg: map[string]map[string]any{}}
+	return &Plugin{list: list, open: open, dec: dec, busy: map[string]bool{}, cfg: map[string]map[string]any{},
+		captures: map[string]*capture{}, firmware: map[string]protocol.Firmware{}}
+}
+
+func (p *Plugin) config(id string) map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cfg[id]
+}
+
+// activeCapture returns the capture streaming from port, if any.
+func (p *Plugin) activeCapture(port string) *capture {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.captures[port]
+}
+
+func (p *Plugin) setCapture(port string, c *capture) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c == nil {
+		delete(p.captures, port)
+	} else {
+		p.captures[port] = c
+	}
+}
+
+func (p *Plugin) rememberFirmware(port string, fw protocol.Firmware) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.firmware[port] = fw
+}
+
+func (p *Plugin) knownFirmware(port string) (protocol.Firmware, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	fw, ok := p.firmware[port]
+	return fw, ok
 }
 
 func caps(ids ...string) []*pluginv1.Capability {
@@ -70,9 +121,23 @@ func caps(ids ...string) []*pluginv1.Capability {
 // Info implements pluginsdk.Plugin.
 func (p *Plugin) Info() *pluginv1.PluginInfo {
 	return &pluginv1.PluginInfo{
-		Id: "nrf802154", Name: "Nordic IEEE 802.15.4 sniffer", Vendor: "hwlab", Version: "0.2.0",
-		Capabilities: caps(pluginv1.CapPacketCapture, pluginv1.CapTimedCapture, pluginv1.CapArtifactExport, pluginv1.CapProtocolDecode),
+		Id: "nrf802154", Name: "Nordic IEEE 802.15.4 sniffer", Vendor: "hwlab", Version: "0.3.0",
+		Capabilities: caps(pluginv1.CapPacketCapture, pluginv1.CapTimedCapture, pluginv1.CapArtifactExport, pluginv1.CapProtocolDecode,
+			pluginv1.CapPacketInjection, pluginv1.CapFlashProgramming),
 		Methods: []*pluginv1.MethodSpec{
+			{Capability: pluginv1.CapPacketCapture, Name: "firmware_info", Danger: pluginv1.Danger_DANGER_SAFE,
+				Description: "probe the sniffer firmware (\"version\"): Nordic's receive-only sniffer or the zigbee-rs radio lab (transmit capable); with a capture running, reports what the capture probed"},
+			{Capability: pluginv1.CapPacketInjection, Name: "transmit", Danger: pluginv1.Danger_DANGER_CONFIRM,
+				Description: fmt.Sprintf("transmit a raw IEEE 802.15.4 frame (radio lab firmware only). psdu: MAC frame hex without FCS, 1-%d bytes (the radio appends the FCS); "+
+					"channel 11-26 (required unless a capture runs, then it must match the capture's channel and the frame is recorded in its pcapng/timeline as direction=tx); "+
+					"cca, ack (wait for an ACK; no retries), repeat 1-%d with interval_ms >= %d (burst <= %s), power_dbm, note. "+
+					"Rate limit %d frames per %s per dongle. Every call is appended to $HWLAB_HOME/artifacts/nrf802154-tx/audit.jsonl before and after transmitting",
+					protocol.MaxTxPSDU, MaxTxRepeat, MinTxIntervalMs, MaxTxBurst, TxBudgetFrames, TxBudgetWindow),
+				ArgsSchemaJson: `{"type":"object","required":["psdu"],"properties":{"psdu":{"type":"string"},"channel":{"type":"number"},"cca":{"type":"boolean"},"ack":{"type":"boolean"},"repeat":{"type":"number"},"interval_ms":{"type":"number"},"power_dbm":{"type":"number"},"note":{"type":"string"}}}`},
+			{Capability: pluginv1.CapFlashProgramming, Name: "dfu_program", Danger: pluginv1.Danger_DANGER_CONFIRM,
+				Description: "program an application into the nRF52840 dongle's Open DFU bootloader (device 1915:521f: press the side RESET button first) over USB serial DFU, like nrfutil nrf5sdk-tools dfu usb-serial. " +
+					"path: Intel .hex linked at 0x1000 or an nrfutil .zip; application_version (default 1); confirm_token=\"" + dfuConfirm + "\". The MBR and bootloader are never written",
+				ArgsSchemaJson: `{"type":"object","required":["path","confirm_token"],"properties":{"path":{"type":"string"},"application_version":{"type":"number"},"confirm_token":{"type":"string"}}}`},
 			{Capability: pluginv1.CapPacketCapture, Name: "scan", Danger: pluginv1.Danger_DANGER_SAFE,
 				Description:    "listen on each channel for dwell_ms and report packet counts and RSSI; args: channels (e.g. \"11-26\" or \"15,20\"), dwell_ms, min_packets",
 				ArgsSchemaJson: `{"type":"object","properties":{"channels":{"type":"string"},"dwell_ms":{"type":"number"},"min_packets":{"type":"number"}}}`},
@@ -101,10 +166,12 @@ func (p *Plugin) ListDevices(context.Context) ([]*pluginv1.Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	var confirmed, candidates []usbserial.Info
+	var confirmed, candidates, loaders []usbserial.Info
 	for _, i := range usbserial.Match(infos, nordicVID, "") {
 		switch {
 		case strings.EqualFold(i.PID, ppk2PID):
+		case isBootloader(i):
+			loaders = append(loaders, i)
 		case isSniffer(i):
 			confirmed = append(confirmed, i)
 		default:
@@ -125,10 +192,28 @@ func (p *Plugin) ListDevices(context.Context) ([]*pluginv1.Device, error) {
 		if !isSniffer(i) {
 			props["candidate"] = "true"
 		}
+		dc := caps(pluginv1.CapPacketCapture, pluginv1.CapTimedCapture, pluginv1.CapArtifactExport)
+		if fw, ok := p.knownFirmware(i.Name); ok {
+			props["firmware"] = strings.TrimSpace(fw.Name + " " + fw.Version)
+			if fw.CanTransmit() {
+				dc = append(dc, caps(pluginv1.CapPacketInjection)...)
+			}
+		}
 		out = append(out, &pluginv1.Device{
 			Id: id, Name: label, Serial: i.SerialNumber, Transport: "usb-serial",
-			Capabilities: caps(pluginv1.CapPacketCapture, pluginv1.CapTimedCapture, pluginv1.CapArtifactExport),
+			Capabilities: dc,
 			Properties:   props,
+		})
+	}
+	for _, i := range loaders {
+		id := i.SerialNumber
+		if id == "" {
+			id = filepath.Base(i.Name)
+		}
+		out = append(out, &pluginv1.Device{
+			Id: id, Name: "nRF52 Open DFU bootloader (USB serial DFU)", Serial: i.SerialNumber, Transport: "usb-serial",
+			Capabilities: caps(pluginv1.CapFlashProgramming),
+			Properties:   map[string]string{"port": i.Name, "vid": i.VID, "pid": i.PID, "product": i.Product, "mode": "dfu"},
 		})
 	}
 	return out, nil
@@ -225,6 +310,12 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 		res, err = p.decodePcap(ctx, req.GetArgs().AsMap())
 	case pluginv1.CapPacketCapture + ".scan":
 		res, err = p.scan(ctx, req.GetDeviceId(), req.GetArgs().AsMap())
+	case pluginv1.CapPacketCapture + ".firmware_info":
+		res, err = p.firmwareInfo(ctx, req.GetDeviceId())
+	case pluginv1.CapPacketInjection + ".transmit":
+		res, err = p.transmit(ctx, req.GetDeviceId(), req.GetArgs().AsMap())
+	case pluginv1.CapFlashProgramming + ".dfu_program":
+		res, err = p.dfuProgram(ctx, req.GetDeviceId(), req.GetArgs().AsMap())
 	default:
 		return nil, fmt.Errorf("unsupported method %s.%s", req.GetCapability(), req.GetMethod())
 	}

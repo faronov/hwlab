@@ -2,8 +2,10 @@ package protocol
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/faronov/hwlab/internal/usbserial"
@@ -28,6 +30,14 @@ type Device struct {
 	Lines     uint64 // non-empty lines read while receiving
 	Frames    uint64
 	Malformed uint64
+
+	// Firmware is the result of the version probe done by Start or Probe.
+	Firmware Firmware
+	// OnTx, when set before Run, receives transmit output lines (see
+	// radiolab.go) read while streaming, with their host receive time.
+	OnTx func(TxEvent, time.Time)
+
+	wmu sync.Mutex
 }
 
 // Open opens the serial port. baud is irrelevant for USB CDC but must be set.
@@ -65,6 +75,9 @@ func (d *Device) Start(ctx context.Context, channel int) error {
 	if _, err := d.command(ctx, "shell echo off"); err != nil {
 		return err
 	}
+	if _, err := d.Probe(ctx); err != nil {
+		return err
+	}
 	resp, err := d.command(ctx, fmt.Sprintf("channel %d", channel))
 	if err != nil {
 		return err
@@ -92,7 +105,108 @@ func (d *Device) Retune(ctx context.Context, channel int) error {
 	return d.write("receive")
 }
 
+// Probe asks the firmware for its version and capabilities ("version");
+// Nordic's sniffer answers "command not found" and is receive-only. Call
+// with the radio asleep and echo off (Start does).
+func (d *Device) Probe(ctx context.Context) (Firmware, error) {
+	resp, err := d.command(ctx, "version")
+	if err != nil {
+		return Firmware{}, err
+	}
+	d.Firmware = ParseVersion(resp)
+	return d.Firmware, nil
+}
+
+// Identify wakes the shell, puts the radio to sleep, turns echo off and
+// probes the firmware, leaving the device idle.
+func (d *Device) Identify(ctx context.Context) error {
+	d.lb = LineBuffer{}
+	for _, cmd := range []string{"", "sleep", "shell echo off"} {
+		if _, err := d.command(ctx, cmd); err != nil {
+			return err
+		}
+	}
+	_, err := d.Probe(ctx)
+	return err
+}
+
+// Setup prepares a device for commands without receiving: Identify, then
+// select channel.
+func (d *Device) Setup(ctx context.Context, channel int) error {
+	if channel < MinChannel || channel > MaxChannel {
+		return fmt.Errorf("channel %d out of range [%d,%d]", channel, MinChannel, MaxChannel)
+	}
+	if err := d.Identify(ctx); err != nil {
+		return err
+	}
+	return d.checked(ctx, fmt.Sprintf("channel %d", channel))
+}
+
+// SetPower sets the transmit power (radio lab firmware only).
+func (d *Device) SetPower(ctx context.Context, dbm int) error {
+	return d.checked(ctx, fmt.Sprintf("power %d", dbm))
+}
+
+func (d *Device) checked(ctx context.Context, cmd string) error {
+	resp, err := d.command(ctx, cmd)
+	if err != nil {
+		return err
+	}
+	if low := strings.ToLower(resp); strings.Contains(low, "not found") || strings.Contains(low, "error") || strings.Contains(low, "invalid") {
+		return fmt.Errorf("device rejected %q: %s", cmd, strings.TrimSpace(resp))
+	}
+	return nil
+}
+
+// ErrNoTxResult is returned when the firmware did not finish a transmit
+// within the deadline.
+var ErrNoTxResult = errors.New("no tx_done from the firmware before the deadline")
+
+// Transmit sends one transmit command on a device that is not streaming
+// (after Setup) and returns every transmit line up to and including the
+// final "tx_done:" or "error:". It gives up after timeout.
+func (d *Device) Transmit(ctx context.Context, req TxRequest, timeout time.Duration) ([]TxEvent, error) {
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+	if err := d.write(req.Command()); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var evs []TxEvent
+	done := false
+	buf := make([]byte, 4096)
+	for !done {
+		if ctx.Err() != nil {
+			return evs, ErrNoTxResult
+		}
+		n, err := d.port.Read(buf)
+		if n > 0 {
+			d.lb.Feed(buf[:n], func(line string) {
+				if done {
+					return
+				}
+				if ev, ok := ParseTxLine(line); ok {
+					evs = append(evs, ev)
+					done = ev.Kind == TxDone || ev.Kind == TxError
+				}
+			})
+		}
+		if err != nil {
+			return evs, fmt.Errorf("read: %w", err)
+		}
+	}
+	return evs, nil
+}
+
+// Send writes one command while Run is streaming; its output arrives
+// through OnTx (transmit lines) or is ignored.
+func (d *Device) Send(cmd string) error { return d.write(cmd) }
+
 func (d *Device) write(cmd string) error {
+	d.wmu.Lock()
+	defer d.wmu.Unlock()
 	_, err := d.port.Write([]byte(cmd + "\r\n"))
 	if err != nil {
 		return fmt.Errorf("write %q: %w", cmd, err)
@@ -150,6 +264,12 @@ func (d *Device) Run(ctx context.Context, onFrame func(Frame, time.Time), onTick
 					onFrame(f, rx)
 				case Malformed:
 					d.Malformed++
+				case Noise:
+					if d.OnTx != nil {
+						if ev, ok := ParseTxLine(line); ok {
+							d.OnTx(ev, rx)
+						}
+					}
 				}
 			})
 		}

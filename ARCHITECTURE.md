@@ -61,7 +61,7 @@ low-rate events; `GenericPayload` for forward compatibility.
 
 Capability identifiers (`pkg/api/pluginv1/caps.go`): PowerMeasurement,
 VoltageMeasurement, PowerSource, DigitalCapture, AnalogCapture,
-PacketCapture, ProtocolDecode, USBPacketCapture, DebugProbe, MemoryAccess,
+PacketCapture, PacketInjection, ProtocolDecode, USBPacketCapture, DebugProbe, MemoryAccess,
 FlashProgramming, RTT, TriggerInput/Output, LiveRawStream, TimedCapture,
 OfflineCapture, ArtifactExport, SCPI, SerialTransport. A device requires a
 capability, never a vendor (`requires: [PowerMeasurement]`).

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -31,6 +32,8 @@ const (
 
 type capture struct {
 	p       *Plugin
+	id      string
+	port    string
 	dev     *protocol.Device
 	release func()
 	channel int
@@ -58,6 +61,15 @@ type capture struct {
 
 	done chan struct{}
 	res  *pluginv1.StopCaptureResponse
+
+	// Transmit through a running capture (radio lab firmware): txMu
+	// serialises transmit calls, txWait receives the firmware's transmit
+	// lines from the reader goroutine.
+	txMu     sync.Mutex
+	txWaitMu sync.Mutex
+	txWait   chan protocol.TxEvent
+	txID     string
+	txFrames uint64
 }
 
 // StartCapture implements pluginsdk.Plugin. It configures the radio before
@@ -93,7 +105,8 @@ func (p *Plugin) StartCapture(ctx context.Context, req pluginsdk.CaptureRequest,
 	if err := dev.Start(ctx, ch); err != nil {
 		return fail(status.Errorf(codes.Unavailable, "start sniffer on %s: %v", port, err))
 	}
-	c := &capture{p: p, dev: dev, release: release, channel: ch, clock: req.Clock, cm: protocol.NewClockMap(), sink: sink,
+	p.rememberFirmware(port, dev.Firmware)
+	c := &capture{p: p, id: req.CaptureID, port: port, dev: dev, release: release, channel: ch, clock: req.Clock, cm: protocol.NewClockMap(), sink: sink,
 		wallAt: time.Now(), sessAt: req.Clock.Now(), done: make(chan struct{}), wantDec: true}
 	if b, ok := req.Config["decode"].(bool); ok {
 		c.wantDec = b
@@ -113,12 +126,16 @@ func (p *Plugin) StartCapture(ctx context.Context, req pluginsdk.CaptureRequest,
 			return fail(err)
 		}
 	}
+	dev.OnTx = c.onTx
+	p.setCapture(port, c)
 	go c.run(ctx)
 	return c, &pluginsdk.CaptureStart{Streams: []*pluginv1.StreamInfo{{
 		StreamId: packetStream, Kind: "packet",
 		Attributes: map[string]string{
 			"channel": fmt.Sprint(ch), "link_type": fmt.Sprint(pcap.LinkIEEE802154NoFCS), "device_timer": "us since boot",
-			"clock": "device timer mapped to session time with a windowed minimum-offset estimator",
+			"clock":    "device timer mapped to session time with a windowed minimum-offset estimator",
+			"firmware": strings.TrimSpace(dev.Firmware.Name + " " + dev.Firmware.Version),
+			"transmit": fmt.Sprint(dev.Firmware.CanTransmit()),
 		}}}}, nil
 }
 
@@ -131,6 +148,7 @@ func (c *capture) Result() *pluginv1.StopCaptureResponse { <-c.done; return c.re
 func (c *capture) run(ctx context.Context) {
 	defer close(c.done)
 	c.runErr = c.dev.Run(ctx, c.onFrame, c.onTick)
+	c.p.setCapture(c.port, nil)
 	c.flush(true)
 	_ = c.dev.Close()
 	c.release()
@@ -233,7 +251,7 @@ func (c *capture) finishFile() {
 		fmt.Fprintf(&sb, "%s=%s\n", k, meta[k])
 	}
 	if c.writeErr == nil {
-		c.writeErr = c.ng.Close(c.clock.Now(), c.packets, c.sink.Dropped(), sb.String())
+		c.writeErr = c.ng.Close(c.clock.Now(), c.packets+c.txFrames, c.sink.Dropped(), sb.String())
 	}
 	if err := c.buf.Flush(); c.writeErr == nil {
 		c.writeErr = err
@@ -311,12 +329,17 @@ func (c *capture) clockInfo() *pluginv1.ClockInfo {
 }
 
 func (c *capture) buildResult() {
-	res := &pluginv1.StopCaptureResponse{Stats: &pluginv1.CaptureStats{Events: c.packets + c.decoded}, Clock: c.clockInfo()}
+	res := &pluginv1.StopCaptureResponse{Stats: &pluginv1.CaptureStats{Events: c.packets + c.txFrames + c.decoded}, Clock: c.clockInfo()}
 	if c.pcapPath != "" && c.writeErr == nil {
 		meta := c.clockMeta()
 		meta["channel"] = fmt.Sprint(c.channel)
 		meta["link_type"] = fmt.Sprint(pcap.LinkIEEE802154TAP)
 		meta["packets"] = fmt.Sprint(c.packets)
+		meta["firmware"] = strings.TrimSpace(c.dev.Firmware.Name + " " + c.dev.Firmware.Version)
+		if c.txFrames > 0 {
+			meta["tx_frames"] = fmt.Sprint(c.txFrames)
+			meta["tx_note"] = "frames injected by this sniffer are in the pcapng without RSSI/LQI; the timeline marks them direction=tx; see the nrf802154-tx audit log"
+		}
 		if c.packets > 0 {
 			meta["rssi_mean_dbm"] = fmt.Sprintf("%.1f", float64(c.rssiSum)/float64(c.packets))
 		}

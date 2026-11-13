@@ -27,6 +27,20 @@ func Registry() []Entry {
 			Verified:   []string{"channel capture, 10 s on ch15", "pcapng export and replay", "Zigbee decode via tshark"},
 			Unverified: []string{"receiver timing accuracy", "channel hopping on real traffic of a known source"},
 			Gaps:       []string{"tshark is an optional external decoder"},
+		}, {
+			Name: "zigbee-rs radio lab firmware: PacketInjection (transmit) and firmware_info", Implementation: ImplComplete, Validation: ValSynthetic, Fixture: FixtureSynthetic,
+			Dependency: DepNative, Dependencies: "zigbee-rs tools/nrf52840-radio-lab firmware on the sniffer (the Nordic firmware is receive-only and is detected as such)",
+			Cgo:        "linux/windows: no; darwin: only for VID/PID discovery",
+			Verified:   []string{"version probe of both firmwares, transmit command/result grammar, guards (PSDU <= 125 B, channel 11-26, repeat <= 100, interval >= 10 ms, burst <= 30 s, 300 frames/min/port), JSONL audit before and after every request, TX inside a running capture (outbound pcapng packets, timeline events) against an in-process simulator"},
+			Unverified: []string{"any transmission on real hardware", "firmware probe against the real Nordic sniffer firmware"},
+			Gaps:       []string{"a standalone transmit (no capture running) has no session timeline: it is recorded in the audit log and the response only"},
+		}, {
+			Name: "Nordic Open USB DFU bootloader (serial DFU, dfu_program)", Implementation: ImplComplete, Validation: ValSynthetic, Fixture: FixtureSynthetic,
+			Dependency: DepNative, Dependencies: "nRF52840 Dongle (PCA10059) with Nordic's open bootloader (1915:521F), entered with the side RESET button",
+			Cgo:        "linux/windows: no; darwin: only for VID/PID discovery",
+			Verified:   []string{"init packet byte-identical to nrfutil 8 nrf5sdk-tools for the same image", "SLIP framing, object create/write/CRC/execute against a simulated bootloader", "image guards: application at 0x1000 below the bootloader, valid stack pointer and reset vector"},
+			Unverified: []string{"programming a real dongle"},
+			Gaps:       []string{"application images only (no SoftDevice or bootloader update)", "a .hex gets a generated unsigned init packet (the open bootloader accepts it); a .zip init packet, signed or not, is checked against the image and sent unchanged, never signed by hwlab"},
 		}}},
 		{Plugin: "saleae", Title: "Saleae Logic (via Logic 2 Automation)", Backends: []Backend{{
 			Name: "Logic 2 Automation gRPC", Implementation: ImplComplete, Validation: ValHardwarePartial, Fixture: FixtureReal,

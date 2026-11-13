@@ -120,7 +120,7 @@ func TestDeviceStartAndRun(t *testing.T) {
 		t.Error("radio still receiving after Close; sleep was not sent")
 	}
 	cmds := sim.Commands()
-	want := []string{"", "sleep", "shell echo off", "channel 15", "receive"}
+	want := []string{"", "sleep", "shell echo off", "version", "channel 15", "receive"}
 	for i, w := range want {
 		if i >= len(cmds) || cmds[i] != w {
 			t.Fatalf("commands = %q, want prefix %q", cmds, want)

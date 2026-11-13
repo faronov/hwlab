@@ -26,6 +26,8 @@ type TAPMeta struct {
 	Page    uint8   // channel page (0 for 2.4 GHz O-QPSK)
 	RSSIdBm float32 // received signal strength
 	LQI     uint8
+	// NoRadioMeta omits the RSSI and LQI TLVs (frames this host transmitted).
+	NoRadioMeta bool
 }
 
 // EncodeTAP15_4 prepends an IEEE 802.15.4 TAP header to a frame that carries
@@ -45,11 +47,15 @@ func EncodeTAP15_4(m TAPMeta, frame []byte) []byte {
 		}
 	}
 	tlv(tapTLVFCSType, []byte{0}) // 0 = no FCS present
-	var f [4]byte
-	le.PutUint32(f[:], math.Float32bits(m.RSSIdBm))
-	tlv(tapTLVRSSI, f[:])
+	if !m.NoRadioMeta {
+		var f [4]byte
+		le.PutUint32(f[:], math.Float32bits(m.RSSIdBm))
+		tlv(tapTLVRSSI, f[:])
+	}
 	tlv(tapTLVChannel, []byte{byte(m.Channel), byte(m.Channel >> 8), m.Page})
-	tlv(tapTLVLQI, []byte{m.LQI})
+	if !m.NoRadioMeta {
+		tlv(tapTLVLQI, []byte{m.LQI})
+	}
 	le.PutUint16(b[2:], uint16(len(b)))
 	return append(b, frame...)
 }
@@ -156,6 +162,39 @@ func (n *NGWriter) WritePacket(tsNs int64, data []byte) error {
 	return n.block(blockEPB, body)
 }
 
+// epb_flags (option 2) direction bits.
+const (
+	optEPBFlags     = 2
+	epbFlagOutbound = 2
+)
+
+// WritePacketOut writes a packet this host transmitted: the enhanced packet
+// block carries epb_flags direction=outbound (Wireshark: frame.packet_flags_
+// direction == 2) and an optional comment.
+func (n *NGWriter) WritePacketOut(tsNs int64, data []byte, comment string) error {
+	if tsNs < 0 {
+		tsNs = 0
+	}
+	le := binary.LittleEndian
+	body := make([]byte, 20, 20+pad4(len(data))+len(comment)+16)
+	le.PutUint32(body[4:], uint32(uint64(tsNs)>>32))
+	le.PutUint32(body[8:], uint32(tsNs))
+	le.PutUint32(body[12:], uint32(len(data)))
+	le.PutUint32(body[16:], uint32(len(data)))
+	body = append(body, data...)
+	for len(body)%4 != 0 {
+		body = append(body, 0)
+	}
+	var fl [4]byte
+	le.PutUint32(fl[:], epbFlagOutbound)
+	body = appendOpt(body, optEPBFlags, fl[:])
+	if comment != "" {
+		body = appendOpt(body, optComment, []byte(comment))
+	}
+	body = appendOpt(body, optEnd, nil)
+	return n.block(blockEPB, body)
+}
+
 // Close appends an interface statistics block carrying the final counters and
 // a free-form comment (hwlab stores clock metadata there), then returns.
 func (n *NGWriter) Close(tsNs int64, received, dropped uint64, comment string) error {
@@ -177,8 +216,10 @@ func (n *NGWriter) Close(tsNs int64, received, dropped uint64, comment string) e
 
 // NGPacket is one packet read back from a pcapng file.
 type NGPacket struct {
-	TsNs int64
-	Data []byte
+	TsNs     int64
+	Data     []byte
+	Outbound bool   // epb_flags direction = outbound
+	Comment  string // opt_comment
 }
 
 // NGFile is the parsed content of a hwlab pcapng file.
@@ -222,7 +263,22 @@ func ReadNG(r io.Reader) (*NGFile, error) {
 			if 20+capLen > len(body) {
 				return nil, fmt.Errorf("pcapng: packet overruns block")
 			}
-			f.Packets = append(f.Packets, NGPacket{TsNs: ts, Data: bytes.Clone(body[20 : 20+capLen])})
+			pk := NGPacket{TsNs: ts, Data: bytes.Clone(body[20 : 20+capLen])}
+			for o := 20 + pad4(capLen); o+4 <= len(body); {
+				code, l := le.Uint16(body[o:]), int(le.Uint16(body[o+2:]))
+				if code == optEnd || o+4+l > len(body) {
+					break
+				}
+				val := body[o+4 : o+4+l]
+				switch {
+				case code == optEPBFlags && l == 4:
+					pk.Outbound = le.Uint32(val)&3 == epbFlagOutbound
+				case code == optComment:
+					pk.Comment = string(val)
+				}
+				o += 4 + pad4(l)
+			}
+			f.Packets = append(f.Packets, pk)
 		case blockISB:
 			for o := 12; o+4 <= len(body); {
 				code, l := le.Uint16(body[o:]), int(le.Uint16(body[o+2:]))

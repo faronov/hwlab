@@ -25,6 +25,8 @@ Code, fixtures and passing tests are not hardware validation.
 | jlinknative: native Go J-Link over Linux usbfs or macOS IOKit + SWD bit sequences + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + target-memory RTT (internal/rtt) + JTAG chain scan (internal/jtag) | partial | real-hardware-partial | real | native | no |
 | modbus: native Modbus (RTU over serial, TCP) | complete | synthetic | synthetic | native | no (was inherited from plugins/uart on darwin; split by build tags) |
 | nrf802154: nRF Sniffer for 802.15.4 over serial | complete | real-hardware-partial | real | native | linux/windows: no; darwin: only for VID/PID discovery |
+| nrf802154: zigbee-rs radio lab firmware: PacketInjection (transmit) and firmware_info | complete | synthetic | synthetic | native | linux/windows: no; darwin: only for VID/PID discovery |
+| nrf802154: Nordic Open USB DFU bootloader (serial DFU, dfu_program) | complete | synthetic | synthetic | native | linux/windows: no; darwin: only for VID/PID discovery |
 | picoscope: simulated device | complete | synthetic | synthetic | native | no |
 | picoscope: PicoSDK (ps2000a/ps5000a/…) | missing | untested | none | vendor-sdk | would need cgo or a purego loader |
 | ppk2: native serial protocol | complete | real-hardware-partial | real | native | linux/windows: no; darwin: only for VID/PID discovery (IOKit via go.bug.st/serial/enumerator) |
@@ -458,6 +460,30 @@ Code, fixtures and passing tests are not hardware validation.
   - channel hopping on real traffic of a known source
 - known gaps:
   - tshark is an optional external decoder
+
+**zigbee-rs radio lab firmware: PacketInjection (transmit) and firmware_info**
+
+- implementation: complete; validation: synthetic; dependency: native (zigbee-rs tools/nrf52840-radio-lab firmware on the sniffer (the Nordic firmware is receive-only and is detected as such))
+- verified:
+  - version probe of both firmwares, transmit command/result grammar, guards (PSDU <= 125 B, channel 11-26, repeat <= 100, interval >= 10 ms, burst <= 30 s, 300 frames/min/port), JSONL audit before and after every request, TX inside a running capture (outbound pcapng packets, timeline events) against an in-process simulator
+- unverified:
+  - any transmission on real hardware
+  - firmware probe against the real Nordic sniffer firmware
+- known gaps:
+  - a standalone transmit (no capture running) has no session timeline: it is recorded in the audit log and the response only
+
+**Nordic Open USB DFU bootloader (serial DFU, dfu_program)**
+
+- implementation: complete; validation: synthetic; dependency: native (nRF52840 Dongle (PCA10059) with Nordic's open bootloader (1915:521F), entered with the side RESET button)
+- verified:
+  - init packet byte-identical to nrfutil 8 nrf5sdk-tools for the same image
+  - SLIP framing, object create/write/CRC/execute against a simulated bootloader
+  - image guards: application at 0x1000 below the bootloader, valid stack pointer and reset vector
+- unverified:
+  - programming a real dongle
+- known gaps:
+  - application images only (no SoftDevice or bootloader update)
+  - a .hex gets a generated unsigned init packet (the open bootloader accepts it); a .zip init packet, signed or not, is checked against the image and sent unchanged, never signed by hwlab
 
 ### picoscope — PicoScope
 

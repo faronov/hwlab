@@ -24,7 +24,11 @@ const (
 	CapDigitalCapture = "DigitalCapture"
 	CapAnalogCapture  = "AnalogCapture"
 
-	CapPacketCapture    = "PacketCapture"
+	CapPacketCapture = "PacketCapture"
+	// CapPacketInjection transmits caller-supplied raw frames on a radio or
+	// bus. Methods implementing it must be DANGER_CONFIRM, bounded (length,
+	// count, rate) and audited.
+	CapPacketInjection  = "PacketInjection"
 	CapProtocolDecode   = "ProtocolDecode"
 	CapUSBPacketCapture = "USBPacketCapture"
 

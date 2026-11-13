@@ -2,7 +2,7 @@
 
 | Device | Plugin | Status | Notes |
 |---|---|---|---|
-| nRF52840 DK, nRF 802.15.4 Sniffer firmware (1915:154b) | `nrf802154` | **validated** (scan, capture, pcapng/TAP, tshark decode, replay) | see below |
+| nRF52840 DK, nRF 802.15.4 Sniffer firmware (1915:154b) | `nrf802154` | **validated** (scan, capture, pcapng/TAP, tshark decode, replay); transmit (zigbee-rs radio lab firmware) and dongle DFU **simulator-only** | see below |
 | Nordic PPK2 (1915:c00a) | `ppk2` | **validated** (ampere, source, 10 min stress, replug); calibration vs. known load and digital signals unverified | [results](notes/phase2-ppk2-results.md) |
 | SEGGER J-Link / RTT (`jlink-segger`) | `jlink` | **hardware-validated (non-destructive ops on a J-Link OB); target RTT data, write and flash unverified** | see below, [ADR 0012](adr/0012-jlink-debugprobe.md), [results](notes/phase3c-jlink-results.md) |
 | SEGGER J-Link, native (`jlink-native`) | `jlinknative` | **real-hardware-validated on an EFR32MG1P** (SWD, Cortex-M debug, RTT, unplug/replug); JTAG untested, nRF52840/multi-probe not run. **macOS:** read-only run on a J-Link OB (discovery, info, SWD identify, memory reads, halt/resume, busy) | [J-Link native](#j-link-native-jlink-native), [ADR 0034](adr/0034-native-jlink.md), [results](notes/phase-native-jlink-results.md), [macOS](#native-usb-probes-on-macos) |
@@ -25,7 +25,8 @@
 
 ## nRF 802.15.4 sniffer on Linux
 
-1. Flash the nRF Sniffer for 802.15.4 firmware (hwlab never flashes devices).
+1. Flash the nRF Sniffer for 802.15.4 firmware, or the zigbee-rs radio lab
+   firmware if you also need transmission (see below).
 2. Add your user to `dialout` (or the group owning `/dev/ttyACM*`) and re-login.
 3. ModemManager may probe CDC ports and steal the first bytes; if capture
    fails to start, stop it (`systemctl stop ModemManager`) or add a udev rule
@@ -44,6 +45,44 @@ hwlab sniffer capture --channel 15 --duration 10s [--no-decode]
 Open `<session>/artifacts/sniffer/nrf802154-chN.pcapng` in Wireshark; the
 `clock.*` artifact metadata describes timing uncertainty
 ([ADR 0010](adr/0010-nrf802154-sniffer.md)).
+
+## nRF 802.15.4 transmit (zigbee-rs radio lab firmware)
+
+**Status: host-tested against simulators only; not yet run on a dongle.**
+
+The zigbee-rs `tools/nrf52840-radio-lab` firmware keeps the sniffer protocol
+and adds `transmit` ([ADR 0010](adr/0010-nrf802154-sniffer.md#amendment-transmit-and-dfu-zigbee-rs-radio-lab-firmware)).
+Flash a PCA10059 dongle through its open bootloader:
+
+```sh
+# press the dongle's side RESET button: the red LED pulses, 1915:521f appears
+hwlab devices                                     # mode=dfu entry
+hwlab invoke nrf802154/<bootloader serial> FlashProgramming.dfu_program --yes \
+  -a path=radio-lab.hex -a confirm_token=program-application
+hwlab invoke nrf802154/<serial> PacketCapture.firmware_info
+```
+
+Transmit a beacon request on channel 26 (quote PSDUs: `-a` values are YAML
+scalars, so an all-digit PSDU would otherwise become a number):
+
+```sh
+hwlab invoke nrf802154/<serial> PacketInjection.transmit --yes \
+  -a psdu='"030801ffffffff07"' -a channel=26 [-a repeat=3 -a interval_ms=100] [-a note=why]
+```
+
+Over MCP use `device_invoke` with the same arguments. With a capture running
+on the dongle, omit `channel` (or pass the capture's channel); the frames then
+appear in the pcapng as outbound packets and in the timeline with
+`direction=tx`. Every request is logged in
+`$HWLAB_HOME/artifacts/nrf802154-tx/audit.jsonl`. Limits: PSDU ≤ 125 bytes
+(the radio adds the FCS), repeat ≤ 100, interval ≥ 10 ms, burst ≤ 30 s,
+300 frames per minute per port. The Nordic firmware is detected as
+receive-only and `transmit` fails with FailedPrecondition.
+
+To go back to Nordic's firmware, program
+`nrf802154_sniffer_nrf52840dongle.hex` from
+[nRF-Sniffer-for-802.15.4](https://github.com/NordicSemiconductor/nRF-Sniffer-for-802.15.4)
+with `dfu_program`, or `nrfutil nrf5sdk-tools dfu usb-serial`.
 
 ## Combined PPK2 + sniffer
 

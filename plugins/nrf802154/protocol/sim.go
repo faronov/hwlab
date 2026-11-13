@@ -1,9 +1,12 @@
 package protocol
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +42,11 @@ type Sim struct {
 	Jitter time.Duration
 	// FailAfter makes reads fail after that many frames were delivered (device unplug).
 	FailAfter int
+	// RadioLab makes the simulator answer like the zigbee-rs radio lab
+	// firmware (version, power, transmit) instead of Nordic's sniffer.
+	RadioLab bool
+	// AckStatus is the status of "transmit ... ack" attempts (default no_ack).
+	AckStatus string
 
 	mu      sync.Mutex
 	out     chan []byte
@@ -50,6 +58,8 @@ type Sim struct {
 	t0      time.Time
 	sent    int
 	partial []byte
+	power   int
+	txs     []string
 	once    sync.Once
 	wg      sync.WaitGroup
 	started bool
@@ -81,6 +91,20 @@ func (s *Sim) Channel() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.channel
+}
+
+// Transmits returns the transmit commands accepted so far.
+func (s *Sim) Transmits() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.txs...)
+}
+
+// Power returns the transmit power last set by the host.
+func (s *Sim) Power() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.power
 }
 
 // Receiving reports whether the radio is in receive mode.
@@ -154,9 +178,96 @@ func (s *Sim) handle(cmd string) {
 		s.emit([]byte("\x1b[1;32muart:~$ \x1b[m"))
 	case cmd == "receive":
 		s.setRx(true)
+	case s.RadioLab && cmd == "version":
+		s.emit([]byte("version: " + RadioLabName + " 0.1.0 protocol: 1 caps: receive,transmit,cca,ack-wait,repeat,power,stats\r\n"))
+	case s.RadioLab && cmd == "power":
+		s.mu.Lock()
+		pw := s.power
+		s.mu.Unlock()
+		s.emit(fmt.Appendf(nil, "power: %d\r\n", pw))
+	case s.RadioLab && strings.HasPrefix(cmd, "power "):
+		var pw int
+		if _, err := fmt.Sscanf(cmd, "power %d", &pw); err != nil || !slices.Contains(TxPowerLevels, pw) {
+			s.emit([]byte("error: unsupported power level\r\n"))
+			return
+		}
+		s.mu.Lock()
+		s.power = pw
+		s.mu.Unlock()
+	case s.RadioLab && strings.HasPrefix(cmd, "transmit "):
+		s.transmit(cmd)
 	default:
-		s.emit([]byte(cmd + ": command not found\r\n"))
+		s.emit([]byte(strings.Fields(cmd)[0] + ": command not found\r\n"))
 	}
+}
+
+// transmit emulates the radio lab's transmit command, including its output.
+func (s *Sim) transmit(cmd string) {
+	f := strings.Fields(cmd)
+	req := TxRequest{Repeat: 1}
+	psdu, err := hex.DecodeString(f[1])
+	if err != nil {
+		s.emit([]byte("error: frame must be hex\r\n"))
+		return
+	}
+	req.PSDU = psdu
+	for i := 2; i < len(f); i++ {
+		switch f[i] {
+		case "cca":
+			req.CCA = true
+		case "ack":
+			req.AckWait = true
+		case "repeat":
+			if i+2 >= len(f) {
+				s.emit([]byte("error: transmit: wrong parameter count\r\n"))
+				return
+			}
+			req.Repeat, _ = strconv.Atoi(f[i+1])
+			req.IntervalMs, _ = strconv.Atoi(f[i+2])
+			i += 2
+		default:
+			s.emit([]byte("error: unknown transmit option\r\n"))
+			return
+		}
+	}
+	if err := req.Validate(); err != nil {
+		s.emit([]byte("error: " + err.Error() + "\r\n"))
+		return
+	}
+	s.mu.Lock()
+	s.txs = append(s.txs, cmd)
+	ch, pw := s.channel, s.power
+	status := "sent"
+	if req.AckWait {
+		status = "no_ack"
+		if s.AckStatus != "" {
+			status = s.AckStatus
+		}
+	}
+	s.mu.Unlock()
+	onAir := append(append([]byte(nil), psdu...), FCS(psdu)...)
+	sum := TxSummary{Result: "ok"}
+	for a := 1; a <= req.Repeat; a++ {
+		if a > 1 {
+			time.Sleep(time.Duration(req.IntervalMs) * time.Millisecond)
+		}
+		us := s.devUs()
+		sum.Attempts++
+		switch status {
+		case "acked":
+			sum.Sent++
+			sum.Acked++
+		case "no_ack":
+			sum.Sent++
+			sum.NoAck++
+		case "sent":
+			sum.Sent++
+		}
+		s.emit(fmt.Appendf(nil, "transmitted: %s channel: %d power: %d time: %d\r\n", hex2(onAir), ch, pw, us))
+		s.emit(fmt.Appendf(nil, "tx: %d/%d status: %s time: %d\r\n", a, req.Repeat, status, us))
+	}
+	s.emit(fmt.Appendf(nil, "tx_done: attempts: %d sent: %d acked: %d no_ack: %d cca_busy: 0 error: 0 result: ok\r\n",
+		sum.Attempts, sum.Sent, sum.Acked, sum.NoAck))
 }
 
 func (s *Sim) setRx(on bool) {
