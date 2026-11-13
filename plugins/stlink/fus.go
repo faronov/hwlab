@@ -26,6 +26,44 @@ const (
 // of STM32CubeWB, "FUSv1.x.y => Must be updated first to FUSv1.2.0").
 const fusMinV1 = stm32.Version(0x01020000)
 
+// FUS 0.5.3 (found on early P-NUCLEO-WB55 boards) cannot take the plain FUS
+// images: STM32CubeWB 8f0328f0, Release_Notes.html V1.24.0, "STEP 5" says to
+// install stm32wb5x_FUS_fw_for_fus_0_5_3.bin first, which yields FUS 1.2.0.
+// That image is for FUS 0.5.3 only. Identified by SHA-256.
+const (
+	fus053        = stm32.Version(0x00050300)
+	fusFor053SHA  = "3f73a9be93eec3de7ff663d4b8a7669064c86f841db401c8ccee4f6ccd4e4b30" // stm32wb5x_FUS_fw_for_fus_0_5_3.bin -> 1.2.0
+	fusFor053Next = stm32.Version(0x01020000)
+)
+
+// plainFUSImages are the regular FUS images that must not go onto FUS 0.5.3.
+var plainFUSImages = map[string]string{
+	"2712d4d23417c00af9a0fb6337c6f93118d8ffce02c61db7f4e611b74baddbfd": "stm32wb5x_FUS_fw.bin (FUS 1.2.0)",
+	"bbab9b42d92c31f8a04e2f04ef9361c3f6f01714c14408cd34fb1583a6edf30d": "stm32wb5x_FUS_fw.bin (FUS 2.2.0)",
+}
+
+// checkFUSImage applies the FUS 0.5.3 rule of the release notes to the
+// running (or expected) FUS, the image's SHA-256 and the expected result.
+func checkFUSImage(cur, next stm32.Version, imgSHA string) error {
+	imgSHA = strings.ToLower(imgSHA)
+	if cur.Same(fus053) {
+		if what, ok := plainFUSImages[imgSHA]; ok {
+			return denied("FUS 0.5.3 must not receive %s: install stm32wb5x_FUS_fw_for_fus_0_5_3.bin (SHA-256 %s) first (STM32CubeWB release notes V1.24.0, STEP 5)", what, fusFor053SHA)
+		}
+		if imgSHA != fusFor053SHA {
+			return denied("FUS 0.5.3 only accepts stm32wb5x_FUS_fw_for_fus_0_5_3.bin (SHA-256 %s), not an image with SHA-256 %q (STM32CubeWB release notes V1.24.0, STEP 5)", fusFor053SHA, imgSHA)
+		}
+		if !next.Same(fusFor053Next) {
+			return argErr(fmt.Errorf("stm32wb5x_FUS_fw_for_fus_0_5_3.bin yields FUS %s: pass expect_new_fus_version=%s, not %s", fusFor053Next, fusFor053Next, next))
+		}
+		return nil
+	}
+	if imgSHA == fusFor053SHA {
+		return denied("stm32wb5x_FUS_fw_for_fus_0_5_3.bin is only for a running FUS 0.5.3, this one is %s", cur)
+	}
+	return nil
+}
+
 // wbTarget is flashTarget restricted to an STM32WB.
 func (s *session) wbTarget(ctx context.Context) (*stm32.Flash, *stm32.Profile, error) {
 	fl, p, err := s.flashTarget(ctx)
@@ -271,6 +309,13 @@ func (s *session) fusUpgrade(ctx context.Context, args map[string]any) (map[stri
 	if cur>>24 == 1 && cur>>8 < fusMinV1>>8 && !next.Same(fusMinV1) {
 		return nil, denied("FUS %s must be upgraded to %s first (STM32CubeWB release notes, STEP 6); refusing %s", cur, fusMinV1, next)
 	}
+	declared, err := strArg(args, "image_sha256")
+	if err != nil {
+		return nil, err
+	}
+	if err := checkFUSImage(cur, next, declared); err != nil {
+		return nil, err
+	}
 	fl, p, err := s.wbTarget(ctx)
 	if err != nil {
 		return nil, err
@@ -288,6 +333,9 @@ func (s *session) fusUpgrade(ctx context.Context, args map[string]any) (map[stri
 	r, err := f.Upgrade(ctx, img, addr, func(di stm32.DeviceInfo, sec stm32.Security) error {
 		if !di.FUSVersion.Same(cur) {
 			return status.Errorf(codes.FailedPrecondition, "the FUS is %s, not expect_fus_version=%s; nothing was changed", di.FUSVersion, cur)
+		}
+		if err := checkFUSImage(di.FUSVersion, next, sha(img)); err != nil {
+			return err
 		}
 		if sec.SecureBase != p.SecureBase {
 			return status.Errorf(codes.FailedPrecondition, "the secure start is 0x%08x, not 0x%08x as when the arguments were checked; nothing was changed", sec.SecureBase, p.SecureBase)

@@ -129,6 +129,16 @@ The engine and plugin tests cover the following:
 - Backups are tied to the SFSA at the time they were taken. Every stack change needs a new backup before the next flash modification.
 - The FUS's own device-ID field is not `DBGMCU_IDCODE`: the tested STM32WB55 reports `0x0496` there, while DBGMCU reads `0x495`. hwlab reports it as `fus_device_id` and identifies the chip by DBGMCU.
 
+**FUS 0.5.3 (added later)**
+- A P-NUCLEO-WB55 Nucleo was found running FUS 0.5.3 with BLE stack 1.0.0 and SFSA 0xCB.
+- STM32CubeWB release notes V1.24.0, "STEP 5" (STM32CubeWB 8f0328f0), say FUS 0.5.3 must first take `stm32wb5x_FUS_fw_for_fus_0_5_3.bin` (SHA-256 `3f73a9be93eec3de7ff663d4b8a7669064c86f841db401c8ccee4f6ccd4e4b30`), which yields FUS 1.2.0.
+- `fus_upgrade` enforces this with a small SHA-256 table:
+  - on FUS 0.5.3 it accepts only that image, and only with `expect_new_fus_version=1.2.0`;
+  - on FUS 0.5.3 it refuses the plain `stm32wb5x_FUS_fw.bin` images (1.2.0 `2712d4d2…`, 2.2.0 `bbab9b42…`);
+  - it refuses the 0.5.3 image on any other FUS.
+- The check runs on the declared `image_sha256`, and again on the image file and the FUS version read before staging.
+- Not run on hardware. The USB-only P-NUCLEO-WB55 dongle is covered by the DFU plugin ([ADR 0040](0040-stm32-dfuse-rom-bootloader.md)).
+
 **Not done**
 - Safeboot updates, FUS 2.x, anti-rollback and user keys: deliberately absent.
 - STM32WB1x/WB10/WB15 profiles.

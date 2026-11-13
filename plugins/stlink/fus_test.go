@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"strings"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/faronov/hwlab/internal/cortexm"
 	"github.com/faronov/hwlab/plugins/stlink/stm32"
@@ -148,5 +150,51 @@ func TestFUSMethodsFullSequence(t *testing.T) {
 	}
 	if inf := r.must(t, id, flash, "info", nil); inf["supported"] != true {
 		t.Fatalf("%v", inf)
+	}
+}
+
+func TestCheckFUSImageFor053(t *testing.T) {
+	v := func(s string) stm32.Version { x, _ := stm32.ParseVersion(s); return x }
+	plain120 := "2712d4d23417c00af9a0fb6337c6f93118d8ffce02c61db7f4e611b74baddbfd"
+	plain220 := "BBAB9B42D92C31F8A04E2F04EF9361C3F6F01714C14408CD34FB1583A6EDF30D"
+	for _, c := range []struct {
+		cur, next, sha string
+		want           codes.Code
+	}{
+		{"0.5.3", "1.2.0", fusFor053SHA, codes.OK},
+		{"0.5.3", "1.2.0", strings.ToUpper(fusFor053SHA), codes.OK},
+		{"0.5.3", "2.2.0", fusFor053SHA, codes.InvalidArgument},
+		{"0.5.3", "1.2.0", plain120, codes.PermissionDenied},
+		{"0.5.3", "2.2.0", plain220, codes.PermissionDenied},
+		{"0.5.3", "1.2.0", "00", codes.PermissionDenied},
+		{"0.5.3", "1.2.0", "", codes.PermissionDenied},
+		{"1.1.1", "1.2.0", fusFor053SHA, codes.PermissionDenied},
+		{"1.2.0", "2.2.0", fusFor053SHA, codes.PermissionDenied},
+		{"1.1.1", "1.2.0", plain120, codes.OK},
+		{"1.2.0", "2.2.0", plain220, codes.OK},
+	} {
+		if got := status.Code(checkFUSImage(v(c.cur), v(c.next), c.sha)); got != c.want {
+			t.Errorf("FUS %s -> %s with %.8s: %v, want %v", c.cur, c.next, c.sha, got, c.want)
+		}
+	}
+}
+
+// A board found running FUS 0.5.3 must not get a plain FUS image, even when
+// the caller declared another running version: the chip's own table decides.
+func TestFUSUpgradeGuardOn053(t *testing.T) {
+	r, id, w := wbRig(t, allowAll)
+	w.FUSVersion = 0x00050300
+	fusImg, fusSHA := coproFile(t, "fus.bin", 24492, 0x200000FF)
+	bk := r.must(t, id, flash, "backup", map[string]any{"dir": t.TempDir()})["path"]
+	args := map[string]any{"path": fusImg, "image_sha256": fusSHA, "address": "0x080c3000",
+		"expect_fus_version": "0.5.3", "expect_new_fus_version": "1.2.0", "confirm": tokFUSUpgrade, "backup": bk}
+	r.fail(t, codes.PermissionDenied, "fus_0_5_3", id, flash, "fus_upgrade", args)
+	if w.Erases+w.Programs != 0 || len(w.Commands) != 0 {
+		t.Fatal("a refused upgrade touched the chip")
+	}
+	args["expect_fus_version"] = "0.5.2"
+	r.fail(t, codes.FailedPrecondition, "expect_fus_version", id, flash, "fus_upgrade", args)
+	if w.Erases+w.Programs != 0 || w.FUSVersion != 0x00050300 {
+		t.Fatal("a refused upgrade modified the chip")
 	}
 }
