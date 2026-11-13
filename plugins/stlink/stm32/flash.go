@@ -75,12 +75,20 @@ type Protection struct {
 	OBR         uint32 `json:"obr,omitempty"`
 	WRPR        uint32 `json:"wrpr,omitempty"`
 	OptionBytes []byte `json:"option_bytes,omitempty"`
+
+	// STM32WB only: the option and security registers as read, and whether
+	// a PCROP area is configured (modification is then refused).
+	WB          *WBProtection `json:"wb,omitempty"`
+	PCROPActive bool          `json:"pcrop_active,omitempty"`
 }
 
 // ReadProtection reads FLASH_OPTCR. Nothing is written.
 func (f *Flash) ReadProtection(ctx context.Context) (Protection, error) {
-	if f.P.Family == F1 {
+	switch f.P.Family {
+	case F1:
 		return f.f1Protection(ctx)
+	case WB:
+		return f.wbProtection(ctx)
 	}
 	if f.P.Family != F4 {
 		return Protection{}, fmt.Errorf("protection state is only read for F4 and F1 (this is %s)", f.P.Family)
@@ -107,9 +115,10 @@ func (f *Flash) ReadProtection(ctx context.Context) (Protection, error) {
 	return p, nil
 }
 
-// Contains reports whether [addr, addr+n) lies inside the flash.
+// Contains reports whether [addr, addr+n) lies inside the flash this tool
+// may access (on STM32WB: below the CPU2 secure area).
 func (f *Flash) Contains(addr uint32, n int) bool {
-	return n >= 0 && addr >= FlashBase && uint64(addr)+uint64(n) <= uint64(FlashBase)+uint64(f.P.FlashSize())
+	return n >= 0 && addr >= FlashBase && uint64(addr)+uint64(n) <= uint64(FlashBase)+uint64(f.P.UserSize())
 }
 
 // Read reads flash through the debug port. The flash is memory mapped on
@@ -117,7 +126,7 @@ func (f *Flash) Contains(addr uint32, n int) bool {
 // fail rather than return data.
 func (f *Flash) Read(ctx context.Context, addr uint32, n int) ([]byte, error) {
 	if !f.Contains(addr, n) {
-		return nil, fmt.Errorf("%w: [0x%08x, +%d) vs 0x%08x..0x%08x", ErrRange, addr, n, uint32(FlashBase), FlashBase+f.P.FlashSize())
+		return nil, fmt.Errorf("%w: [0x%08x, +%d) vs 0x%08x..0x%08x", ErrRange, addr, n, uint32(FlashBase), FlashBase+f.P.UserSize())
 	}
 	return f.C.Read(ctx, addr, n)
 }
@@ -215,8 +224,11 @@ func (f *Flash) begin(ctx context.Context) error {
 // EraseSector erases one sector and checks the controller status and that
 // every word reads back erased.
 func (f *Flash) EraseSector(ctx context.Context, s Sector) (err error) {
-	if f.P.Family == F1 {
+	switch f.P.Family {
+	case F1:
 		return f.f1Erase(ctx, s)
+	case WB:
+		return f.wbErase(ctx, s)
 	}
 	if err := f.begin(ctx); err != nil {
 		return err
@@ -279,8 +291,11 @@ const programChunk = 1024
 // are all ones are skipped (that is the erased state). The caller must have
 // erased the target sectors; the result is read back and compared.
 func (f *Flash) Program(ctx context.Context, addr uint32, data []byte) (err error) {
-	if f.P.Family == F1 {
+	switch f.P.Family {
+	case F1:
 		return f.f1Program(ctx, addr, data)
+	case WB:
+		return f.wbProgram(ctx, addr, data)
 	}
 	if addr&3 != 0 || len(data)&3 != 0 {
 		return fmt.Errorf("%w: address 0x%08x, length %d", ErrAlign, addr, len(data))

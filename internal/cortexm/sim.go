@@ -119,6 +119,21 @@ func (s *Sim) resetLocked() {
 	s.Resets++
 }
 
+// ResetFromHook models a system reset raised by another bus master (for
+// example a coprocessor that resets the whole chip). It honours
+// DEMCR.VC_CORERESET like an AIRCR reset. It must only be called from inside
+// a Hook, which runs with the simulator lock held.
+func (s *Sim) ResetFromHook() { s.resetLocked() }
+
+// PowerOnResetFromHook models a reset raised by another bus master that also
+// resets the debug logic (power-on, brown-out or option-byte-load reset):
+// DEMCR and DHCSR.C_DEBUGEN clear, so VC_CORERESET cannot hold the core and
+// it starts running. Like ResetFromHook it must only be called from a Hook.
+func (s *Sim) PowerOnResetFromHook() {
+	s.demcr, s.debugEn, s.mask = 0, false, false
+	s.resetLocked()
+}
+
 func (s *Sim) region(addr uint32) *Region {
 	for _, r := range s.Regions {
 		if addr >= r.Base && uint64(addr)+4 <= uint64(r.Base)+uint64(len(r.Data)) {

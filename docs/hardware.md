@@ -651,7 +651,7 @@ interface 2. Only interface 2 is claimed and no kernel driver is detached, so
 
 Native Go over Linux usbfs ([ADR 0031](adr/0031-native-stlink-cortexm.md)): no CGO, libusb, OpenOCD,
 STM32CubeProgrammer, st-flash or Python. Probe `0483:3748` has one vendor interface IF0 (class 0xff, no kernel
-driver): bulk OUT 0x02, IN 0x81 (replies), IN 0x83 (SWO, unused). V2 only; V1/V3/V2-1 are not implemented.
+driver): bulk OUT 0x02, IN 0x81 (replies), IN 0x83 (SWO, unused). V2 and V2-1 (`0483:374b`, used on the STM32WB5MM-DK over macOS IOKit); V1/V3 are not implemented.
 
 * Permissions: `/etc/udev/rules.d/99-stlink.rules`:
   `SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0483", ATTR{idProduct}=="3748", OWNER="<user>", MODE="0600"`,
@@ -676,13 +676,44 @@ driver): bulk OUT 0x02, IN 0x81 (replies), IN 0x83 (SWO, unused). V2 only; V1/V3
   `backup=<path>` manifest of two identical reads whose affected sectors still equal the flash (or are blank).
   Option bytes, RDP and write protection are never written; protected parts are refused; MER is not implemented
   (`erase-entire-chip` is per-page and needs `allow_chip_erase`). The F1 size register may read blank; the size is then probed.
+* STM32WB55 (dev 0x495) flash and FUS ([ADR 0039](adr/0039-stm32wb-flash-and-fus.md),
+  [phase 29](notes/phase29-stm32wb-fus-results.md), verified on a real STM32WB5MM-DK).
+  * **Flash:** 4 KiB pages, double-word programming. Only `0x08000000 .. SFSA×4K` is touched; the secure CPU2 area
+    is refused for erase, program and backup. Flash is changed only with `C2BOOT=0` and CPU1 halted.
+  * **SFSA moves:** backups record the user-area size, and a stack change makes them refuse to gate.
+  * **FUS methods:** `hwlab target stm32wb fus-info|fus-start|fus-park-cpu1|fus-upgrade|fus-delete-stack|fus-install-stack|fus-start-stack`
+    (`FlashProgramming.fus_*`).
+  * **The debugger plays CPU1 of ST's mailbox transport;** no helper firmware is used.
+  * **Park stub:** the FUS's resets also reset the debug logic, so FUS work needs CPU1 parked first
+    (`fus-park-cpu1 --token park-cpu1 --arg backup=...`; it replaces page 0 with a spin stub). The engine re-attaches
+    SWD and halts the stub after each reset.
+  * **Gates on each destructive call:**
+    - a token: `upgrade-fus`, `delete-wireless-stack`, `install-wireless-stack` or `start-wireless-stack`;
+    - `expect_*` versions;
+    - `image_sha256` and the image `address` from ST's release notes;
+    - a verified backup of the staging range.
+
+    Each call is post-verified against the device info table and SFSA.
+  * **Never done:** option-byte writes, anti-rollback, Safeboot or FUS 2.x.
+  * **Example sequence**, using images that stay out of the repository (`~/.hwlab/artifacts/stm32wb-copro/`):
+
+    ```
+    hwlab target stm32wb fus-park-cpu1 --yes --token park-cpu1 --config allow_reset=true --config allow_memory_write=true \
+      --config allow_flash=true --config allow_erase=true --arg backup=BACKUP.bin
+    hwlab target stm32wb fus-upgrade --yes --token upgrade-fus ... --arg path=stm32wb5x_FUS_fw_1_2_0.bin --arg address=0x080C3000 \
+      --arg image_sha256=... --arg expect_fus_version=1.1.1 --arg expect_new_fus_version=1.2.0 --arg backup=BACKUP.bin
+    hwlab target stm32wb fus-delete-stack --yes --token delete-wireless-stack ... --arg expect_stack_version=1.10.0
+    hwlab target stm32wb fus-install-stack --yes --token install-wireless-stack ... --arg address=0x080E1000 \
+      --arg expect_new_stack_version=1.24.0 --arg image_sha256=... --arg backup=NEW_BACKUP.bin
+    hwlab target stm32wb fus-start-stack --yes --token start-wireless-stack ... --arg expect_stack_version=1.24.0
+    ```
 * Examples: `examples/stlink-debug.yaml` (real, non-destructive; SRAM scratch restored);
   `examples/stlink-stm32f1.yaml` + `stlink-stm32f1-accept.bin` (DESTRUCTIVE full cycle: needs a prior backup; restores the original).
 * Flash hardware test: `HWLAB_STLINK_HW=1 HWLAB_STLINK_FLASH=1 [HWLAB_STLINK_EXPECT_SHA=<sha256>] go test -tags hardware -count=1 -run HWFlashAcceptance -v ./plugins/stlink/`
   (backs up twice, restores the original in a cleanup even on failure).
 * Hardware tests: `HWLAB_STLINK_HW=1 [HWLAB_STLINK_SERIAL=<serial>] go test -tags hardware -count=1 -run HW -v ./plugins/stlink/`;
   unplug (needs a person): add `HWLAB_STLINK_UNPLUG=1 -run HWUnplugReplug -timeout 40m` (a unique progress-log path is printed; `HWLAB_STLINK_UNPLUG_LOG` selects an explicit operator-owned log).
-* Status: [phase 20](notes/phase20-stlink-results.md), [phase 21](notes/phase21-stlink-stm32f1-results.md).
+* Status: [phase 20](notes/phase20-stlink-results.md), [phase 21](notes/phase21-stlink-stm32f1-results.md), [phase 29](notes/phase29-stm32wb-fus-results.md).
 
 ## Native USB probes on macOS
 

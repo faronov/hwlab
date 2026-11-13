@@ -163,6 +163,16 @@ additionally need the plugin's own confirmation token (--token).`,
 		add("ccfg-info", "Decode the CCFG sector (no secrets are returned)", "ccfg-info", nil),
 		add("ccfg-program", "Replace the CCFG (DANGEROUS; --path IMAGE --arg backup=BACKUP.bin; --arg dry_run=true shows the diff)", "ccfg-program", flArgs),
 	)
+	wb := &cobra.Command{Use: "stm32wb", Short: "STM32WB: CPU2 firmware upgrade service (FUS) and wireless stack"}
+	wb.AddCommand(
+		add("fus-info", "Secure boundary, CPU2 boot state and the FUS/stack versions CPU2 last reported (read only)", "fus-info", nil),
+		add("fus-start", "Reset with CPU1 held and bring CPU2 into the FUS (no flash change)", "fus-start", nil),
+		add("fus-park-cpu1", "Replace CPU1's boot page with the park stub, required before FUS operations (DESTRUCTIVE; --token park-cpu1 --arg backup=BACKUP.bin)", "fus-park-cpu1", nil),
+		add("fus-upgrade", "Upgrade the FUS (DANGEROUS; --path FUS.bin --address ADDR --token upgrade-fus --arg image_sha256=.. --arg expect_fus_version=.. --arg expect_new_fus_version=.. --arg backup=BACKUP.bin)", "fus-upgrade", flArgs),
+		add("fus-delete-stack", "Delete the wireless stack (DANGEROUS; --token delete-wireless-stack --arg expect_stack_version=..)", "fus-delete-stack", nil),
+		add("fus-install-stack", "Install a wireless stack (DANGEROUS; --path STACK.bin --address ADDR --token install-wireless-stack --arg image_sha256=.. --arg expect_new_stack_version=.. --arg backup=BACKUP.bin)", "fus-install-stack", flArgs),
+		add("fus-start-stack", "Start the installed wireless stack (--token start-wireless-stack)", "fus-start-stack", nil),
+	)
 	jt := &cobra.Command{Use: "jtag", Short: "JTAG chain (probe transport, no CPU debug)"}
 	jt.AddCommand(
 		add("scan", "Reset the TAPs and enumerate the JTAG chain (IDCODE/BYPASS)", "jtag-scan", nil),
@@ -181,7 +191,7 @@ additionally need the plugin's own confirmation token (--token).`,
 		add("wait-halt", "Wait for the CPU to halt (--arg wait_ms=N) and report the cause", "wait-halt", nil),
 		add("reconnect", "Drop the session and rediscover the same device by serial", "reconnect", nil),
 		add("set-speed", "Change the probe clock (--arg khz=N)", "set-speed", nil),
-		mem, fl, bp, wp, cc, jt,
+		mem, fl, bp, wp, cc, wb, jt,
 	)
 	return root
 }

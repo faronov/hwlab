@@ -54,6 +54,17 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 	flashImgArgs := `{"type":"object","required":["path","address"],"properties":{` + devProps + `,"path":{"type":"string"},"address":{}}}`
 	eraseArgs := `{"type":"object","required":["mode","confirm","backup"],"properties":{` + devProps + `,"mode":{"type":"string","enum":["region","chip"]},"address":{},"length":{"type":"number"},"confirm":{"type":"string"},"backup":{"type":"string"}}}`
 	progArgs := `{"type":"object","required":["path","address","confirm","backup"],"properties":{` + devProps + `,"path":{"type":"string"},"address":{},"confirm":{"type":"string"},"backup":{"type":"string"},"reset":{"type":"string","enum":["run","halt","none"]}}}`
+	fusImgProps := devProps + `,"path":{"type":"string","description":"ST coprocessor image (.bin) from STM32CubeWB Projects/STM32WB_Copro_Wireless_Binaries"},` +
+		`"image_sha256":{"type":"string","description":"SHA-256 of the image; the call is refused if the file differs"},` +
+		`"address":{"description":"page-aligned staging address; the image must end below the current secure start. See docs/hardware.md for the release-notes placement"},` +
+		`"confirm":{"type":"string"},"backup":{"type":"string","description":"verified full backup of the current user flash; the pages from address up to the secure start must still match it"}`
+	fusUpArgs := `{"type":"object","required":["path","image_sha256","address","expect_fus_version","expect_new_fus_version","confirm","backup"],"properties":{` + fusImgProps +
+		`,"expect_fus_version":{"type":"string","description":"installed FUS, e.g. 1.1.1"},"expect_new_fus_version":{"type":"string","description":"FUS the image installs, e.g. 1.2.0"}}}`
+	fusInstArgs := `{"type":"object","required":["path","image_sha256","address","expect_new_stack_version","confirm","backup"],"properties":{` + fusImgProps +
+		`,"expect_new_stack_version":{"type":"string","description":"stack version the image installs, e.g. 1.24.0"}}}`
+	fusParkArgs := `{"type":"object","required":["confirm","backup"],"properties":{` + devProps + `,"confirm":{"type":"string"},"backup":{"type":"string"}}}`
+	fusDelArgs := `{"type":"object","required":["expect_stack_version","confirm"],"properties":{` + devProps + `,"expect_stack_version":{"type":"string"},"confirm":{"type":"string"}}}`
+	fusStartWSArgs := `{"type":"object","required":["confirm"],"properties":{` + devProps + `,"expect_stack_version":{"type":"string"},"confirm":{"type":"string"}}}`
 	restoreArgs := `{"type":"object","required":["path","confirm"],"properties":{` + devProps + `,"path":{"type":"string"},"confirm":{"type":"string"},"reset":{"type":"string","enum":["run","halt","none"]}}}`
 	return &pluginv1.PluginInfo{
 		Id: "stlink", Name: "ST-Link (native USB, SWD/JTAG)", Vendor: "hwlab", Version: "0.1.0",
@@ -85,9 +96,16 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 			spec(F, safe, "read", "read flash (memory mapped on STM32): max 4096 bytes inline, or any length up to 16 MiB to a new file with path (+overwrite); SHA-256 returned", flashReadArgs),
 			spec(F, safe, "verify", "compare a file with flash at address without writing; any difference is an error", flashImgArgs),
 			spec(F, confirm, "backup", "read the WHOLE flash twice, require identical SHA-256, store it (mode 0600) with a manifest in dir (default $HWLAB_HOME/artifacts/stlink-flash); never modifies flash. The artifact stays local", obj(devProps+`,"dir":{"type":"string"}`)),
-			spec(F, confirm, "erase", "erase flash: mode=region (address,length on sector boundaries; confirm=\"erase-flash-region\") or chip (\"erase-entire-chip\", needs allow_chip_erase). Both need allow_flash+allow_erase and backup=<verified full backup .bin>. There is no implicit mode. Recognised programmable STM32 (F4) only", eraseArgs),
+			spec(F, confirm, "erase", "erase flash: mode=region (address,length on sector boundaries; confirm=\"erase-flash-region\") or chip (\"erase-entire-chip\", needs allow_chip_erase). Both need allow_flash+allow_erase and backup=<verified full backup .bin>. There is no implicit mode. Recognised programmable STM32 (F1, F4, STM32WB user flash below the secure start) only", eraseArgs),
 			spec(F, confirm, "program", "program an image at address, changing only the covering sectors (bytes outside the image are preserved), erasing only when a bit must be set, read back and compared; needs allow_flash, confirm=\"program-flash\", backup=<verified full backup>; reset=run|halt|none after success (needs allow_reset). Option bytes and RDP are never written", progArgs),
 			spec(F, confirm, "restore", "restore a verified full backup (path): changes only differing sectors, then compares the whole-flash SHA-256 with the backup; needs allow_flash+allow_erase and confirm=\"restore-flash\"", restoreArgs),
+			spec(F, safe, "fus_info", "STM32WB: read the secure boundary (FLASH_SFR/SRRVR), PWR_CR4.C2BOOT and the device information table CPU2 last wrote (FUS and wireless-stack versions). Read only", obj(devProps)),
+			spec(F, confirm, "fus_start", "STM32WB: system reset with CPU1 held at its reset vector, boot CPU2 through a host-written IPCC mailbox and bring it into the FUS (two FUS_GET_STATE when the wireless stack starts, AN5185). Needs allow_reset+allow_memory_write; flash is not modified", obj(devProps)),
+			spec(F, confirm, "fus_park_cpu1", "STM32WB: replace CPU1's boot page (0x08000000) with the hwlab park stub (a vector table whose handlers spin). Required before any FUS operation: the resets the FUS raises also reset the debug logic, so CPU1 runs its flash and an application could boot CPU2 itself. Needs allow_flash+allow_erase+allow_reset+allow_memory_write, a verified backup and confirm=\"park-cpu1\"", fusParkArgs),
+			spec(F, confirm, "fus_upgrade", "STM32WB: upgrade the FUS (AN5185, FUS_FW_UPGRADE): checks the installed FUS (expect_fus_version) and the release-notes upgrade ladder (FUS 1.x below 1.2.0 must go to 1.2.0 first), stages the image (image_sha256) at address below the secure start (backup gate on the erased pages), follows the FUS through its resets and verifies the new FUS version and an unchanged stack. Needs allow_flash+allow_erase+allow_reset+allow_memory_write and confirm=\"upgrade-fus\". Option bytes are only changed by the FUS itself", fusUpArgs),
+			spec(F, confirm, "fus_delete_stack", "STM32WB: delete the installed wireless stack (FUS_FW_DELETE) after checking expect_stack_version; verifies that no stack remains and reports the new secure start. Needs allow_flash+allow_erase+allow_reset+allow_memory_write and confirm=\"delete-wireless-stack\"", fusDelArgs),
+			spec(F, confirm, "fus_install_stack", "STM32WB: install a wireless stack image (FUS_FW_UPGRADE) on a part with no stack: stages it at address below the secure start (backup gate), follows the FUS and verifies expect_new_stack_version. The stack is left installed but not started. Needs allow_flash+allow_erase+allow_reset+allow_memory_write and confirm=\"install-wireless-stack\"", fusInstArgs),
+			spec(F, confirm, "fus_start_stack", "STM32WB: enter the FUS, send FUS_START_WS and verify that CPU2 comes back with the wireless stack (optionally expect_stack_version). Needs allow_reset+allow_memory_write and confirm=\"start-wireless-stack\"", fusStartWSArgs),
 		},
 	}
 }
@@ -273,6 +291,20 @@ func (s *session) dispatch(ctx context.Context, method string, args map[string]a
 		return s.flashProgram(ctx, args)
 	case "FlashProgramming.restore":
 		return s.flashRestore(ctx, args)
+	case "FlashProgramming.fus_info":
+		return s.fusInfo(ctx, args)
+	case "FlashProgramming.fus_start":
+		return s.fusStart(ctx, args)
+	case "FlashProgramming.fus_park_cpu1":
+		return s.fusParkCPU1(ctx, args)
+	case "FlashProgramming.fus_upgrade":
+		return s.fusUpgrade(ctx, args)
+	case "FlashProgramming.fus_delete_stack":
+		return s.fusDeleteStack(ctx, args)
+	case "FlashProgramming.fus_install_stack":
+		return s.fusInstallStack(ctx, args)
+	case "FlashProgramming.fus_start_stack":
+		return s.fusStartStack(ctx, args)
 	}
 	return nil, status.Errorf(codes.Unimplemented, "method %s", method)
 }

@@ -40,7 +40,7 @@ const (
 
 // ErrNotErased means a halfword that must be programmed does not read as
 // erased, so programming it would raise PGERR.
-var ErrNotErased = errors.New("target halfword is not erased")
+var ErrNotErased = errors.New("target flash unit (F1 halfword, STM32WB double-word) is not erased")
 
 // The loader runs from SRAM. It is hwlab's own code, 19 Thumb instructions
 // (verified with an independent disassembler):

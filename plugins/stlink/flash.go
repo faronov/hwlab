@@ -52,6 +52,9 @@ type manifest struct {
 	FlashKB     int     `json:"flash_kb"`
 	ReadSeconds float64 `json:"read_seconds"`
 	ProbeSerial string  `json:"probe_serial,omitempty"` // local artifact only
+	// STM32WB: the backup covers only the user area below SecureBase.
+	SecureBase string `json:"secure_base,omitempty"`
+	UserBytes  int    `json:"user_bytes,omitempty"`
 }
 
 func sha(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
@@ -174,7 +177,7 @@ func rangeArgs(args map[string]any, fl *stm32.Flash, what string) (uint32, int, 
 		return 0, 0, argErr(fmt.Errorf("%s: length must be at least 1 byte", what))
 	}
 	if !fl.Contains(addr, n) {
-		return 0, 0, status.Errorf(codes.OutOfRange, "%s: [0x%08x, +%d) is outside the flash 0x%08x..0x%08x", what, addr, n, uint32(stm32.FlashBase), stm32.FlashBase+fl.P.FlashSize())
+		return 0, 0, status.Errorf(codes.OutOfRange, "%s: [0x%08x, +%d) is outside the flash (user area 0x%08x..0x%08x)", what, addr, n, uint32(stm32.FlashBase), stm32.FlashBase+fl.P.UserSize())
 	}
 	return addr, n, nil
 }
@@ -223,12 +226,20 @@ func (s *session) flashInfo(ctx context.Context, _ map[string]any) (map[string]a
 	if p.SRAMKB > 0 {
 		res["sram_kb_readable"] = float64(p.SRAMKB)
 	}
-	if p.PageSize > 0 {
+	if p.PageSize > 0 && p.Family == stm32.F1 {
 		res["page_size"] = float64(p.PageSize)
 		res["program_granularity_bytes"] = float64(2)
 		res["program_method"] = "hwlab-owned Thumb loader in SRAM drives FLASH_CR.PG halfword by halfword"
 	}
-	if p.Family == stm32.F4 || p.Family == stm32.F1 {
+	if p.Family == stm32.WB {
+		res["page_size"] = float64(p.PageSize)
+		res["program_granularity_bytes"] = float64(8)
+		res["program_method"] = "FLASH_CR.PG and two 32-bit MEM-AP writes per 64-bit double-word, polling BSY/CFGBSY/PESD"
+		res["user_flash_bytes"] = float64(p.UserSize())
+		res["secure_base"] = hexw(p.SecureBase)
+		res["secure_area"] = "the CPU2 wireless coprocessor area (FUS and wireless stack); never read, erased or written by the flash methods. FUS methods report and change it"
+	}
+	if p.Family == stm32.F4 || p.Family == stm32.F1 || p.Family == stm32.WB {
 		pr, err := fl.ReadProtection(ctx)
 		if err != nil {
 			return nil, err
@@ -238,9 +249,23 @@ func (s *session) flashInfo(ctx context.Context, _ map[string]any) (map[string]a
 			ws = append(ws, float64(i))
 		}
 		prot := map[string]any{"rdp_level": float64(pr.RDP), "write_protected_sectors": ws, "read_only": true}
-		if p.Family == stm32.F4 {
+		switch p.Family {
+		case stm32.F4:
 			prot["optcr"] = hexw(pr.OPTCR)
-		} else {
+		case stm32.WB:
+			w := pr.WB
+			prot["flash_optr"], prot["wrp1ar"], prot["wrp1br"] = hexw(w.OPTR), hexw(w.WRP1AR), hexw(w.WRP1BR)
+			prot["pcrop1a"] = fmt.Sprintf("0x%03x..0x%03x", w.PCROP1ASR&0x1FF, w.PCROP1AER&0x1FF)
+			prot["pcrop1b"] = fmt.Sprintf("0x%03x..0x%03x", w.PCROP1BSR&0x1FF, w.PCROP1BER&0x1FF)
+			prot["pcrop_active"] = pr.PCROPActive
+			prot["flash_sfr"], prot["flash_srrvr"], prot["flash_ipccbr"] = hexw(w.SFR), hexw(w.SRRVR), hexw(w.IPCCBR)
+			prot["flash_sr"] = hexw(w.SRNow)
+			prot["pwr_cr4"] = hexw(w.PWRCR4)
+			prot["cpu2_booted"] = w.PWRCR4&(1<<15) != 0
+			if w.PWRCR4&(1<<15) != 0 {
+				prot["cpu2_note"] = "PWR_CR4.C2BOOT is set: flash modification is refused until a system reset with halt=true"
+			}
+		default:
 			prot["flash_obr"], prot["flash_wrpr"] = hexw(pr.OBR), hexw(pr.WRPR)
 			prot["option_bytes"] = hex.EncodeToString(pr.OptionBytes)
 			prot["rdp_option_byte"] = fmt.Sprintf("0x%02x", pr.OptionBytes[0])
@@ -355,7 +380,7 @@ func (s *session) flashBackup(ctx context.Context, args map[string]any) (map[str
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	size := int(p.FlashSize())
+	size := int(p.UserSize())
 	t0 := time.Now()
 	first, err := readFlash(ctx, fl, stm32.FlashBase, size)
 	if err != nil {
@@ -371,6 +396,12 @@ func (s *session) flashBackup(ctx context.Context, args map[string]any) (map[str
 		return nil, status.Errorf(codes.DataLoss, "the two full-flash reads differ (%s vs %s): no backup was stored", m.SHA256, m.SecondRead)
 	}
 	m.File = fmt.Sprintf("stm32-flash-%03x-%dK-%s.bin", p.DevID, p.FlashKB, m.SHA256[:12])
+	if p.SecureBase != 0 {
+		// STM32WB: only the CPU1 user area below the secure flash start is
+		// read; the name and manifest record where it ended.
+		m.SecureBase, m.UserBytes = hexw(p.SecureBase), size
+		m.File = fmt.Sprintf("stm32-flash-%03x-%dK-user%dK-%s.bin", p.DevID, p.FlashKB, size>>10, m.SHA256[:12])
+	}
 	final := filepath.Join(dir, m.File)
 	if err := os.WriteFile(final, first, 0o600); err != nil {
 		return nil, err
@@ -426,9 +457,9 @@ func (s *session) backupGate(ctx context.Context, args map[string]any, fl *stm32
 	if err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "backup %s: %v", path, err)
 	}
-	if m.DevID != fl.P.DevID || len(b) != int(fl.P.FlashSize()) {
-		return nil, status.Errorf(codes.FailedPrecondition, "backup %s is of another chip (%s dev 0x%03x, %d bytes) than the connected one (%s dev 0x%03x, %d bytes)",
-			path, m.Chip, m.DevID, len(b), fl.P.Name, fl.P.DevID, fl.P.FlashSize())
+	if m.DevID != fl.P.DevID || len(b) != int(fl.P.UserSize()) {
+		return nil, status.Errorf(codes.FailedPrecondition, "backup %s is of another chip or flash layout (%s dev 0x%03x, %d bytes) than the connected one (%s dev 0x%03x, %d accessible bytes)%s",
+			path, m.Chip, m.DevID, len(b), fl.P.Name, fl.P.DevID, fl.P.UserSize(), wbLayoutHint(fl.P))
 	}
 	for _, sc := range secs {
 		cur, err := readFlash(ctx, fl, sc.Addr, int(sc.Size))
@@ -441,6 +472,15 @@ func (s *session) backupGate(ctx context.Context, args map[string]any, fl *stm32
 		}
 	}
 	return map[string]any{"path": path, "sha256": m.SHA256, "affected_sectors_match_flash": true}, nil
+}
+
+// wbLayoutHint explains why an STM32WB backup may stop matching: FUS
+// operations move the secure flash start and with it the user-area size.
+func wbLayoutHint(p *stm32.Profile) string {
+	if p.SecureBase == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; on STM32WB the backup covers the user flash below the secure start (now 0x%08x), which FUS operations move: take a new backup", p.SecureBase)
 }
 
 // modifiable checks the chip can be changed at all.
@@ -534,7 +574,8 @@ type sectorPlan struct {
 }
 
 // planProgram merges image into the covering sectors, preserving the bytes
-// outside it, and decides which sectors need an erase (a bit must go 0→1).
+// outside it, and decides which sectors need an erase (a bit must go 0→1,
+// or on STM32WB a non-erased double-word must change).
 func planProgram(ctx context.Context, fl *stm32.Flash, addr uint32, img []byte) ([]sectorPlan, error) {
 	var out []sectorPlan
 	for _, sc := range fl.P.Covering(addr, len(img)) {
@@ -545,13 +586,7 @@ func planProgram(ctx context.Context, fl *stm32.Flash, addr uint32, img []byte) 
 		merged := append([]byte(nil), cur...)
 		lo, hi := max(addr, sc.Addr), min(addr+uint32(len(img)), sc.Addr+sc.Size)
 		copy(merged[lo-sc.Addr:hi-sc.Addr], img[lo-addr:hi-addr])
-		pl := sectorPlan{sec: sc, merged: merged, changed: !bytes.Equal(cur, merged)}
-		for i := range merged {
-			if merged[i]&^cur[i] != 0 {
-				pl.erase = true
-				break
-			}
-		}
+		pl := sectorPlan{sec: sc, merged: merged, changed: !bytes.Equal(cur, merged), erase: fl.NeedsErase(cur, merged)}
 		out = append(out, pl)
 	}
 	return out, nil
@@ -622,7 +657,7 @@ func (s *session) flashProgram(ctx context.Context, args map[string]any) (map[st
 		return nil, err
 	}
 	if !fl.Contains(addr, len(img)) {
-		return nil, status.Errorf(codes.OutOfRange, "image %s (%d bytes) at 0x%08x does not fit the flash 0x%08x..0x%08x", path, len(img), addr, uint32(stm32.FlashBase), stm32.FlashBase+p.FlashSize())
+		return nil, status.Errorf(codes.OutOfRange, "image %s (%d bytes) at 0x%08x does not fit the accessible flash 0x%08x..0x%08x", path, len(img), addr, uint32(stm32.FlashBase), stm32.FlashBase+p.UserSize())
 	}
 	plan, err := planProgram(ctx, fl, addr, img)
 	if err != nil {
@@ -698,9 +733,9 @@ func (s *session) flashRestore(ctx context.Context, args map[string]any) (map[st
 	if err := modifiable(p); err != nil {
 		return nil, err
 	}
-	if m.DevID != p.DevID || len(b) != int(p.FlashSize()) {
-		return nil, status.Errorf(codes.FailedPrecondition, "backup %s is of another chip (%s dev 0x%03x, %d bytes) than the connected one (%s dev 0x%03x, %d bytes): refusing to restore",
-			path, m.Chip, m.DevID, len(b), p.Name, p.DevID, p.FlashSize())
+	if m.DevID != p.DevID || len(b) != int(p.UserSize()) {
+		return nil, status.Errorf(codes.FailedPrecondition, "backup %s is of another chip or flash layout (%s dev 0x%03x, %d bytes) than the connected one (%s dev 0x%03x, %d accessible bytes): refusing to restore%s",
+			path, m.Chip, m.DevID, len(b), p.Name, p.DevID, p.UserSize(), wbLayoutHint(p))
 	}
 	plan, err := planProgram(ctx, fl, stm32.FlashBase, b)
 	if err != nil {

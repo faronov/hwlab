@@ -12,6 +12,12 @@
 //     debug port cannot issue, so a small hwlab-owned Thumb loader runs from
 //     target SRAM (see loader.go). Exercised on real hardware for DBGMCU
 //     0x410 only.
+//   - STM32WB5x (0x495): 4 KiB page erase and 64-bit double-word
+//     programming of the CPU1 user flash only. Everything at or above the
+//     secure flash start (FLASH_SFR.SFSA) belongs to the CPU2 wireless
+//     coprocessor and is never read, erased or written; flash is only
+//     modified while CPU2 has not been booted (PWR_CR4.C2BOOT == 0). The
+//     wireless coprocessor itself is driven through its FUS (see fus.go).
 //   - Dual-bank parts, option bytes, read-out protection and OTP are never
 //     written and are not modelled.
 //
@@ -31,6 +37,7 @@ const (
 	AddrDBGMCUIDCode = 0xE0042000
 	AddrFlashSizeF1  = 0x1FFFF7E0
 	AddrFlashSizeF4  = 0x1FFF7A22
+	AddrFlashSizeWB  = 0x1FFF75E0
 	FlashBase        = 0x08000000
 )
 
@@ -41,6 +48,7 @@ type Family string
 const (
 	F1 Family = "STM32F1"
 	F4 Family = "STM32F4"
+	WB Family = "STM32WB"
 )
 
 // Errors.
@@ -81,10 +89,26 @@ type Profile struct {
 	// Programmable is false for families where only reads are implemented.
 	Programmable bool   `json:"programmable"`
 	Note         string `json:"note,omitempty"`
+	// SecureBase is the first address of the CPU2 secure flash (STM32WB:
+	// FLASH_SFR.SFSA x 4 KiB, read at detection). 0 for families without
+	// one. Nothing at or above it is ever read, erased or written.
+	SecureBase uint32 `json:"secure_base,omitempty"`
+	// SFR and SRRVR are FLASH_SFR and FLASH_SRRVR as read (STM32WB only).
+	SFR   uint32 `json:"sfr,omitempty"`
+	SRRVR uint32 `json:"srrvr,omitempty"`
 }
 
 // FlashSize is the flash size in bytes.
 func (p *Profile) FlashSize() uint32 { return uint32(p.FlashKB) << 10 }
+
+// UserSize is the flash this tool may read, back up and modify: the whole
+// flash, except on STM32WB where it ends at the secure flash start.
+func (p *Profile) UserSize() uint32 {
+	if p.SecureBase != 0 {
+		return p.SecureBase - FlashBase
+	}
+	return p.FlashSize()
+}
 
 type devEntry struct {
 	name   string
@@ -104,6 +128,7 @@ var devices = map[uint16]devEntry{
 	0x431: {"STM32F411", F4, 0, 512},
 	0x421: {"STM32F446", F4, 0, 512},
 	0x441: {"STM32F412", F4, 0, 1024},
+	0x495: {"STM32WB5x", WB, wbPage, 1024},
 }
 
 // unsupported ids are recognised so they are refused with a reason instead of
@@ -112,6 +137,8 @@ var unsupported = map[uint16]string{
 	0x419: "STM32F42x/F43x: dual-bank flash layout is not implemented",
 	0x434: "STM32F469/479: dual-bank flash layout is not implemented",
 	0x430: "STM32F1 XL-density: dual-bank flash is not implemented",
+	0x496: "STM32WB3x/WB1x (0x496): flash and FUS support is only implemented and tested for STM32WB5x (0x495)",
+	0x494: "STM32WB10/WB15 (0x494): 2 KiB pages and a different FUS layout are not implemented",
 }
 
 // f4Layout is the single-bank sector map: 4 x 16 KiB, 1 x 64 KiB, then
@@ -161,8 +188,11 @@ func Detect(ctx context.Context, c *cortexm.Core) (*Profile, error) {
 		return nil, fmt.Errorf("%w: DBGMCU_IDCODE reads 0x%08x", ErrNotSTM32, idc)
 	}
 	sizeAddr := uint32(AddrFlashSizeF4)
-	if e.family == F1 {
+	switch e.family {
+	case F1:
 		sizeAddr = AddrFlashSizeF1
+	case WB:
+		sizeAddr = AddrFlashSizeWB
 	}
 	w, err := c.Bus.Read32(ctx, sizeAddr&^3)
 	if err != nil {
@@ -191,6 +221,10 @@ func Detect(ctx context.Context, c *cortexm.Core) (*Profile, error) {
 		p.Note = "STM32F1 flash is programmed in halfwords by a hwlab-owned loader that runs from SRAM; option bytes, RDP and write protection are only read"
 		if source == "probed" {
 			p.Note += "; the flash-size register at 0x1FFFF7E0 is blank, so the size is the readable memory window (an upper bound)"
+		}
+	case WB:
+		if err := detectWB(ctx, c, p); err != nil {
+			return nil, fmt.Errorf("%w: DBGMCU_IDCODE 0x%08x matches %s: %w", ErrNotSTM32, idc, e.name, err)
 		}
 	}
 	return p, nil

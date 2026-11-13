@@ -32,7 +32,7 @@ Code, fixtures and passing tests are not hardware validation.
 | scpi: generic SCPI over TCP/serial | complete | synthetic | synthetic | native | no (TCP never needed cgo; serial is pure Go since the uart split) |
 | scpi: Rigol profile | partial | synthetic | synthetic | native | no |
 | scpi: Siglent profile | partial | synthetic | synthetic | native | no |
-| stlink: native Go ST-Link V2 protocol (Linux usbfs or macOS IOKit) + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 (real silicon) and F4 (simulator only) flash layers | partial | real-hardware-partial | real | native | no |
+| stlink: native Go ST-Link V2 protocol (Linux usbfs or macOS IOKit) + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 and WB55 (real silicon) and F4 (simulator only) flash layers + STM32WB coprocessor FUS | partial | real-hardware-partial | real | native | no |
 | telink: native SWS/SWire over UART | complete | real-hardware-partial | real | native | no (was inherited from plugins/uart on darwin) |
 | uart: serial (go.bug.st/serial) | complete | real-hardware-partial | real | native | no (device listing on darwin without cgo is a /dev/cu.* glob without VID/PID) |
 | usbcap: usbmon text input | partial | synthetic | synthetic | native | no |
@@ -539,7 +539,7 @@ Code, fixtures and passing tests are not hardware validation.
 
 ### stlink — ST-LINK/V2 (V2J39S7) native SWD + generic Cortex-M + STM32 F1 flash (real) and F4 flash (simulated)
 
-**native Go ST-Link V2 protocol (Linux usbfs or macOS IOKit) + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 (real silicon) and F4 (simulator only) flash layers**
+**native Go ST-Link V2 protocol (Linux usbfs or macOS IOKit) + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 and WB55 (real silicon) and F4 (simulator only) flash layers + STM32WB coprocessor FUS**
 
 - implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo (no setup; ADR 0035); OpenOCD, STM32CubeProgrammer, st-flash, libusb and Python are not used. stlink-org is a BSD-3 protocol reference only)
 - capabilities:
@@ -570,10 +570,12 @@ Code, fixtures and passing tests are not hardware validation.
   | flash program / verify (STM32F1) | REAL_HW_VERIFIED | full cycle on silicon: backup x2 identical, erase, program a 128-byte hwlab image through the SRAM halfword loader, byte-for-byte verify, boot, debug it, restore the original, whole-flash hash equals the original; 8 KiB in 1126 ms (~7 KB/s with erase) |
   | backup/restore (STM32F1) | REAL_HW_VERIFIED | two identical 128 KB reads (2.5 s), restore of 9 pages, whole-flash SHA-256 equal to the original afterwards |
   | full-chip erase (STM32F1) | IMPLEMENTED_UNTESTED | implemented as per-page erase behind allow_chip_erase and the erase-entire-chip token; deliberately not run on the only (user-owned) board; the MER path is not implemented |
+  | flash (STM32WB55) | REAL_HW_VERIFIED | STM32WB5MM-DK over ST-LINK/V2-1 (DBGMCU 0x20016495, 1 MiB): info, two identical user-area backups at SFSA 0xCB and 0xF4, page erase, double-word program and read-back verify while staging the FUS and MAC images; the secure area from SFSA x 4K is refused; changes only with C2BOOT=0 and CPU1 halted (ADR 0039) |
+  | STM32WB FUS (fus_info/start/park_cpu1/upgrade/delete_stack/install_stack/start_stack) | REAL_HW_VERIFIED | debugger-driven mailbox transport, no helper firmware; FUS 1.1.1 -> 1.2.0, BLE 1.10.0 deleted (SFSA 0xCB -> 0xF4), 802.15.4 MAC 1.24.0 installed (SFSA -> 0xE1) and started; the FUS's resets reset the debug logic and were survived by re-attaching SWD with CPU1 parked on the hwlab stub (phase 29) |
   | flash (STM32 F4 and others) | SIMULATED_ONLY | F4 sector flash is implemented and tested on the simulator only; no F4 silicon was attached |
   | option bytes / RDP | NOT_IMPLEMENTED | deliberately absent: never written |
   | SWO trace | NOT_IMPLEMENTED | IN 0x83 is not read |
-  | ST-Link V1 / V3 / V2-1 mass-storage | NOT_IMPLEMENTED | only V2 protocol (0483:3748) was written and tested |
+  | ST-Link V1 / V3 / V2-1 mass-storage | NOT_IMPLEMENTED | V2 (0483:3748) and the V2-1 debug interface (0483:374b, STM32WB5MM-DK) were tested; V1, V3 and the V2-1 mass-storage function were not |
 
 - verified:
   - USB discovery of 0483:3748, canonical serial recovered from the UTF-16 descriptor that sysfs garbles, firmware V2J39S7, target voltage ~3.25 V
@@ -583,10 +585,11 @@ Code, fixtures and passing tests are not hardware validation.
   - repeated open/close, second concurrent open refused
   - two physical unplug/replug cycles with the session open
   - flash access is refused on a non-STM32 target (nRF52840)
+  - STM32WB55 flash and FUS on silicon: FUS upgrade 1.1.1 -> 1.2.0, stack delete, 802.15.4 MAC install and start, versions and SFSA post-verified (phase 29)
 - unverified:
-  - STM32 flash on any family other than the F1 that was attached; the F4 layer has only run on the simulator
+  - STM32 flash on families other than the F1 and WB55 that were attached; the F4 layer has only run on the simulator; Safeboot, FUS 2.x, anti-rollback and STM32WB1x are not implemented
   - full-chip erase of the F1 and mass erase (MER) are not exercised or implemented
-  - JTAG transport, several ST-Link probes at once, V1/V3/V2-1 probes
+  - JTAG transport, several ST-Link probes at once, V1/V3 probes
   - NRST pin reset (not wired)
   - STM32 families other than the simulated F4 model
 - known gaps:

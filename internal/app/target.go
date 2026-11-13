@@ -52,6 +52,14 @@ var TargetOps = map[string][2]string{
 	"saci-exit":    {pluginv1.CapDebugProbe, "saci_exit"},
 	"ccfg-info":    {pluginv1.CapFlashProgramming, "ccfg_info"},
 	"ccfg-program": {pluginv1.CapFlashProgramming, "ccfg_program"},
+	// STM32WB firmware upgrade service (FUS) on CPU2 (ST-LINK plugin).
+	"fus-info":          {pluginv1.CapFlashProgramming, "fus_info"},
+	"fus-start":         {pluginv1.CapFlashProgramming, "fus_start"},
+	"fus-park-cpu1":     {pluginv1.CapFlashProgramming, "fus_park_cpu1"},
+	"fus-upgrade":       {pluginv1.CapFlashProgramming, "fus_upgrade"},
+	"fus-delete-stack":  {pluginv1.CapFlashProgramming, "fus_delete_stack"},
+	"fus-install-stack": {pluginv1.CapFlashProgramming, "fus_install_stack"},
+	"fus-start-stack":   {pluginv1.CapFlashProgramming, "fus_start_stack"},
 	// JTAG probe transport (FTDI/MPSSE): enumerate and identify the TAP
 	// chain. Neither touches target registers or memory.
 	"jtag-scan":     {pluginv1.CapJTAGScan, "scan"},
