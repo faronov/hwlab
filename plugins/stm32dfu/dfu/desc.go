@@ -194,13 +194,13 @@ func ParseMemory(s string) (*Memory, error) {
 	for i := 1; i+1 < len(parts); i += 2 {
 		base, err := strconv.ParseUint(strings.TrimSpace(parts[i]), 0, 32)
 		if err != nil {
-			return nil, fmt.Errorf("dfu: %q: address %q: %v", s, parts[i], err)
+			return nil, fmt.Errorf("dfu: %q: address %q: %w", s, parts[i], err)
 		}
 		addr := base
 		for _, seg := range strings.Split(parts[i+1], ",") {
 			sg, err := parseSegment(seg)
 			if err != nil {
-				return nil, fmt.Errorf("dfu: %q: %v", s, err)
+				return nil, fmt.Errorf("dfu: %q: %w", s, err)
 			}
 			sg.Start = uint32(addr)
 			addr += uint64(sg.Pages) * uint64(sg.PageSize)

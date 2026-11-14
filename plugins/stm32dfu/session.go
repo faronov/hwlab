@@ -224,16 +224,6 @@ func (s *session) close() error {
 	return s.port.Close()
 }
 
-// alt returns the alternate setting by number.
-func (s *session) altByNum(n uint8) *dfu.AltSetting {
-	for i := range s.cfg.Alts {
-		if s.cfg.Alts[i].Alt == n && int(s.cfg.Alts[i].Interface) == s.iface {
-			return &s.cfg.Alts[i]
-		}
-	}
-	return nil
-}
-
 // altCovering returns the alternate setting whose memory map covers the
 // range, preferring the first one.
 func (s *session) altCovering(addr uint32, n int) *dfu.AltSetting {
