@@ -41,6 +41,9 @@ type SlipDecoder struct {
 	bad bool
 }
 
+// Pending is the number of bytes of an unfinished frame.
+func (d *SlipDecoder) Pending() int { return len(d.buf) }
+
 // Feed consumes bytes and calls frame for each complete, well-formed,
 // non-empty frame.
 func (d *SlipDecoder) Feed(b []byte, frame func([]byte)) {
@@ -128,6 +131,9 @@ type Client struct {
 	Timeout time.Duration
 	// Progress, if set, is called after each data object is executed.
 	Progress func(done, total int)
+	// Trace, if set, records requests, raw reads, write durations and
+	// timeouts for diagnosis.
+	Trace *Transcript
 
 	dec    SlipDecoder
 	frames [][]byte
@@ -143,25 +149,41 @@ func (c *Client) timeout() time.Duration {
 }
 
 func (c *Client) send(msg []byte) error {
-	_, err := c.Port.Write(SlipEncode(msg))
+	enc := SlipEncode(msg)
+	start := time.Now()
+	n, err := c.Port.Write(enc)
+	note := fmt.Sprintf("op=0x%02X slip=%d wrote=%d in %s", msg[0], len(enc), n, time.Since(start).Round(time.Microsecond))
+	if err != nil {
+		note += " error: " + err.Error()
+	}
+	c.Trace.add("tx", msg, note)
 	return err
 }
 
 func (c *Client) recv(ctx context.Context, wait time.Duration) ([]byte, error) {
-	deadline := time.Now().Add(wait)
+	start := time.Now()
+	deadline := start.Add(wait)
 	buf := make([]byte, 512)
+	idle := 0
 	for len(c.frames) == 0 {
 		if err := ctx.Err(); err != nil {
+			c.Trace.add("err", nil, fmt.Sprintf("context ended after %s (%d empty reads): %v", time.Since(start).Round(time.Millisecond), idle, err))
 			return nil, err
 		}
 		if time.Now().After(deadline) {
+			c.Trace.add("err", nil, fmt.Sprintf("timeout after %s (%d empty reads, %d undecoded bytes buffered)", time.Since(start).Round(time.Millisecond), idle, c.dec.Pending()))
 			return nil, ErrTimeout
 		}
 		n, err := c.Port.Read(buf)
 		if n > 0 {
+			c.Trace.add("rx", buf[:n], fmt.Sprintf("after %d empty reads", idle))
+			idle = 0
 			c.dec.Feed(buf[:n], func(f []byte) { c.frames = append(c.frames, append([]byte(nil), f...)) })
+		} else {
+			idle++
 		}
 		if err != nil {
+			c.Trace.add("err", nil, "read: "+err.Error())
 			return nil, fmt.Errorf("read: %w", err)
 		}
 	}
@@ -184,6 +206,7 @@ func (c *Client) request(ctx context.Context, wait time.Duration, op byte, args 
 			return nil, fmt.Errorf("op 0x%02X: malformed response % X", op, r)
 		}
 		if r[1] != op {
+			c.Trace.add("note", r, fmt.Sprintf("skipped response to op 0x%02X while waiting for 0x%02X", r[1], op))
 			continue // a late answer to an earlier request (e.g. ping retries)
 		}
 		if r[2] != ResSuccess {

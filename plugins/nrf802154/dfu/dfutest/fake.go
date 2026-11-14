@@ -20,6 +20,9 @@ type Bootloader struct {
 	MaxData int
 	// Reject, if set, may fail any request with a result (and extended) code.
 	Reject func(op byte) (res, ext byte, reject bool)
+	// Mute, if set, may swallow a request without any response (a stalled
+	// transfer as seen on hardware).
+	Mute func(op byte) bool
 	// ResetOnLastExecute drops the response to the final execute, as a
 	// device that resets immediately would.
 	ResetOnLastExecute bool
@@ -85,6 +88,9 @@ func (f *Bootloader) handle(m []byte) {
 	op := m[0]
 	if op != dfu.OpWrite {
 		f.Ops = append(f.Ops, op)
+	}
+	if f.Mute != nil && f.Mute(op) {
+		return
 	}
 	if f.Reject != nil {
 		if res, ext, ok := f.Reject(op); ok {

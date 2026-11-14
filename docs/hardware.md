@@ -48,7 +48,16 @@ Open `<session>/artifacts/sniffer/nrf802154-chN.pcapng` in Wireshark; the
 
 ## nRF 802.15.4 transmit (zigbee-rs radio lab firmware)
 
-**Status: host-tested against simulators only; not yet run on a dongle.**
+**Status: sniffing, `firmware_info` and plain transmits proven on a real
+PCA10059; `cca`, `ack_wait` and `tx_power` host-tested only. `dfu_program`
+through the plugin has not yet completed on hardware:** two runs stalled at the
+first CRC request after the init object, while the same `dfu` package run
+standalone flashed the dongle. Every `dfu_program` run saves a transcript
+(requests, raw reads, write durations, timeouts) in
+`$HWLAB_HOME/artifacts/nrf802154-dfu/<UTC time>-<device>.log`; the path is in
+the result (`transcript`) or the error, and errors include the last 12
+entries. If `dfu_program` stalls, the fallback is
+`nrfutil nrf5sdk-tools dfu usb-serial -pkg <zip> -p <port>`.
 
 The zigbee-rs `tools/nrf52840-radio-lab` firmware keeps the sniffer protocol
 and adds `transmit` ([ADR 0010](adr/0010-nrf802154-sniffer.md#amendment-transmit-and-dfu-zigbee-rs-radio-lab-firmware)).

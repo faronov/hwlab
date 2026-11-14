@@ -219,3 +219,68 @@ type silentPort struct{}
 
 func (silentPort) Write(p []byte) (int, error) { return len(p), nil }
 func (silentPort) Read([]byte) (int, error)    { time.Sleep(time.Millisecond); return 0, nil }
+
+func TestTranscriptRecordsStall(t *testing.T) {
+	img, err := dfu.LoadZip(fixture(t, "tiny.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The hardware failure: init object written, then CRC_GET unanswered.
+	fb := &dfutest.Bootloader{MTU: 131, MaxData: 4096, Mute: func(op byte) bool { return op == dfu.OpCRCGet }}
+	tr := &dfu.Transcript{}
+	c := &dfu.Client{Port: fb, Timeout: 50 * time.Millisecond, Trace: tr}
+	if _, err := c.Program(context.Background(), img); err == nil || !strings.Contains(err.Error(), "op 0x03") {
+		t.Fatalf("got %v", err)
+	}
+	es, dropped := tr.Entries()
+	if dropped != 0 || len(es) < 6 {
+		t.Fatalf("%d entries, %d dropped", len(es), dropped)
+	}
+	last := es[len(es)-1]
+	if last.Dir != "err" || !strings.Contains(last.Note, "timeout after") || !strings.Contains(last.Note, "empty reads") {
+		t.Fatalf("last entry %v", last)
+	}
+	prev := es[len(es)-2]
+	if prev.Dir != "tx" || prev.Data[0] != dfu.OpCRCGet {
+		t.Fatalf("entry before the timeout %v", prev)
+	}
+	var sawRx, sawWrite bool
+	for _, e := range es {
+		sawRx = sawRx || e.Dir == "rx"
+		if e.Dir == "tx" && e.Data[0] == dfu.OpWrite {
+			sawWrite = true
+			if len(e.Data) > 32 || (e.Len > 32 && len(e.Data) != 32) {
+				t.Fatalf("write payload not truncated: %v", e)
+			}
+			if !strings.Contains(e.Note, "wrote=") {
+				t.Fatalf("write without duration: %v", e)
+			}
+		}
+	}
+	if !sawRx || !sawWrite {
+		t.Fatalf("rx=%v write=%v\n%s", sawRx, sawWrite, tr.Tail(100))
+	}
+	if tail := tr.Tail(2); strings.Count(tail, "\n") != 1 || !strings.Contains(tail, "timeout") {
+		t.Fatalf("tail %q", tail)
+	}
+}
+
+func TestTranscriptIsBounded(t *testing.T) {
+	tr := &dfu.Transcript{Max: 3}
+	for i := range 5 {
+		tr.Note("n%d", i)
+	}
+	es, dropped := tr.Entries()
+	if dropped != 2 || len(es) != 3 || es[0].Note != "n2" || es[2].Note != "n4" {
+		t.Fatalf("%v dropped %d", es, dropped)
+	}
+	var sb strings.Builder
+	if _, err := tr.WriteTo(&sb); err != nil || !strings.HasPrefix(sb.String(), "# 2 earlier entries dropped\n") || strings.Count(sb.String(), "\n") != 4 {
+		t.Fatalf("%q %v", sb.String(), err)
+	}
+	var nilTr *dfu.Transcript
+	nilTr.Note("ignored")
+	if es, _ := nilTr.Entries(); es != nil {
+		t.Fatal("nil transcript recorded")
+	}
+}

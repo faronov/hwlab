@@ -83,24 +83,71 @@ func (p *Plugin) dfuProgram(ctx context.Context, deviceID string, args map[strin
 		return nil, status.Errorf(codes.Unavailable, "open %s: %v", port, err)
 	}
 	defer func() { _ = sp.Close() }()
+	sum := sha256.Sum256(img.Bin)
+	trace := &dfu.Transcript{}
+	trace.Note("device %s port %s image %s bytes=%d sha256=%s version=%d", deviceID, port, img.Source, len(img.Bin), hex.EncodeToString(sum[:]), ver)
 	if err := sp.SetReadTimeout(20 * time.Millisecond); err != nil {
 		return nil, status.Errorf(codes.Unavailable, "%s: %v", port, err)
 	}
 	if d, ok := sp.(interface{ SetDTR(bool) error }); ok {
-		_ = d.SetDTR(true)
+		trace.Note("SetDTR(true): %v", d.SetDTR(true))
 	}
-	sum := sha256.Sum256(img.Bin)
 	start := time.Now()
-	c := &dfu.Client{Port: sp, Timeout: p.dfuTimeout}
+	c := &dfu.Client{Port: sp, Timeout: p.dfuTimeout, Trace: trace,
+		Progress: func(done, total int) { trace.Note("progress %d/%d", done, total) }}
 	res, err := c.Program(ctx, img)
 	if err != nil {
-		return nil, status.Errorf(codes.Aborted, "DFU on %s failed after %s: %v (the bootloader keeps the previous application unless the transfer completed; retry from the bootloader)",
-			port, time.Since(start).Round(time.Millisecond), err)
+		trace.Note("failed: %v", err)
+	} else {
+		trace.Note("done: mtu=%d objects=%d activated_ack=%v", res.MTU, res.Objects, res.Activated)
 	}
-	return map[string]any{
+	logPath, logErr := p.writeDfuTranscript(deviceID, trace)
+	if err != nil {
+		where := "transcript: " + logPath
+		if logErr != nil {
+			where = "transcript not saved: " + logErr.Error()
+		}
+		return nil, status.Errorf(codes.Aborted, "DFU on %s failed after %s: %v (the bootloader keeps the previous application unless the transfer completed; retry from the bootloader); %s; last exchange:\n%s",
+			port, time.Since(start).Round(time.Millisecond), err, where, trace.Tail(12))
+	}
+	out := map[string]any{
 		"port": port, "image": img.Source, "bytes": float64(len(img.Bin)), "sha256": hex.EncodeToString(sum[:]),
 		"application_version": float64(ver), "mtu": float64(res.MTU), "objects": float64(res.Objects),
 		"activated_ack": res.Activated, "seconds": time.Since(start).Seconds(),
 		"note": fmt.Sprintf("the bootloader validates the image and starts it; the application re-enumerates (e.g. 1915:%s) within a few seconds", snifferPID),
-	}, nil
+	}
+	if logErr != nil {
+		out["transcript_error"] = logErr.Error()
+	} else {
+		out["transcript"] = logPath
+	}
+	return out, nil
+}
+
+// writeDfuTranscript saves the exchange as
+// artifacts/nrf802154-dfu/<UTC time>-<device>.log.
+func (p *Plugin) writeDfuTranscript(deviceID string, t *dfu.Transcript) (string, error) {
+	dir := p.dfuLogDir
+	if dir == "" {
+		dir = artifactDir("nrf802154-dfu")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	safe := strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == ':' || r == ' ' {
+			return '_'
+		}
+		return r
+	}, filepath.Base(deviceID))
+	path := filepath.Join(dir, time.Now().UTC().Format("20060102T150405.000Z")+"-"+safe+".log")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return "", err
+	}
+	_, werr := t.WriteTo(f)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	return path, werr
 }

@@ -25,7 +25,7 @@ Code, fixtures and passing tests are not hardware validation.
 | jlinknative: native Go J-Link over Linux usbfs or macOS IOKit + SWD bit sequences + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + target-memory RTT (internal/rtt) + JTAG chain scan (internal/jtag) | partial | real-hardware-partial | real | native | no |
 | modbus: native Modbus (RTU over serial, TCP) | complete | synthetic | synthetic | native | no (was inherited from plugins/uart on darwin; split by build tags) |
 | nrf802154: nRF Sniffer for 802.15.4 over serial | complete | real-hardware-partial | real | native | linux/windows: no; darwin: only for VID/PID discovery |
-| nrf802154: zigbee-rs radio lab firmware: PacketInjection (transmit) and firmware_info | complete | synthetic | synthetic | native | linux/windows: no; darwin: only for VID/PID discovery |
+| nrf802154: zigbee-rs radio lab firmware: PacketInjection (transmit) and firmware_info | complete | real-hardware-partial | synthetic | native | linux/windows: no; darwin: only for VID/PID discovery |
 | nrf802154: Nordic Open USB DFU bootloader (serial DFU, dfu_program) | complete | synthetic | synthetic | native | linux/windows: no; darwin: only for VID/PID discovery |
 | picoscope: simulated device | complete | synthetic | synthetic | native | no |
 | picoscope: PicoSDK (ps2000a/ps5000a/…) | missing | untested | none | vendor-sdk | would need cgo or a purego loader |
@@ -463,12 +463,13 @@ Code, fixtures and passing tests are not hardware validation.
 
 **zigbee-rs radio lab firmware: PacketInjection (transmit) and firmware_info**
 
-- implementation: complete; validation: synthetic; dependency: native (zigbee-rs tools/nrf52840-radio-lab firmware on the sniffer (the Nordic firmware is receive-only and is detected as such))
+- implementation: complete; validation: real-hardware-partial; dependency: native (zigbee-rs tools/nrf52840-radio-lab firmware on the sniffer (the Nordic firmware is receive-only and is detected as such))
 - verified:
   - version probe of both firmwares, transmit command/result grammar, guards (PSDU <= 125 B, channel 11-26, repeat <= 100, interval >= 10 ms, burst <= 30 s, 300 frames/min/port), JSONL audit before and after every request, TX inside a running capture (outbound pcapng packets, timeline events) against an in-process simulator
+  - on a real PCA10059: firmware_info detects Nordic sniffer 0.8.0 as receive-only and zigbee-rs-radio-lab 0.1.0 with transmit
+  - on a real PCA10059: standalone beacon requests on channel 26 (3 frames, 100 ms interval) and one inside a channel-15 capture, recorded as an outbound pcapng packet and answered by 12 routers
 - unverified:
-  - any transmission on real hardware
-  - firmware probe against the real Nordic sniffer firmware
+  - cca, ack-wait and tx power on real hardware (only plain transmits were run)
 - known gaps:
   - a standalone transmit (no capture running) has no session timeline: it is recorded in the audit log and the response only
 
@@ -480,7 +481,7 @@ Code, fixtures and passing tests are not hardware validation.
   - SLIP framing, object create/write/CRC/execute against a simulated bootloader
   - image guards: application at 0x1000 below the bootloader, valid stack pointer and reset vector
 - unverified:
-  - programming a real dongle
+  - dfu_program through the plugin on a real dongle: two attempts stalled at the first CRC_GET after the init object was written (op 0x03: no response); the same dfu package run as a standalone program then flashed the dongle (MTU 2051, 9 data objects, activated). Every run now saves a transcript (artifacts/nrf802154-dfu/) for diagnosis
 - known gaps:
   - application images only (no SoftDevice or bootloader update)
   - a .hex gets a generated unsigned init packet (the open bootloader accepts it); a .zip init packet, signed or not, is checked against the image and sent unchanged, never signed by hwlab

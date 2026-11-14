@@ -58,9 +58,10 @@ type Plugin struct {
 	captures map[string]*capture          // serial port -> running capture
 	firmware map[string]protocol.Firmware // serial port -> last version probe
 
-	txl      txLimiter
-	auditMu  sync.Mutex
-	auditDir string // transmit audit directory override (tests)
+	txl       txLimiter
+	auditMu   sync.Mutex
+	auditDir  string // transmit audit directory override (tests)
+	dfuLogDir string // DFU transcript directory override (tests)
 
 	dfuTimeout time.Duration // per-response DFU timeout override (tests); 0 = default
 }

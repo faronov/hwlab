@@ -208,11 +208,16 @@ func (p *Plugin) auditPath() string {
 	if p.auditDir != "" {
 		return filepath.Join(p.auditDir, "audit.jsonl")
 	}
+	return filepath.Join(artifactDir("nrf802154-tx"), "audit.jsonl")
+}
+
+// artifactDir is $HWLAB_HOME/artifacts/<sub> (default ~/.hwlab).
+func artifactDir(sub string) string {
 	if h := os.Getenv("HWLAB_HOME"); h != "" {
-		return filepath.Join(h, "artifacts", "nrf802154-tx", "audit.jsonl")
+		return filepath.Join(h, "artifacts", sub)
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".hwlab", "artifacts", "nrf802154-tx", "audit.jsonl")
+	return filepath.Join(home, ".hwlab", "artifacts", sub)
 }
 
 // audit appends one record; a transmit is refused when its request cannot

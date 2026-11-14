@@ -20,6 +20,7 @@ import (
 	"github.com/faronov/hwlab/internal/usbserial"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
+	"github.com/faronov/hwlab/plugins/nrf802154/dfu"
 	"github.com/faronov/hwlab/plugins/nrf802154/dfu/dfutest"
 	"github.com/faronov/hwlab/plugins/nrf802154/protocol"
 )
@@ -380,6 +381,7 @@ func TestDfuProgram(t *testing.T) {
 		return fb, nil
 	}, &decode.Tshark{})
 	p.dfuTimeout = 200 * time.Millisecond
+	p.dfuLogDir = t.TempDir()
 	zip := filepath.Join("dfu", "testdata", "tiny.zip")
 	call := func(dev string, args map[string]any) (map[string]any, error) {
 		st, _ := structpb.NewStruct(args)
@@ -408,7 +410,36 @@ func TestDfuProgram(t *testing.T) {
 	if res["bytes"] != 5000.0 || res["objects"] != 2.0 || res["activated_ack"] != true || len(fb.Firmware) != 5000 || !fb.Closed {
 		t.Fatalf("result %v, bootloader got %d bytes", res, len(fb.Firmware))
 	}
+	logPath, _ := res["transcript"].(string)
+	if filepath.Dir(logPath) != p.dfuLogDir {
+		t.Fatalf("transcript %q", logPath)
+	}
+	if log, err := os.ReadFile(logPath); err != nil || !strings.Contains(string(log), "done: mtu=131 objects=2") || !strings.Contains(string(log), "progress 5000/5000") {
+		t.Fatalf("transcript %v\n%s", err, log)
+	}
 	if _, err := call("NOPE", map[string]any{"path": zip, "confirm_token": dfuConfirm}); codeOf(err) != codes.NotFound {
 		t.Fatalf("missing device: %v", err)
+	}
+}
+
+func TestDfuProgramStallSavesTranscript(t *testing.T) {
+	fb := &dfutest.Bootloader{MTU: 131, MaxData: 4096, Mute: func(op byte) bool { return op == dfu.OpCRCGet }}
+	p := NewWith(infos(bootloader), func(string) (usbserial.Port, error) { return fb, nil }, &decode.Tshark{})
+	p.dfuTimeout = 50 * time.Millisecond
+	p.dfuLogDir = t.TempDir()
+	st, _ := structpb.NewStruct(map[string]any{"path": filepath.Join("dfu", "testdata", "tiny.zip"), "confirm_token": dfuConfirm})
+	_, err := p.Invoke(context.Background(), &pluginv1.InvokeRequest{DeviceId: "F1E2D3", Capability: pluginv1.CapFlashProgramming, Method: "dfu_program", Args: st})
+	if codeOf(err) != codes.Aborted || !strings.Contains(err.Error(), "op 0x03") || !strings.Contains(err.Error(), "last exchange:") ||
+		!strings.Contains(err.Error(), "timeout after") || !strings.Contains(err.Error(), "transcript: "+p.dfuLogDir) {
+		t.Fatalf("got %v", err)
+	}
+	t.Log(err)
+	logs, _ := filepath.Glob(filepath.Join(p.dfuLogDir, "*-F1E2D3.log"))
+	if len(logs) != 1 {
+		t.Fatalf("logs %v", logs)
+	}
+	log, _ := os.ReadFile(logs[0])
+	if !strings.Contains(string(log), "port /dev/ttyACM3") || !strings.Contains(string(log), "failed: op 0x03") {
+		t.Fatalf("transcript:\n%s", log)
 	}
 }
