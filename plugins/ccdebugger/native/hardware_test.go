@@ -23,13 +23,15 @@ func findDebugger(t *testing.T) Address {
 	t.Helper()
 	dirs, _ := filepath.Glob("/sys/bus/usb/devices/*")
 	for _, d := range dirs {
-		if trim(d+"/idVendor") == "0451" && trim(d+"/idProduct") == "16a2" {
+		vid, _ := strconv.ParseUint(trim(d+"/idVendor"), 16, 16)
+		pid, _ := strconv.ParseUint(trim(d+"/idProduct"), 16, 16)
+		if _, ok := LookupAdapter(uint16(vid), uint16(pid)); ok {
 			bus, _ := strconv.Atoi(trim(d + "/busnum"))
 			dev, _ := strconv.Atoi(trim(d + "/devnum"))
 			return Address{bus, dev}
 		}
 	}
-	t.Skip("no CC-Debugger 0451:16a2 attached")
+	t.Skip("no native debug adapter attached")
 	return Address{}
 }
 

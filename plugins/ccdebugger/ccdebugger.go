@@ -153,7 +153,7 @@ func (p *Plugin) ListDevices(context.Context) ([]*pluginv1.Device, error) {
 	all := scanSysfs(p.sysfs)
 	var out []*pluginv1.Device
 	for _, d := range all {
-		nat := p.open != nil && d.VID == TIVID && d.PID == "16a2"
+		nat := p.open != nil && d.nativeSupported()
 		var c []*pluginv1.Capability
 		switch {
 		case nat:

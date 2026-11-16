@@ -28,8 +28,9 @@ func (s State) String() string {
 // Debugger is one CC-Debugger session with the CC2530 behind it. It is safe
 // for sequential use; concurrent or reentrant calls are refused, not queued.
 type Debugger struct {
-	tr  Transport
-	cfg Config
+	tr          Transport
+	cfg         Config
+	epIn, epOut uint8
 
 	mu          sync.Mutex
 	state       State
@@ -51,7 +52,11 @@ func New(tr Transport, cfg Config) (*Debugger, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	return &Debugger{tr: tr, cfg: cfg, ready: cfg.Access == ExistingDebugSession}, nil
+	d := &Debugger{tr: tr, cfg: cfg, ready: cfg.Access == ExistingDebugSession, epIn: EndpointIn, epOut: EndpointOut}
+	if r, ok := tr.(EndpointReporter); ok {
+		d.epIn, d.epOut = r.Endpoints()
+	}
+	return d, nil
 }
 
 // State reports the lifecycle state.
@@ -239,7 +244,7 @@ func (d *Debugger) writePacket(packet []byte, dl *deadline) error {
 	if err != nil {
 		return err
 	}
-	n, err := d.tr.BulkWrite(EndpointOut, packet, t)
+	n, err := d.tr.BulkWrite(d.epOut, packet, t)
 	if err != nil {
 		return err
 	}
@@ -258,7 +263,7 @@ func (d *Debugger) exchange(packet []byte, n int, dl *deadline) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	b, err := d.tr.BulkRead(EndpointIn, n, t)
+	b, err := d.tr.BulkRead(d.epIn, n, t)
 	if err != nil {
 		return nil, err
 	}
