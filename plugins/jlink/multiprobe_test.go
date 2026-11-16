@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -377,7 +378,10 @@ func TestCaptureResetRunsBeforeRTT(t *testing.T) {
 		t.Errorf("the reset must run once, before the RTT session: runs %+v started %d", f.runs, len(f.started))
 	}
 	a := start.Streams[0].Attributes
-	if a["reset"] != "run" || a["reset_start_ns"] == "" || a["reset_end_ns"] < a["reset_start_ns"] {
+	// The timestamps are decimal strings of different lengths: compare them as numbers.
+	rs, errS := strconv.ParseInt(a["reset_start_ns"], 10, 64)
+	re, errE := strconv.ParseInt(a["reset_end_ns"], 10, 64)
+	if a["reset"] != "run" || errS != nil || errE != nil || re < rs {
 		t.Errorf("stream attributes %v", a)
 	}
 	cancel()
