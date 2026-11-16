@@ -15,6 +15,12 @@ type Transport interface {
 	Close() error
 }
 
+// EndpointReporter is implemented by transports whose bulk endpoints are not
+// the CC-Debugger's [EndpointIn] and [EndpointOut].
+type EndpointReporter interface {
+	Endpoints() (in, out uint8)
+}
+
 // Address selects one USB device.
 type Address struct {
 	Bus     int

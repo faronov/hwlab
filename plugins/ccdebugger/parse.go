@@ -5,7 +5,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+
+	"github.com/faronov/hwlab/plugins/ccdebugger/native"
 )
 
 // TI's USB vendor id and the product ids cc-tool supports.
@@ -35,6 +38,17 @@ type Debugger struct {
 	PID     string
 	Address string // cc-tool "bus:device" address
 	Path    string
+}
+
+// nativeSupported reports whether the native backend drives this programmer.
+func (d Debugger) nativeSupported() bool {
+	vid, err1 := strconv.ParseUint(d.VID, 16, 16)
+	pid, err2 := strconv.ParseUint(d.PID, 16, 16)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	_, ok := native.LookupAdapter(uint16(vid), uint16(pid))
+	return ok
 }
 
 func readTrim(path string) string {

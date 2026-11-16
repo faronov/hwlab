@@ -14,12 +14,21 @@ import (
 // hardware.
 func NewSimulator() Transport { return newSim() }
 
+// NewSimulatorFor is [NewSimulator] behind the bulk endpoints of adapter a.
+func NewSimulatorFor(a Adapter) Transport {
+	s := newSim()
+	s.epIn, s.epOut = a.EndpointIn, a.EndpointOut
+	return s
+}
+
 // sim records all USB traffic so tests can assert on exactly what was sent.
 type sim struct {
 	mu sync.Mutex
 
 	targetID uint16
 	revision uint16
+	epIn     uint8
+	epOut    uint8
 
 	halted    bool
 	haltCause bool // HALT_STATUS
@@ -86,7 +95,7 @@ type ctrlRecord struct {
 }
 
 func newSim() *sim {
-	s := &sim{targetID: targetCC2530, revision: 0x0102, oscStable: true}
+	s := &sim{targetID: targetCC2530, revision: 0x0102, oscStable: true, epIn: EndpointIn, epOut: EndpointOut}
 	s.flash = make([]byte, 0x40000)
 	for i := range s.flash {
 		s.flash[i] = byte(i*7 + i>>8)
@@ -139,6 +148,8 @@ func (s *sim) status() uint8 {
 
 func (s *sim) Revision() (uint16, error) { return s.revision, nil }
 
+func (s *sim) Endpoints() (in, out uint8) { return s.epIn, s.epOut }
+
 func (s *sim) Close() error { s.closed = true; return nil }
 
 func (s *sim) ControlRead(rt, req uint8, value, index uint16, length int, _ time.Duration) ([]byte, error) {
@@ -174,7 +185,7 @@ func (s *sim) BulkWrite(ep uint8, data []byte, _ time.Duration) (int, error) {
 		}
 		return 0, fmt.Errorf("simulated USB failure")
 	}
-	if ep != EndpointOut {
+	if ep != s.epOut {
 		return 0, fmt.Errorf("bulk write on 0x%02x", ep)
 	}
 	reply, err := s.command(data)
@@ -191,7 +202,7 @@ func (s *sim) BulkRead(ep uint8, length int, _ time.Duration) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.bulkReads++
-	if ep != EndpointIn || len(s.pending) == 0 {
+	if ep != s.epIn || len(s.pending) == 0 {
 		return nil, fmt.Errorf("simulated read timeout")
 	}
 	r := s.pending[0]

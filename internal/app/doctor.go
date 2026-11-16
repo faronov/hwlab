@@ -217,10 +217,14 @@ func ccDebuggerNativeChecks(installed bool) []DoctorCheck {
 		b, _ := os.ReadFile(filepath.Join(dir, f))
 		return strings.TrimSpace(string(b))
 	}
+	// Adapters the native backend drives (plugins/ccdebugger/native.Adapters).
+	native := map[string]string{"0451:16a2": "CC Debugger", "11a0:eb20": "SmartRF04DD"}
 	var found, denied []string
 	for _, e := range ents {
 		dir := filepath.Dir(e)
-		if read(dir, "idVendor") != "0451" || read(dir, "idProduct") != "16a2" {
+		vp := read(dir, "idVendor") + ":" + read(dir, "idProduct")
+		adapter, ok := native[vp]
+		if !ok {
 			continue
 		}
 		bus, _ := strconv.Atoi(read(dir, "busnum"))
@@ -228,22 +232,22 @@ func ccDebuggerNativeChecks(installed bool) []DoctorCheck {
 		node := fmt.Sprintf("/dev/bus/usb/%03d/%03d", bus, dev)
 		f, err := os.OpenFile(node, os.O_RDWR, 0)
 		if err != nil {
-			denied = append(denied, node+": "+err.Error())
+			denied = append(denied, adapter+" "+node+": "+err.Error())
 			continue
 		}
 		if err := f.Close(); err != nil {
-			denied = append(denied, node+": close failed: "+err.Error())
+			denied = append(denied, adapter+" "+node+": close failed: "+err.Error())
 			continue
 		}
-		found = append(found, node)
+		found = append(found, adapter+" "+vp+" at "+node)
 	}
 	switch {
 	case len(denied) > 0:
-		return []DoctorCheck{{name, CheckWarn, "CC Debugger present but not accessible (add a udev rule, see docs/hardware.md): " + strings.Join(denied, "; ")}}
+		return []DoctorCheck{{name, CheckWarn, "debug adapter present but not accessible (add a udev rule, see docs/hardware.md): " + strings.Join(denied, "; ")}}
 	case len(found) > 0:
-		return []DoctorCheck{{name, CheckOK, "CC Debugger 0451:16a2 accessible via usbfs at " + strings.Join(found, ", ") + " (no libusb, Python or cc-tool needed)"}}
+		return []DoctorCheck{{name, CheckOK, "accessible via usbfs: " + strings.Join(found, ", ") + " (no libusb, Python or cc-tool needed)"}}
 	}
-	return []DoctorCheck{{name, CheckOK, "available (Go usbfs, no libusb, Python or cc-tool needed); no CC Debugger connected"}}
+	return []DoctorCheck{{name, CheckOK, "available (Go usbfs, no libusb, Python or cc-tool needed); no CC Debugger or SmartRF04DD connected"}}
 }
 
 // ftdiNativeChecks reports the native FTDI/MPSSE JTAG backend: it needs only

@@ -54,13 +54,15 @@ var (
 
 // usbfsTransport talks to one device through /dev/bus/usb without libusb.
 type usbfsTransport struct {
-	f        *os.File
-	revision uint16
-	claimed  bool
+	f           *os.File
+	revision    uint16
+	claimed     bool
+	epIn, epOut uint8
 }
 
-// Open opens the CC-Debugger at addr through usbfs and claims interface 0. It
-// verifies the device identity and that configuration 1 is already active; it
+// Open opens the debug adapter at addr through usbfs and claims interface 0.
+// It verifies the device identity against [Adapters], that interface 0 has the
+// adapter's bulk endpoints and that configuration 1 is already active; it
 // never changes the configuration or detaches a kernel driver.
 func Open(addr Address) (_ Transport, openErr error) {
 	if !addr.Valid() {
@@ -69,7 +71,7 @@ func Open(addr Address) (_ Transport, openErr error) {
 	f, err := os.OpenFile(fmt.Sprintf(usbfsDeviceFmt, addr.Bus, addr.Address), os.O_RDWR|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrPermission) {
-			return nil, transportf("%v (grant access to the device, e.g. with a udev rule for 0451:16a2)", err)
+			return nil, transportf("%v (grant access to the device, e.g. with a udev rule for the adapter's vid:pid)", err)
 		}
 		return nil, transportf("%v", err)
 	}
@@ -82,14 +84,23 @@ func Open(addr Address) (_ Transport, openErr error) {
 			}
 		}
 	}()
-	// Reading the usbfs node returns the device descriptor first.
-	var desc [18]byte
-	if n, err := f.Read(desc[:]); err != nil || n != len(desc) {
+	// Reading the usbfs node returns the device descriptor followed by the
+	// configuration descriptors.
+	desc := make([]byte, 4096)
+	n, err := f.Read(desc)
+	if err != nil || n < 18 {
 		return nil, transportf("cannot read the USB device descriptor: %v", err)
 	}
-	if vid, pid := uint16(desc[8])|uint16(desc[9])<<8, uint16(desc[10])|uint16(desc[11])<<8; vid != VID || pid != PID {
-		return nil, transportf("USB device %d:%d is %04x:%04x, not a CC-Debugger %04x:%04x", addr.Bus, addr.Address, vid, pid, VID, PID)
+	desc = desc[:n]
+	vid, pid := uint16(desc[8])|uint16(desc[9])<<8, uint16(desc[10])|uint16(desc[11])<<8
+	a, known := LookupAdapter(vid, pid)
+	if !known {
+		return nil, transportf("USB device %d:%d is %04x:%04x, not a supported debug adapter (%s)", addr.Bus, addr.Address, vid, pid, adapterList())
 	}
+	if err := checkBulkEndpoints(desc, a.EndpointIn, a.EndpointOut); err != nil {
+		return nil, err
+	}
+	t.epIn, t.epOut = a.EndpointIn, a.EndpointOut
 	t.revision = uint16(desc[12]) | uint16(desc[13])<<8
 	cfg, err := t.ControlRead(0x80, 0x08, 0, 0, 1, time.Second)
 	if err != nil {
@@ -124,6 +135,8 @@ func (t *usbfsTransport) ioctl(req uintptr, arg unsafe.Pointer) error {
 }
 
 func (t *usbfsTransport) Revision() (uint16, error) { return t.revision, nil }
+
+func (t *usbfsTransport) Endpoints() (in, out uint8) { return t.epIn, t.epOut }
 
 // millis converts a timeout for usbfs, where 0 means infinite.
 func millis(d time.Duration) uint32 {
