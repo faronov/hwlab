@@ -1,5 +1,5 @@
 // Package espusbjtag is the hwlab plugin for the Espressif USB Serial/JTAG
-// peripheral (ESP32-C3/S3/C6/H2, VID 303a PID 1001).
+// peripheral (ESP32-C3/S3/C6/H2/C5, VID 303a PID 1001).
 //
 // Layers, bottom to top, each in its own package:
 //

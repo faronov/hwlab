@@ -9,8 +9,10 @@ import (
 
 // eFuse read registers (the shadow copy EFUSE_RD_REPEAT_DATA0..3 at
 // Chip.EfuseRepeat0; read only). This package never writes an eFuse. The
-// field positions below are identical on the ESP32-C6, ESP32-H2 and ESP32-S3,
-// except DIS_USB_JTAG (Chip.EfuseDisUSBJTAG).
+// field positions below are identical on the ESP32-C6, ESP32-H2, ESP32-C5 and
+// ESP32-S3, except DIS_USB_JTAG on the S3 and SPI_BOOT_CRYPT_CNT and
+// SECURE_BOOT_EN on the C5 (Chip.EfuseDisUSBJTAG/EfuseCryptCnt/
+// EfuseSecureBoot).
 
 // Security is the security-relevant eFuse state, as read.
 type Security struct {
@@ -58,6 +60,12 @@ func ReadSecurity(ctx context.Context, dm Bus, c *Chip) (Security, error) {
 	}
 	if b := c.EfuseDisUSBJTAG; b != nil {
 		s.USBJTAGDisabled = w[b.Word]>>b.Bit&1 == 1
+	}
+	if b := c.EfuseCryptCnt; b != nil {
+		s.FlashEncryptionCount = int(w[b.Word] >> b.Bit & 7)
+	}
+	if b := c.EfuseSecureBoot; b != nil {
+		s.SecureBootEnabled = w[b.Word]>>b.Bit&1 == 1
 	}
 	copy(s.Raw[:], w)
 	return s, nil

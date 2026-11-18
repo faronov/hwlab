@@ -613,7 +613,7 @@ interface 1 (channel B) stays a UART for the `uart` plugin.
 
 Native Go over Linux usbfs ([ADR 0029](adr/0029-espressif-usb-jtag-riscv-dm.md)):
 no CGO, libusb, OpenOCD, ESP-IDF or Python. The device (`303a:1001`, the built-in USB of the
-ESP32-C6, ESP32-H2 and ESP32-S3; other chips with the same peripheral are refused by the flash and reset paths) exposes CDC-ACM on interfaces 0/1 and a vendor JTAG
+ESP32-C6, ESP32-H2, ESP32-C5 and ESP32-S3; other chips with the same peripheral are refused by the flash and reset paths) exposes CDC-ACM on interfaces 0/1 and a vendor JTAG
 interface 2. Only interface 2 is claimed and no kernel driver is detached, so
 `/dev/ttyACMx` stays with `cdc_acm` and keeps working through the `uart` plugin.
 
@@ -647,17 +647,28 @@ interface 2. Only interface 2 is claimed and no kernel driver is detached, so
   be committed.
 * Unplug: operations on a vanished device fail with `DEVICE_GONE` (bounded, about 8 s); the session recovers when
   the same serial reappears.
-* The JTAG IDCODE (`0x0000dc25` C6, `0x00010c25` H2) is reported as observed evidence; generic code does not conclude
-  the chip from it.
+* The JTAG IDCODE (`0x0000dc25` C6, `0x00010c25` H2, `0x00017c25` C5) is reported as observed evidence; generic code
+  does not conclude the chip from it.
+* ESP32-C5: the chain has two TAPs with IDCODE `0x00017c25`, the LP core's nearest TDO and the HP core's next (as in
+  OpenOCD-esp32 `target/esp32c5.cfg`). When every TAP shows the IDCODE of a profile with that many TAPs, the plugin
+  addresses the profile's HP-core TAP (index 1) and keeps the other in BYPASS; `identify` reports `jtag_taps` and
+  `jtag_tap_index`. The HP debug module has one hart and no hart-select bits, so any other `hart` is refused (hartsel is
+  read back) instead of silently aliasing hart 0. The second-stage bootloader is at `0x2000` (the backup manifest
+  reports `bootloader_offset`); it still lies inside the protected bootloader slot `0x0-0x8000`.
 * Chip profiles (flash, watchdog quiesce, SoC reset, SRAM write bounds): a profile is selected only when the JTAG
   IDCODE and the ROM word at `0x40001000` both match it (ESP32-C6 `0x0000dc25`/`0x2CE0806F`; ESP32-H2
-  `0x00010c25`/`0x97E30068`, the word observed on a v1.x H2 since esptool uses no magic value for the H2). Unknown or
+  `0x00010c25`/`0x97E30068`, the word observed on a v1.x H2 since esptool uses no magic value for the H2; ESP32-C5
+  `0x00017c25`/`0x5FD1406F`, observed on a v1.0 C5 for the same reason). Unknown or
   conflicting evidence is refused before the hart is halted or any register is written. `program` requires the image
-  chip id to equal the detected chip (`0x000D` C6, `0x0010` H2). Watchdog maps: C6 TIMG0/1 `0x60008000`/`0x60009000`,
+  chip id to equal the detected chip (`0x000D` C6, `0x0010` H2, `0x0017` C5). Watchdog maps: C6 TIMG0/1 `0x60008000`/`0x60009000`,
   LP_WDT WPROTECT `+0x18` (unchanged); H2 TIMG0/1 `0x60009000`/`0x6000A000`, LP_WDT FEED/WPROTECT `+0x18`/`+0x1C`,
   and the H2 super watchdog gets SWD_AUTO_FEED_EN for the halt (as esptool does) and its old value back afterwards.
-  SPI1 (`0x60003000`) and the eFuse RD_REPEAT_DATA0..3 security fields are identical on both.
-* Download mode (ESP32-H2 only): the ROM download loader does not attach the SPI flash until a host sends
+  SPI1 (`0x60003000`) and the eFuse RD_REPEAT_DATA0..3 security fields are identical on both. The C5 has the C6
+  watchdog addresses plus the super watchdog at LP_WDT `+0x1C`/`+0x20` (auto-feed for the halt, like the H2), SPI1 at
+  `0x60003000`, eFuse at `0x600B4800` with SPI_BOOT_CRYPT_CNT at RD_REPEAT_DATA1 bit 16 and SECURE_BOOT_EN at
+  RD_REPEAT_DATA2 bit 25 (esptool ESP32C5ROM, ESP-IDF `soc/esp32c5`).
+* Download mode (ESP32-H2; the ESP32-C5 profile has the entry `0x400001f0` from `esp32c5.rom.ld` but it is untested
+  on hardware): the ROM download loader does not attach the SPI flash until a host sends
   SPI_ATTACH, so every SPI1 command reads all-ones. When a flash call sees JEDEC all-ones/zeros, the profile has a ROM
   attach entry (H2 `spi_flash_attach` `0x400001d4`, from the ESP-IDF ROM linker script) and the hart is halted inside
   the ROM, the plugin calls `spi_flash_attach(0, false)` through the debug module, as esptool's SPI_ATTACH does: all

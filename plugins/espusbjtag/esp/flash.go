@@ -19,7 +19,7 @@ import (
 // USER1 0x1C; USER2 0x20; MOSI_DLEN 0x24; MISO_DLEN 0x28; W0 0x58); only the
 // base differs (Chip.SPI1).
 const (
-	// SPI1Base is the ESP32-C6/H2 SPI1 base.
+	// SPI1Base is the ESP32-C6/H2/C5 SPI1 base.
 	SPI1Base = 0x60003000
 
 	spiCmd      = 0x00

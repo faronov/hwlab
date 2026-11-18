@@ -12,6 +12,7 @@ import (
 	"github.com/faronov/hwlab/internal/jtag"
 	"github.com/faronov/hwlab/internal/riscv"
 	"github.com/faronov/hwlab/internal/usb"
+	"github.com/faronov/hwlab/plugins/espusbjtag/esp"
 	"github.com/faronov/hwlab/plugins/espusbjtag/espusb"
 )
 
@@ -199,8 +200,7 @@ func openSession(ctx context.Context, e Entry, o options, open Opener) (*session
 	return &session{entry: e, o: o, iface: ifnum, probe: probe, drv: jtag.NewDriver(probe)}, nil
 }
 
-// ensureChain enumerates the chain once and checks it looks like a single
-// RISC-V TAP.
+// ensureChain enumerates the chain once.
 func (s *session) ensureChain(ctx context.Context) (*jtag.Chain, error) {
 	if s.chain != nil {
 		return s.chain, nil
@@ -213,22 +213,61 @@ func (s *session) ensureChain(ctx context.Context) (*jtag.Chain, error) {
 	return s.chain, nil
 }
 
-// tapIRLen is the IR length of the only TAP in the chain.
-func (s *session) tapIRLen(ctx context.Context) (int, error) {
-	c, err := s.ensureChain(ctx)
-	if err != nil {
-		return 0, err
-	}
+// riscvTAP picks the RISC-V TAP to address and returns the IR lengths of the
+// whole chain with its position (0 = nearest TDO): the only TAP of a
+// single-TAP chain (ESP32-C6/H2), or, when every TAP of the chain shows the
+// IDCODE of a chip profile with that many TAPs (ESP32-C5: LP-core TAP and
+// HP-core TAP), the profile's HP-core TAP. The IDCODE only chooses which TAP
+// to talk to; the chip is still identified by IDCODE plus ROM word (Detect).
+func riscvTAP(c *jtag.Chain) ([]int, int, error) {
 	if isXtensaChain(c) {
-		return 0, errXtensaOnly
+		return nil, 0, errXtensaOnly
 	}
-	if c.Status != jtag.StatusOK || len(c.Devices) != 1 {
-		return 0, fmt.Errorf("%w: expected one TAP in the chain, found %d (status %s)", errNoTarget, len(c.Devices), c.Status)
+	if c.Status == jtag.StatusOK && len(c.Devices) == 1 {
+		if c.TotalIR < 5 {
+			return nil, 0, fmt.Errorf("%w: IR length %d is too short for a RISC-V TAP", errNoTarget, c.TotalIR)
+		}
+		return []int{c.TotalIR}, 0, nil
 	}
-	if c.TotalIR < 5 {
-		return 0, fmt.Errorf("%w: IR length %d is too short for a RISC-V TAP", errNoTarget, c.TotalIR)
+	if c.Status == jtag.StatusOK && len(c.Devices) > 1 {
+		for _, p := range esp.Chips {
+			if p.JTAGTAPs != len(c.Devices) || c.TotalIR != p.JTAGTAPs*riscvIRLen || !allIDCode(c, p.IDCode) {
+				continue
+			}
+			irl := make([]int, len(c.Devices))
+			for i := range irl {
+				irl[i] = riscvIRLen
+			}
+			return irl, p.JTAGHPTAP, nil
+		}
 	}
-	return c.TotalIR, nil
+	return nil, 0, fmt.Errorf("%w: expected one TAP in the chain (or the TAP set of a profiled multi-TAP chip), found %d (status %s)", errNoTarget, len(c.Devices), c.Status)
+}
+
+// riscvIRLen is the IR length of the Espressif RISC-V TAPs.
+const riscvIRLen = 5
+
+func allIDCode(c *jtag.Chain, id uint32) bool {
+	for _, d := range c.Devices {
+		if d.Bypass || d.IDCode == nil || d.IDCode.Raw != id {
+			return false
+		}
+	}
+	return true
+}
+
+// targetIDCode is the IDCODE of the TAP the debug module is (or would be)
+// reached through; nil when the chain has no usable RISC-V TAP.
+func (s *session) targetIDCode() *jtag.IDCode {
+	c := s.chain
+	if c == nil {
+		return nil
+	}
+	_, i, err := riscvTAP(c)
+	if err != nil || i >= len(c.Devices) {
+		return nil
+	}
+	return c.Devices[i].IDCode
 }
 
 var errNoTarget = errors.New("no RISC-V target on the JTAG chain")
@@ -238,11 +277,15 @@ func (s *session) ensureDM(ctx context.Context) (*riscv.DM, error) {
 	if s.dm != nil {
 		return s.dm, nil
 	}
-	n, err := s.tapIRLen(ctx)
+	c, err := s.ensureChain(ctx)
 	if err != nil {
 		return nil, err
 	}
-	dtm, err := riscv.NewDTM(ctx, s.drv, n)
+	irl, idx, err := riscvTAP(c)
+	if err != nil {
+		return nil, err
+	}
+	dtm, err := riscv.NewDTMAt(ctx, s.drv, irl, idx)
 	if err != nil {
 		return nil, err
 	}

@@ -545,6 +545,13 @@ func chipHint(id *jtag.IDCode) map[string]any {
 			"confidence": "idcode-only",
 		}
 	}
+	if id.Raw == esp.ChipC5.IDCode {
+		return map[string]any{
+			"observed": "IDCODE 0x00017c25", "consistent_with": "ESP32-C5 (two TAPs with this IDCODE, LP core and HP core; observed on a board known to carry one)",
+			"basis":      "an IDCODE match is evidence, not proof; flash and register access additionally require the ROM word to match the ESP32-C5 profile",
+			"confidence": "idcode-only",
+		}
+	}
 	if id.Raw == esp.ChipS3.IDCode {
 		return map[string]any{
 			"observed": "IDCODE 0x120034e5", "consistent_with": "ESP32-S3 (one Xtensa LX7 TAP per core; observed on a board known to carry one)",
@@ -614,10 +621,15 @@ func (s *session) chipInfo(ctx context.Context, args map[string]any) (map[string
 		return nil, err
 	}
 	res := map[string]any{"basis": "JTAG IDCODE and RISC-V debug module registers; nothing was halted"}
-	if c := s.chain; c != nil && len(c.Devices) == 1 && c.Devices[0].IDCode != nil {
-		id := c.Devices[0].IDCode
+	if id := s.targetIDCode(); id != nil {
 		res["idcode"] = fmt.Sprintf("0x%08x", id.Raw)
-		res["ir_length"] = float64(c.TotalIR)
+		res["ir_length"] = float64(riscvIRLen)
+		if c := s.chain; len(c.Devices) == 1 {
+			res["ir_length"] = float64(c.TotalIR)
+		} else {
+			res["jtag_taps"] = float64(len(c.Devices))
+			res["jtag_tap_index"] = float64(s.dtm.Index())
+		}
 		if h := chipHint(id); h != nil {
 			res["chip_hint"] = h
 		}

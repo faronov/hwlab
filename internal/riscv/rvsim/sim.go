@@ -56,6 +56,10 @@ type Config struct {
 	HartCSRs map[int]map[uint16]uint32
 	// ResetDropsDM makes ndmreset clear the whole debug module state.
 	ResetDropsDM bool
+	// HartSelBits limits the implemented hartsel bits (WARL); 0 means all
+	// 20, a negative value none (hartsel always reads 0, as on a
+	// single-hart module that implements no hart-select bits).
+	HartSelBits int
 	// OnResume, when set, is called with the hart index, its pc and GPRs
 	// whenever a hart resumes (not single-steps), before execution is
 	// modelled. Tests use it to model what the code at pc does.
@@ -301,7 +305,7 @@ func (t *Target) dmRead(a uint32) uint32 {
 		return t.data0
 	case 0x10:
 		if t.active {
-			return 1 | t.hartsel&0x3FF<<16
+			return 1 | t.hartsel&0x3FF<<16 | (t.hartsel>>10&0x3FF)<<6
 		}
 		return 0
 	case 0x11:
@@ -393,6 +397,12 @@ func (t *Target) dmControl(v uint32) {
 		return
 	}
 	t.hartsel = (v >> 16 & 0x3FF) | (v>>6&0x3FF)<<10
+	switch n := t.cfg.HartSelBits; {
+	case n < 0:
+		t.hartsel = 0
+	case n > 0 && n < 20:
+		t.hartsel &= 1<<n - 1
+	}
 	h, idx, ok := t.cur()
 	if !ok {
 		return
@@ -715,13 +725,37 @@ func (t *Target) sbWrite(v uint32) {
 	}
 }
 
-// Port adapts the Target to jtag.Port, clocking it directly.
-type Port struct{ T *Target }
+// Chain is several TAPs in series: TDI enters the last one, each TAP's TDO
+// feeds the one nearer TDO, and TAPs[0] drives TDO (chain index 0).
+type Chain struct{ TAPs []*Target }
+
+// Clock clocks every TAP of the chain once and returns TDO.
+func (c *Chain) Clock(tms, tdi bool) bool {
+	in := tdi
+	for i := len(c.TAPs) - 1; i >= 0; i-- {
+		in = c.TAPs[i].Clock(tms, in)
+	}
+	return in
+}
+
+// Port adapts the Target (or, when Chain is set, a chain of targets) to
+// jtag.Port, clocking it directly.
+type Port struct {
+	T     *Target
+	Chain *Chain
+}
+
+func (p Port) clock(tms, tdi bool) bool {
+	if p.Chain != nil {
+		return p.Chain.Clock(tms, tdi)
+	}
+	return p.T.Clock(tms, tdi)
+}
 
 // TMS implements jtag.Port.
 func (p Port) TMS(_ context.Context, tms []bool, tdi bool) error {
 	for _, b := range tms {
-		p.T.Clock(b, tdi)
+		p.clock(b, tdi)
 	}
 	return nil
 }
@@ -740,7 +774,7 @@ func (p Port) Shift(_ context.Context, tdi []byte, nbits int, exit, capture bool
 	}
 	for i := 0; i < nbits; i++ {
 		in := tdi != nil && tdi[i/8]>>(i%8)&1 == 1
-		o := p.T.Clock(exit && i == nbits-1, in)
+		o := p.clock(exit && i == nbits-1, in)
 		if capture && o {
 			out[i/8] |= 1 << (i % 8)
 		}
@@ -762,7 +796,7 @@ func (p *BatchPort) Batch(_ context.Context, ops []jtag.Op) ([][]byte, error) {
 	for _, op := range ops {
 		if op.NBits == 0 {
 			for _, b := range op.TMS {
-				p.T.Clock(b, op.TDI)
+				p.clock(b, op.TDI)
 			}
 			continue
 		}
@@ -772,7 +806,7 @@ func (p *BatchPort) Batch(_ context.Context, ops []jtag.Op) ([][]byte, error) {
 		}
 		for i := 0; i < op.NBits; i++ {
 			in := op.Data != nil && op.Data[i/8]>>(i%8)&1 == 1
-			o := p.T.Clock(op.Exit && i == op.NBits-1, in)
+			o := p.clock(op.Exit && i == op.NBits-1, in)
 			if i < op.Capture && o {
 				out[i/8] |= 1 << (i % 8)
 			}

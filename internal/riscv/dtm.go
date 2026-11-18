@@ -59,7 +59,8 @@ func decodeDTMCS(v uint32) DTMCS {
 	return DTMCS{Raw: v, Version: int(v & 0xF), ABits: int(v >> 4 & 0x3F), DMIStat: int(v >> 10 & 3), Idle: int(v >> 12 & 7)}
 }
 
-// DTM is the JTAG Debug Transport Module of a single-TAP chain. It is not safe
+// DTM is the JTAG Debug Transport Module of one TAP in a JTAG chain (usually
+// the only one). The other TAPs, if any, are kept in BYPASS. It is not safe
 // for concurrent use.
 type DTM struct {
 	drv    *jtag.Driver
@@ -69,15 +70,41 @@ type DTM struct {
 	cs     DTMCS
 	idle   int
 	maxTry int
+
+	// Chain position: index 0 is the TAP nearest TDO. irPre is the IR bits
+	// of the TAPs nearer TDO, irTotal the IR bits of the whole chain; drPre
+	// and drPost count the BYPASS bits nearer TDO and nearer TDI.
+	index, irPre, irTotal int
+	drPre, drPost         int
 }
 
 // NewDTM resets the TAP and reads dtmcs. irLen is the IR length of the only TAP
 // in the chain. The TAP reset leaves the DM untouched.
 func NewDTM(ctx context.Context, drv *jtag.Driver, irLen int) (*DTM, error) {
+	return NewDTMAt(ctx, drv, []int{irLen}, 0)
+}
+
+// NewDTMAt is NewDTM for the TAP at chain position index (0 = nearest TDO) of
+// a chain whose IR lengths, in the same order, are irLens. Every other TAP
+// gets the all-ones (BYPASS) instruction.
+func NewDTMAt(ctx context.Context, drv *jtag.Driver, irLens []int, index int) (*DTM, error) {
+	if index < 0 || index >= len(irLens) {
+		return nil, fmt.Errorf("riscv: TAP index %d is outside a chain of %d TAP(s)", index, len(irLens))
+	}
+	irLen := irLens[index]
 	if irLen < 5 || irLen > 32 {
 		return nil, fmt.Errorf("riscv: IR length %d is not valid for a RISC-V DTM (5..32)", irLen)
 	}
-	d := &DTM{drv: drv, irLen: irLen, maxTry: 8}
+	d := &DTM{drv: drv, irLen: irLen, maxTry: 8, index: index, drPre: index, drPost: len(irLens) - 1 - index}
+	for i, l := range irLens {
+		if l < 1 {
+			return nil, fmt.Errorf("riscv: TAP %d has IR length %d", i, l)
+		}
+		if i < index {
+			d.irPre += l
+		}
+		d.irTotal += l
+	}
 	if err := d.Reset(ctx); err != nil {
 		return nil, err
 	}
@@ -96,6 +123,9 @@ func NewDTM(ctx context.Context, drv *jtag.Driver, irLen int) (*DTM, error) {
 // CS returns the dtmcs read at open.
 func (d *DTM) CS() DTMCS { return d.cs }
 
+// Index is the chain position of the TAP this DTM addresses (0 = nearest TDO).
+func (d *DTM) Index() int { return d.index }
+
 // Idle is the Run-Test/Idle cycle count currently used per DMI access.
 func (d *DTM) Idle() int { return d.idle }
 
@@ -110,12 +140,35 @@ func (d *DTM) selectIR(ctx context.Context, ir uint32) error {
 		return nil
 	}
 	d.irOK = false
-	b := []byte{byte(ir), byte(ir >> 8), byte(ir >> 16), byte(ir >> 24)}
-	if _, err := d.drv.ShiftIR(ctx, b, d.irLen, false); err != nil {
+	b := jtag.Ones(d.irTotal)
+	for i := 0; i < d.irLen; i++ {
+		jtag.SetBit(b, d.irPre+i, ir>>i&1 == 1)
+	}
+	if _, err := d.drv.ShiftIR(ctx, b, d.irTotal, false); err != nil {
 		return err
 	}
 	d.ir, d.irOK = ir, true
 	return nil
+}
+
+// drBuf returns a zeroed DR scan buffer for an n-bit register of this TAP
+// plus the BYPASS bits of the others; the register starts at bit drPre.
+func (d *DTM) drBuf(n int) ([]byte, int) {
+	total := d.drPre + n + d.drPost
+	return make([]byte, (total+7)/8), total
+}
+
+// shift32 scans a 32-bit data register of this TAP and returns what it held.
+func (d *DTM) shift32(ctx context.Context, v uint32, capture bool) (uint32, error) {
+	buf, total := d.drBuf(32)
+	for i := 0; i < 32; i++ {
+		jtag.SetBit(buf, d.drPre+i, v>>i&1 == 1)
+	}
+	out, err := d.drv.ShiftDR(ctx, buf, total, capture)
+	if err != nil || !capture {
+		return 0, err
+	}
+	return uint32(jtag.Field(out, d.drPre, 32)), nil
 }
 
 // ReadDTMCS reads and decodes dtmcs.
@@ -123,11 +176,11 @@ func (d *DTM) ReadDTMCS(ctx context.Context) (DTMCS, error) {
 	if err := d.selectIR(ctx, irDTMCS); err != nil {
 		return DTMCS{}, err
 	}
-	out, err := d.drv.ShiftDR(ctx, make([]byte, 4), 32, true)
+	v, err := d.shift32(ctx, 0, true)
 	if err != nil {
 		return DTMCS{}, err
 	}
-	return decodeDTMCS(uint32(jtag.Field(out, 0, 32))), nil
+	return decodeDTMCS(v), nil
 }
 
 // ClearSticky issues dmireset, clearing a sticky busy/failed status.
@@ -135,7 +188,7 @@ func (d *DTM) ClearSticky(ctx context.Context) error {
 	if err := d.selectIR(ctx, irDTMCS); err != nil {
 		return err
 	}
-	_, err := d.drv.ShiftDR(ctx, []byte{0, 0, 1, 0}, 32, false) // dmireset = bit 16
+	_, err := d.shift32(ctx, 1<<16, false) // dmireset = bit 16
 	return err
 }
 
@@ -144,29 +197,30 @@ func (d *DTM) IDCode(ctx context.Context) (uint32, error) {
 	if err := d.selectIR(ctx, irIDCode); err != nil {
 		return 0, err
 	}
-	out, err := d.drv.ShiftDR(ctx, make([]byte, 4), 32, true)
-	if err != nil {
-		return 0, err
-	}
-	return uint32(jtag.Field(out, 0, 32)), nil
+	return d.shift32(ctx, 0, true)
 }
 
-func (d *DTM) scanDMI(ctx context.Context, op uint32, addr, data uint32) (rop uint32, rdata uint32, err error) {
-	n := d.cs.ABits + 34
-	buf := make([]byte, (n+7)/8)
+// dmiBuf encodes one DMI request at this TAP's position in the chain.
+func (d *DTM) dmiBuf(op uint32, addr, data uint32) ([]byte, int) {
+	buf, total := d.drBuf(d.cs.ABits + 34)
 	put := func(off, width int, v uint64) {
 		for i := 0; i < width; i++ {
-			jtag.SetBit(buf, off+i, v>>i&1 == 1)
+			jtag.SetBit(buf, d.drPre+off+i, v>>i&1 == 1)
 		}
 	}
 	put(0, 2, uint64(op))
 	put(2, 32, uint64(data))
 	put(34, d.cs.ABits, uint64(addr))
-	out, err := d.drv.ShiftDR(ctx, buf, n, true)
+	return buf, total
+}
+
+func (d *DTM) scanDMI(ctx context.Context, op uint32, addr, data uint32) (rop uint32, rdata uint32, err error) {
+	buf, total := d.dmiBuf(op, addr, data)
+	out, err := d.drv.ShiftDR(ctx, buf, total, true)
 	if err != nil {
 		return 0, 0, err
 	}
-	return uint32(jtag.Field(out, 0, 2)), uint32(jtag.Field(out, 2, 32)), nil
+	return uint32(jtag.Field(out, d.drPre, 2)), uint32(jtag.Field(out, d.drPre+2, 32)), nil
 }
 
 // access performs one DMI operation and returns the read data. A busy
@@ -241,20 +295,7 @@ func (d *DTM) Pipeline(ctx context.Context, ops []DMIOp) ([]uint32, error) {
 	if err := d.selectIR(ctx, irDMI); err != nil {
 		return nil, err
 	}
-	n := d.cs.ABits + 34
-	req := func(op uint32, addr, data uint32) []byte {
-		buf := make([]byte, (n+7)/8)
-		for i := 0; i < 2; i++ {
-			jtag.SetBit(buf, i, op>>i&1 == 1)
-		}
-		for i := 0; i < 32; i++ {
-			jtag.SetBit(buf, 2+i, data>>i&1 == 1)
-		}
-		for i := 0; i < d.cs.ABits; i++ {
-			jtag.SetBit(buf, 34+i, addr>>i&1 == 1)
-		}
-		return buf
-	}
+	req := func(op uint32, addr, data uint32) ([]byte, int) { return d.dmiBuf(op, addr, data) }
 	for try := 0; try < d.maxTry; try++ {
 		b := d.drv.NewBatch()
 		idx := make([]int, len(ops))
@@ -266,23 +307,25 @@ func (d *DTM) Pipeline(ctx context.Context, ops []DMIOp) ([]uint32, error) {
 			// The result of the previous access arrives with this scan.
 			cap := 0
 			if i > 0 {
-				cap = 2
+				cap = d.drPre + 2
 				if !ops[i-1].Write {
-					cap = 34
+					cap = d.drPre + 34
 				}
 			}
-			r := b.ShiftDR(req(code, op.Addr, op.Data), n, cap)
+			buf, n := req(code, op.Addr, op.Data)
+			r := b.ShiftDR(buf, n, cap)
 			if i > 0 {
 				idx[i-1] = r
 			}
 			b.RunTest(d.idle)
 		}
 		last := len(ops) - 1
-		cap := 2
+		cap := d.drPre + 2
 		if !ops[last].Write {
-			cap = 34
+			cap = d.drPre + 34
 		}
-		idx[last] = b.ShiftDR(req(dmiNop, 0, 0), n, cap)
+		buf, n := req(dmiNop, 0, 0)
+		idx[last] = b.ShiftDR(buf, n, cap)
 		res, err := b.Run(ctx)
 		if err != nil {
 			return nil, err
@@ -291,10 +334,10 @@ func (d *DTM) Pipeline(ctx context.Context, ops []DMIOp) ([]uint32, error) {
 		busy := false
 		for i := range ops {
 			r := res[idx[i]]
-			switch st := uint32(jtag.Field(r, 0, 2)); st {
+			switch st := uint32(jtag.Field(r, d.drPre, 2)); st {
 			case dmiOK:
 				if !ops[i].Write {
-					out[i] = uint32(jtag.Field(r, 2, 32))
+					out[i] = uint32(jtag.Field(r, d.drPre+2, 32))
 				}
 			case dmiBusy:
 				busy = true

@@ -2,6 +2,7 @@ package riscv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -56,7 +57,9 @@ func (m *DM) Harts(ctx context.Context, max int) ([]HartReport, error) {
 }
 
 func (m *DM) hartReport(ctx context.Context, h uint32, progbuf int) (HartReport, bool, error) {
-	if err := m.Select(ctx, h); err != nil {
+	if err := m.Select(ctx, h); errors.Is(err, ErrNoHart) {
+		return HartReport{}, false, nil
+	} else if err != nil {
 		return HartReport{}, false, err
 	}
 	st, err := m.Status(ctx)
@@ -109,7 +112,9 @@ func (m *DM) HartCount(ctx context.Context, max int) (int, error) {
 	defer func() { _ = m.Select(ctx, prev) }()
 	n := 0
 	for h := 0; h < max; h++ {
-		if err := m.Select(ctx, uint32(h)); err != nil {
+		if err := m.Select(ctx, uint32(h)); errors.Is(err, ErrNoHart) {
+			break
+		} else if err != nil {
 			return n, err
 		}
 		st, err := m.Status(ctx)

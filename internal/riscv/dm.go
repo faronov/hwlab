@@ -182,8 +182,24 @@ func (m *DM) Select(ctx context.Context, hart uint32) error {
 	if err := m.Activate(ctx); err != nil {
 		return err
 	}
+	if err := m.dtm.Write(ctx, regDMControl, dmcActive|(hart&0x3FF)<<16|(hart>>10&0x3FF)<<6); err != nil {
+		return err
+	}
+	if hart != 0 {
+		// hartsel is WARL: a debug module with fewer hart-select bits
+		// (none at all on the single-hart ESP32-C5 HP module) drops the high
+		// bits, so without this check another index silently aliases hart 0.
+		v, err := m.dtm.Read(ctx, regDMControl)
+		if err != nil {
+			return err
+		}
+		if got := v>>16&0x3FF | (v>>6&0x3FF)<<10; got != hart {
+			_ = m.dtm.Write(ctx, regDMControl, m.control(0))
+			return fmt.Errorf("%w: hart %d (hartsel reads back %d: the debug module has fewer hart-select bits)", ErrNoHart, hart, got)
+		}
+	}
 	m.hart = hart
-	return m.dtm.Write(ctx, regDMControl, m.control(0))
+	return nil
 }
 
 // Status reads dmstatus for the selected hart.
@@ -229,7 +245,9 @@ func (m *DM) Identify(ctx context.Context, maxHarts int) (Info, error) {
 	info.SBVersion, info.SBASize, info.SBA32 = int(sbcs>>29), int(sbcs>>5&0x7F), sbcs>>2&1 == 1
 	prev := m.hart
 	for h := uint32(0); h < uint32(maxHarts); h++ {
-		if err := m.Select(ctx, h); err != nil {
+		if err := m.Select(ctx, h); errors.Is(err, ErrNoHart) {
+			break
+		} else if err != nil {
 			return info, err
 		}
 		s, err := m.Status(ctx)

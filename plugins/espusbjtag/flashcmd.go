@@ -190,8 +190,8 @@ func (s *session) chipProfile(ctx context.Context, dm *riscv.DM) (*esp.Chip, esp
 		return nil, ev, err
 	}
 	var idcode uint32
-	if c := s.chain; c != nil && len(c.Devices) == 1 && c.Devices[0].IDCode != nil {
-		idcode = c.Devices[0].IDCode.Raw
+	if id := s.targetIDCode(); id != nil {
+		idcode = id.Raw
 	}
 	chip, err := esp.Detect(idcode, ev.ROMMagic)
 	if err != nil {
