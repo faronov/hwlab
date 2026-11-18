@@ -29,6 +29,10 @@ type Config struct {
 	// Shared, when set, is the target behind the device instead of a fresh
 	// one, so state (a halted hart) survives reopening the port.
 	Shared *rvsim.Target
+	// NearTDO are extra RISC-V TAPs between the target and TDO (chain
+	// indices 0.., the target follows them), as on the ESP32-C5 whose LP-core
+	// TAP sits before the HP-core TAP. They are shared like Shared.
+	NearTDO []*rvsim.Target
 	// Xtensa, when set, is the JTAG chain behind the device instead of the
 	// RISC-V target (Target and Shared are then unused). It is shared by
 	// every Device made from this Config.
@@ -85,6 +89,9 @@ func New(cfg Config) *Device {
 		t = rvsim.New(cfg.Target)
 	}
 	d := &Device{cfg: cfg, T: t, clk: t, fifo: append([]byte(nil), cfg.StaleIn...), failOutAfter: -1}
+	if len(cfg.NearTDO) > 0 {
+		d.clk = &rvsim.Chain{TAPs: append(append([]*rvsim.Target(nil), cfg.NearTDO...), t)}
+	}
 	if cfg.Xtensa != nil {
 		d.clk = cfg.Xtensa
 	}

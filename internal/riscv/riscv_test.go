@@ -229,3 +229,63 @@ func TestPersistentBusy(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+// A DTM addressed at chain position 1 of a two-TAP chain (the ESP32-C5 puts
+// its LP-core TAP nearest TDO and the HP-core TAP after it) reaches that
+// TAP's debug module only; the other TAP stays in BYPASS. BatchPort covers
+// the pipelined path.
+func TestDTMAtChainPosition(t *testing.T) {
+	near := rvsim.New(rvsim.Config{IDCode: 0x00017c25, Memory: []rvsim.Region{{Base: 0x40800000, Data: bytes.Repeat([]byte{0xEE}, 64)}}})
+	far := rvsim.New(rvsim.Config{IDCode: 0x00017c25, Memory: mem()})
+	port := &rvsim.BatchPort{Port: rvsim.Port{Chain: &rvsim.Chain{TAPs: []*rvsim.Target{near, far}}}}
+	for idx, want := range map[int]byte{0: 0xEE, 1: 0x10} {
+		dtm, err := riscv.NewDTMAt(ctx, jtag.NewDriver(port), []int{5, 5}, idx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id, err := dtm.IDCode(ctx); err != nil || id != 0x00017c25 || dtm.Index() != idx {
+			t.Fatalf("TAP %d: %#x %v", idx, id, err)
+		}
+		dm := riscv.NewDM(dtm)
+		dm.Timeout = 200 * time.Millisecond
+		b, err := dm.ReadMem(ctx, 0x40800000, 8)
+		if err != nil || b[0] != want {
+			t.Fatalf("TAP %d: % x %v", idx, b, err)
+		}
+		if _, err := dm.Halt(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if near.Halted(0) != (idx == 0) || far.Halted(0) != (idx == 1) {
+			t.Fatalf("TAP %d: halt reached the wrong TAP", idx)
+		}
+		if _, err := dm.Resume(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := riscv.NewDTMAt(ctx, jtag.NewDriver(port), []int{5, 5}, 2); err == nil {
+		t.Fatal("index outside the chain accepted")
+	}
+}
+
+// A debug module without hart-select bits (the single-hart ESP32-C5 HP
+// module) drops a non-zero hartsel: selecting hart 1 must fail instead of
+// silently addressing hart 0, and enumeration must stop at one hart.
+func TestSelectNeedsHartSelReadBack(t *testing.T) {
+	dm, tgt := setup(t, rvsim.Config{HartSelBits: -1})
+	info, err := dm.Identify(ctx, 8)
+	if err != nil || info.Harts != 1 {
+		t.Fatalf("%d harts, %v", info.Harts, err)
+	}
+	if n, err := dm.HartCount(ctx, 8); err != nil || n != 1 {
+		t.Fatalf("%d %v", n, err)
+	}
+	if rs, err := dm.Harts(ctx, 8); err != nil || len(rs) != 1 {
+		t.Fatalf("%v %v", rs, err)
+	}
+	if err := dm.Select(ctx, 1); !errors.Is(err, riscv.ErrNoHart) || dm.Hart() != 0 {
+		t.Fatalf("select 1: %v (hart %d)", err, dm.Hart())
+	}
+	if _, err := dm.Halt(ctx); err != nil || !tgt.Halted(0) {
+		t.Fatal(err)
+	}
+}

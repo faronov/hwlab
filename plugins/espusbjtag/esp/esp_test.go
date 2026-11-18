@@ -301,6 +301,21 @@ func TestStuckBusy(t *testing.T) {
 	}
 }
 
+// An ESP32-C5 flash keeps its bootloader at 0x2000 (nothing at 0): the
+// backup manifest reports it there.
+func TestBackupFindsBootloaderAtC5Offset(t *testing.T) {
+	r := newRig(t, 64<<10, false)
+	copy(r.fl.Mem[0x2000:], esp.BuildImage(esp.ChipIDESP32C5, 0x40800000, map[uint32][]byte{0x40800000: {1, 2, 3, 4}}, []uint32{0x40800000}))
+	f, info := r.flash(t)
+	m, _, err := f.Backup(ctx, t.TempDir(), "S", info, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Bootloader == nil || m.Bootloader.ChipID != esp.ChipIDESP32C5 || m.BootOffset == nil || *m.BootOffset != 0x2000 {
+		t.Fatalf("%+v", m)
+	}
+}
+
 func TestFlashRestoresSPIRegisters(t *testing.T) {
 	r := newRig(t, 1<<20, false)
 	dev := r.fl.Device()

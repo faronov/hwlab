@@ -64,8 +64,8 @@ func (s *session) captureIdentity(ctx context.Context) (identity, error) {
 		return identity{}, err
 	}
 	id := identity{USBSerial: s.entry.Dev.Serial}
-	if c := s.chain; c != nil && len(c.Devices) == 1 && c.Devices[0].IDCode != nil {
-		id.IDCode = c.Devices[0].IDCode.Raw
+	if tid := s.targetIDCode(); tid != nil {
+		id.IDCode = tid.Raw
 	}
 	if ev, err := esp.ReadEvidence(ctx, dm); err == nil {
 		id.ROMMagic = ev.ROMMagic

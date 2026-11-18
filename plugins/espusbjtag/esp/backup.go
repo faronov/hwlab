@@ -25,6 +25,7 @@ type Manifest struct {
 	SecondRead  string      `json:"second_read_sha256"`
 	Flash       Info        `json:"flash"`
 	Bootloader  *Image      `json:"bootloader_image,omitempty"`
+	BootOffset  *uint32     `json:"bootloader_offset,omitempty"`
 	Partitions  []Partition `json:"partitions,omitempty"`
 	TableNote   string      `json:"partition_table_note,omitempty"`
 	ReadSeconds float64     `json:"read_seconds"`
@@ -87,9 +88,19 @@ func (f *Flash) Backup(ctx context.Context, dir, usbSerial string, info Info, pr
 }
 
 func (m *Manifest) fillLayout(b []byte) {
-	if len(b) > 0x1000 {
-		if im, err := ParseImage(b[0:]); err == nil {
-			m.Bootloader = &im
+	// The bootloader sits at the profiled offset of whichever chip wrote it
+	// (0, or 0x2000 on the ESP32-C5); the first offset holding a valid image
+	// is reported.
+	seen := map[uint32]bool{}
+	for _, c := range Chips {
+		off := c.BootloaderOffset
+		if seen[off] || len(b) <= int(off)+0x1000 {
+			continue
+		}
+		seen[off] = true
+		if im, err := ParseImage(b[off:]); err == nil {
+			m.Bootloader, m.BootOffset = &im, &off
+			break
 		}
 	}
 	if len(b) >= PartitionTableOffset+0xC00 {

@@ -62,7 +62,7 @@ func isXtensaChain(c *jtag.Chain) bool {
 
 // errXtensaOnly is what a RISC-V-only method answers on an ESP32-S3.
 var errXtensaOnly = status.Error(codes.FailedPrecondition,
-	"ESP32-S3 (Xtensa) target: this method needs a RISC-V debug module (ESP32-C6/H2) and is not available here. "+
+	"ESP32-S3 (Xtensa) target: this method needs a RISC-V debug module (ESP32-C6/H2/C5) and is not available here. "+
 		"On the ESP32-S3 DebugProbe chip_info/halt/resume/read_registers/step/harts/set_breakpoint/clear_breakpoint/list_breakpoints/wait_halt/reset kind=hart, "+
 		"MemoryAccess read/write, FlashProgramming (reset=none only) and reconnect work; reset kind=system/soc is not implemented for it")
 
