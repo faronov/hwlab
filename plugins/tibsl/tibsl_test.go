@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/faronov/hwlab/internal/usb"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/plugins/tibsl/bsl"
 )
@@ -78,7 +79,7 @@ func backupOf(t *testing.T, p *Plugin, dev string) string {
 func TestParsePorts(t *testing.T) {
 	es := parsePorts("cc=/dev/cu.usbserial-0001@115200:dtr-rts, b=/dev/ttyUSB1, bad=, c=COM3:rts-dtr, d=/dev/x@99")
 	if len(es) != 3 || es[0].Port != "/dev/cu.usbserial-0001" || es[0].Baud != 115200 || es[0].Entry != bsl.EntryDTRRTS ||
-		es[1].Entry != bsl.EntryManual || es[1].Baud != defaultBaud || es[2].Port != "COM3" || es[2].Entry != bsl.EntryRTSDTR {
+		es[1].Entry != bsl.EntryDTRRTS || es[1].Baud != defaultBaud || es[2].Port != "COM3" || es[2].Entry != bsl.EntryRTSDTR {
 		t.Fatalf("%+v", es)
 	}
 }
@@ -319,4 +320,68 @@ func TestUnknownPartIsReadOnly(t *testing.T) {
 	bk := backupOf(t, p, "dut")
 	_, err := call(t, p, "dut", "FlashProgramming.program", map[string]any{"address": "0x2000", "data": "00000000", "confirm": tokProgram, "backup": bk})
 	wantCode(t, err, codes.FailedPrecondition, "modification refused")
+}
+
+func TestDiscoverStableIDs(t *testing.T) {
+	ports := []usb.SerialPort{
+		{TTY: "/dev/cu.SLAB_USBtoUART", Interface: 0, VID: 0x10c4, PID: 0xea60, Serial: "0001", Product: "CP2102 USB to UART Bridge Controller", Location: "20-7.2"},
+		{TTY: "/dev/cu.usbserial-0001", Interface: 0, VID: 0x10c4, PID: 0xea60, Serial: "0001", Product: "CP2102 USB to UART Bridge Controller", Location: "20-7.2"},
+		{TTY: "/dev/cu.usbserial-147440", Interface: 0, VID: 0x1a86, PID: 0x7523, Product: "USB Serial", Location: "20-7.4.4"},
+		{TTY: "/dev/cu.usbmodem14601", Interface: 1, VID: 0x303a, PID: 0x1001, Serial: "60:55:F9:F6:96:88", Location: "20-6"},
+		{TTY: "/dev/ttyUSB3", Interface: 0, VID: 0x0403, PID: 0x6001, Serial: "A50285BI", Location: "1-3"},
+		{TTY: "/dev/ttyUSB4", Interface: 0, VID: 0x0403, PID: 0x6010, Serial: "FT2232X", Location: "1-4"},
+		{TTY: "/dev/ttyUSB5", Interface: 1, VID: 0x0403, PID: 0x6010, Serial: "FT2232X", Location: "1-4"},
+		{TTY: "/dev/ttyUSB6", Interface: 0, VID: 0x0403, PID: 0x6001, Serial: "DUPDUP", Location: "1-5"},
+		{TTY: "/dev/ttyUSB7", Interface: 0, VID: 0x0403, PID: 0x6001, Serial: "DUPDUP", Location: "1-6"},
+		{TTY: "/dev/ttyACM0", Interface: 0, VID: 0x1234, PID: 0x5678, Serial: "XYZXYZ1", Product: "SLZB-07", Location: "1-7"},
+	}
+	got := map[string]Entry{}
+	for _, e := range discover(ports) {
+		got[e.ID] = e
+	}
+	want := map[string]string{
+		"cp210x-loc20-7.2": "/dev/cu.usbserial-0001", "ch34x-loc20-7.4.4": "/dev/cu.usbserial-147440", "ftdi-A50285BI": "/dev/ttyUSB3",
+		"ftdi-FT2232X-if0": "/dev/ttyUSB4", "ftdi-FT2232X-if1": "/dev/ttyUSB5", "ftdi-loc1-5": "/dev/ttyUSB6", "ftdi-loc1-6": "/dev/ttyUSB7",
+		"usbserial-XYZXYZ1": "/dev/ttyACM0",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("%v", got)
+	}
+	for id, port := range want {
+		if e, ok := got[id]; !ok || e.Port != port || !e.Candidate || e.Entry != bsl.EntryDTRRTS {
+			t.Errorf("%s: %+v", id, e)
+		}
+	}
+	if alt := got["cp210x-loc20-7.2"].AltPorts; len(alt) != 1 || alt[0] != "/dev/cu.SLAB_USBtoUART" {
+		t.Errorf("alt %v", alt)
+	}
+}
+
+func TestFileConfigAndIdentityCache(t *testing.T) {
+	s := wiredSim()
+	p := newPlugin(t, Entry{ID: "cp210x-loc20-7.2", Port: "/dev/cu.usbserial-0001", Sim: s, Entry: bsl.EntryDTRRTS, Candidate: true}, Entry{ID: "ch34x-loc1-2", Port: "/dev/x"})
+	if err := os.WriteFile(ConfigFile(), []byte("devices:\n  cp210x-loc20-7.2: {bsl_entry: manual, baud: 115200}\nignore: [ch34x-loc1-2]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadFileConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	es := cfg.apply(p.list())
+	if len(es) != 1 || es[0].Entry != bsl.EntryManual || es[0].Baud != 115200 || !es[0].Configured {
+		t.Fatalf("%+v", es)
+	}
+	devs, _ := p.ListDevices(context.Background())
+	if devs[0].Properties["ieee"] != "" || s.Commands[bsl.CmdGetChipID] != 0 {
+		t.Fatal("listing must not touch the chip")
+	}
+	must(t, p, "cp210x-loc20-7.2", "TargetIdentify.identify", nil)
+	devs, _ = p.ListDevices(context.Background())
+	if devs[0].Properties["ieee"] != "00:12:4B:00:20:CD:1D:7D" || devs[0].Properties["chip"] != "CC2652P" {
+		t.Fatalf("%v", devs[0].Properties)
+	}
+	// The cached IEEE becomes the device serial, so it selects the device.
+	if devs[0].Serial != "00124b0020cd1d7d" {
+		t.Fatalf("serial %q", devs[0].Serial)
+	}
 }

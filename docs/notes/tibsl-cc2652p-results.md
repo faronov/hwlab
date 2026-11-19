@@ -26,3 +26,20 @@ Configuration: `HWLAB_TIBSL_PORTS=cc2652p=/dev/cu.usbserial-0001@460800:dtr-rts`
 Not run on hardware: sector/bank erase, program, restore, the CCFG gate on a
 real write, `rts-dtr`, other baud rates, CC2538 and other CC13xx/CC26xx parts
 (all covered by the in-process simulator only).
+
+## Follow-up: passive discovery and the first program (2026-11-19)
+
+* `hwlab devices` (no `HWLAB_TIBSL_PORTS`) listed `tibsl/cp210x-loc20-7.2`
+  (10c4:ea60, generic serial "0001", node `/dev/cu.usbserial-0001`, alternate
+  `/dev/cu.SLAB_USBtoUART`) and `tibsl/ch34x-loc20-7.4.4` (1a86:7523, the
+  Telink board's CH340) while BOTH ports were held open by other processes:
+  listing reads only the IORegistry and never opens a port.
+* `bsl identify --device cp210x-loc20-7.2` entered the bootloader and
+  identified the CC2652P; afterwards the listing showed chip and IEEE from
+  the identity cache and `--device 00124b0020cd1d7d` selected the dongle
+  (flash read of the CCFG with ROM CRC32 check, then reset to the app).
+  The CH340 port was never opened.
+* The firmware agent that shares the dongle programmed a 284,696-byte
+  zigbee-rs router image with `flash program` (dry run first): 35 sectors
+  0x0..0x44000 changed, CCFG sector untouched, ROM CRC32 0xB438845D equal to
+  the image, `reset_after` booted the application, 10.8 s.
