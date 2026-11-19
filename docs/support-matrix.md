@@ -37,7 +37,7 @@ Code, fixtures and passing tests are not hardware validation.
 | stlink: native Go ST-Link V2 protocol (Linux usbfs or macOS IOKit) + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 and WB55 (real silicon) and F4 (simulator only) flash layers + STM32WB coprocessor FUS | partial | real-hardware-partial | real | native | no |
 | stm32dfu: native USB DFU 1.1 + ST DfuSe control transfers | complete | synthetic | synthetic | native | no |
 | telink: native SWS/SWire over UART | complete | real-hardware-partial | real | native | no (was inherited from plugins/uart on darwin) |
-| tibsl: native ROM bootloader protocol over a UART (DTR/RTS or manual entry) | complete | real-hardware-partial | synthetic | native | no |
+| tibsl: native ROM bootloader protocol over a UART (DTR/RTS or manual entry), passive USB-UART discovery | complete | real-hardware-partial | synthetic | native | no |
 | uart: serial (go.bug.st/serial) | complete | real-hardware-partial | real | native | no (device listing on darwin without cgo is a /dev/cu.* glob without VID/PID) |
 | usbcap: usbmon text input | partial | synthetic | synthetic | native | no |
 | usbcap: physical USB bus analyzer | missing | untested | none | vendor-sdk | n/a |
@@ -705,13 +705,14 @@ Code, fixtures and passing tests are not hardware validation.
 
 ### tibsl — TI CC13xx/CC26xx/CC2538 ROM serial bootloader (UART)
 
-**native ROM bootloader protocol over a UART (DTR/RTS or manual entry)**
+**native ROM bootloader protocol over a UART (DTR/RTS or manual entry), passive USB-UART discovery**
 
-- implementation: complete; validation: real-hardware-partial; dependency: native (plugins/uart serial ports (DTR/RTS changed in one TIOCMSET on Linux/macOS); cc2538-bsl and Python are not used)
+- implementation: complete; validation: real-hardware-partial; dependency: native (plugins/uart serial ports (DTR/RTS changed in one TIOCMSET on Linux/macOS), internal/usb for discovery (IORegistry/sysfs); cc2538-bsl and Python are not used)
 - capabilities:
 
   | Capability | Status | Evidence |
   |---|---|---|
+  | passive USB discovery with stable ids | REAL_HW_VERIFIED | CP2102 dongle and a CH340 board listed from the IORegistry with stable USB-location ids while both ports were held by other processes; nothing opened |
   | DTR/RTS bootloader entry (dtr-rts) | REAL_HW_VERIFIED | Sonoff ZBDongle-P style CP2102N: atomic (1,0)->(0,1)->(1,0) sequence entered the BSL on a CC2652P1F |
   | rts-dtr entry | SIMULATED_ONLY | same sequence with the roles swapped |
   | resync of a running bootloader | REAL_HW_VERIFIED | manual entry after an earlier session: 85-byte packet completed, PING |
@@ -720,7 +721,8 @@ Code, fixtures and passing tests are not hardware validation.
   | flash read / backup / verify | REAL_HW_VERIFIED | 352 KiB read twice (19.5 s at 460800 Bd), SHA-256 equal, ROM CRC32 equal; unchanged sectors byte-identical to an independent cc2538-bsl backup |
   | program plan (dry run) | REAL_HW_VERIFIED | per-sector ROM CRC32 plan equal to the host diff |
   | reset to the application | REAL_HW_VERIFIED | lines released + COMMAND_RESET |
-  | sector/bank erase, program, restore | SIMULATED_ONLY | changed sectors only, CRC32 per sector and range, backup gate, tokens |
+  | program | REAL_HW_VERIFIED | 284,696-byte image, 35 changed sectors erased/written, ROM CRC32 equal, reset_after booted it (CCFG sector untouched) |
+  | sector/bank erase, restore | SIMULATED_ONLY | changed sectors only, CRC32 per sector and range, backup gate, tokens |
   | CCFG/CCA protected region and lockout check | SIMULATED_ONLY | confirm_config, CCFG sector last, bootloader/backdoor/pin/DAP/TAP/erase/protection checks |
   | CC2538 dialect | SIMULATED_ONLY | ERASE with size, reversed 4-byte MEMORY_READ, CCA checks |
 
@@ -730,8 +732,10 @@ Code, fixtures and passing tests are not hardware validation.
   - resync of an already synchronized bootloader
   - full-flash backup: two identical reads equal to the ROM CRC32, cross-checked with a cc2538-bsl backup
   - write planning by ROM CRC32 (dry run)
+  - program of a whole application image with CRC32 verify and reset into it
+  - passive discovery of the CP2102 dongle with a stable USB-location id
 - unverified:
-  - erase, program and restore on hardware (the shared dongle was kept read-only)
+  - explicit erase and restore on hardware
   - the CCFG gate on a real write
   - rts-dtr wiring
   - CC2538, CC26x0/CC13x0, CC13x2x7/CC26x2x7 and CC1352 parts

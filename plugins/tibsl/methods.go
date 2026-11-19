@@ -41,7 +41,7 @@ func spec(c string, d pluginv1.Danger, name, desc, schema string) *pluginv1.Meth
 
 const optProps = `"baud":{"type":"number","description":"UART speed for the ROM auto-baud, default 460800 (or the port's @baud)"},` +
 	`"timeout_ms":{"type":"number","description":"bound of one ACK/reply, default 2000"},` +
-	`"bsl_entry":{"type":"string","enum":["manual","dtr-rts","rts-dtr"],"description":"how the chip enters the bootloader: manual (BSL button), dtr-rts (RTS->RESET, DTR->backdoor pin, Sonoff ZBDongle-P) or rts-dtr (swapped)"}`
+	`"bsl_entry":{"type":"string","enum":["manual","dtr-rts","rts-dtr"],"description":"how the chip enters the bootloader: dtr-rts (default; RTS->RESET, DTR->backdoor pin, Sonoff ZBDongle-P), rts-dtr (swapped) or manual (BSL button; lines untouched)"}`
 
 // Info implements pluginsdk.Plugin.
 func (p *Plugin) Info() *pluginv1.PluginInfo {

@@ -3,12 +3,24 @@
 // CC1352P/R/P7, CC1312R, CC26x0/CC13x0 and CC2538. It speaks the ROM
 // protocol natively (plugins/tibsl/bsl); cc2538-bsl and Python are not used.
 //
-// ENTRY. A port is listed in HWLAB_TIBSL_PORTS as
-// name=/dev/ttyUSB0[@baud][:entry]; entry is "manual" (hold the BSL button
-// while resetting), "dtr-rts" (Sonoff ZBDongle-P style: RTS drives RESET,
-// DTR the backdoor pin DIO15, both lines changed in one ioctl) or "rts-dtr"
-// (roles swapped). With a wired entry every connection resets the chip into
-// the bootloader; it stays there until FlashProgramming.reset.
+// DISCOVERY. USB-UART bridges (CP210x, CH34x, FTDI, XDS110 and boards whose
+// USB product names a TI radio) are listed as candidates with a stable id
+// from their USB identity: <family>-<serial>, or <family>-loc<USB port path>
+// when the serial is generic (CP2102 "0001", CH340 none). The current
+// /dev node is resolved when an operation runs. Listing only reads the
+// IORegistry/sysfs: no port is opened, no line toggled, no byte sent. The
+// chip is identified only by an operation; the last identity per id is
+// cached in $HWLAB_HOME/cache/tibsl-identity.json and shown in the listing.
+// Optional: $HWLAB_HOME/tibsl.yaml (per-device bsl_entry/baud, ignore list)
+// and HWLAB_TIBSL_PORTS=name=/dev/ttyUSB0[@baud][:entry] for ports that are
+// not discovered.
+//
+// ENTRY. "dtr-rts" (default; Sonoff ZBDongle-P style: RTS drives RESET,
+// DTR the backdoor pin DIO15, both lines changed in one ioctl), "rts-dtr"
+// (roles swapped) or "manual" (hold the BSL button while resetting); per
+// call with the bsl_entry argument. With a wired entry every connection
+// resets the chip into the bootloader; it stays there until
+// FlashProgramming.reset.
 //
 // SAFETY. Reads never write. Erase, program and restore are CONFIRM methods,
 // need their own token and a verified full backup of the same chip (FCFG1
@@ -37,6 +49,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/faronov/hwlab/internal/usb"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/pkg/pluginsdk"
 	"github.com/faronov/hwlab/plugins/tibsl/bsl"
@@ -63,6 +76,15 @@ type Entry struct {
 	Baud  int
 	Entry bsl.Entry
 	Sim   *bsl.Sim
+	// Candidate marks a discovered USB-UART bridge; nothing was sent to it.
+	Candidate bool
+	USB       string
+	Serial    string
+	Product   string
+	Location  string
+	AltPorts  []string
+	// Configured marks an entry with settings from tibsl.yaml.
+	Configured bool
 }
 
 // Conn is an open serial line to the chip.
@@ -80,8 +102,9 @@ type Opener func(e Entry, baud int) (*Conn, error)
 
 // Plugin implements pluginsdk.Plugin.
 type Plugin struct {
-	list Lister
-	open Opener
+	list  Lister
+	open  Opener
+	cache identityCache
 
 	mu   sync.Mutex
 	devs map[string]*device
@@ -97,7 +120,21 @@ func New() *Plugin {
 		sims = append(sims, Entry{ID: SimID, Entry: bsl.EntryDTRRTS, Baud: defaultBaud, Sim: s},
 			Entry{ID: Sim2538ID, Entry: bsl.EntryManual, Baud: defaultBaud, Sim: bsl.NewSim2538()})
 	}
-	list := func() []Entry { return append(parsePorts(os.Getenv(PortsEnv)), sims...) }
+	list := func() []Entry {
+		explicit := parsePorts(os.Getenv(PortsEnv))
+		used := map[string]bool{}
+		for _, e := range explicit {
+			used[e.Port] = true
+		}
+		var found []Entry
+		for _, e := range discover(usb.SerialPorts(usb.DefaultRoot, nil)) {
+			if !used[e.Port] {
+				found = append(found, e)
+			}
+		}
+		cfg, _ := loadFileConfig()
+		return append(cfg.apply(append(explicit, found...)), sims...)
+	}
 	return NewWith(list, defaultOpen)
 }
 
@@ -114,7 +151,7 @@ func parsePorts(s string) []Entry {
 		if !ok || name == "" || spec == "" {
 			continue
 		}
-		e := Entry{ID: name, Baud: defaultBaud, Entry: bsl.EntryManual}
+		e := Entry{ID: name, Baud: defaultBaud, Entry: bsl.EntryDTRRTS}
 		if i := strings.LastIndex(spec, ":"); i > 0 {
 			if en, err := bsl.ParseEntry(spec[i+1:]); err == nil {
 				e.Entry, spec = en, spec[:i]
@@ -182,6 +219,7 @@ func deviceCaps() []*pluginv1.Capability {
 // ListDevices implements pluginsdk.Plugin. It never opens a port.
 func (p *Plugin) ListDevices(context.Context) ([]*pluginv1.Device, error) {
 	var out []*pluginv1.Device
+	known := p.cache.load()
 	for _, e := range p.list() {
 		d := &pluginv1.Device{Id: e.ID, Capabilities: deviceCaps(), Transport: "serial"}
 		props := map[string]string{"baud": strconv.Itoa(e.Baud), "bsl_entry": string(e.Entry), "backend": "native-go-ti-bsl", "probed": "false"}
@@ -192,6 +230,31 @@ func (p *Plugin) ListDevices(context.Context) ([]*pluginv1.Device, error) {
 		} else {
 			d.Name = "TI CC13xx/CC26xx/CC2538 ROM serial bootloader"
 			props["port"] = e.Port
+			if e.Candidate {
+				d.Name = "USB-UART bridge, possible TI ROM bootloader (unprobed)"
+				props["candidate"] = "true"
+				props["usb"], props["usb_serial"], props["product"], props["usb_location"] = e.USB, e.Serial, e.Product, e.Location
+				if len(e.AltPorts) > 0 {
+					props["alt_ports"] = strings.Join(e.AltPorts, ",")
+				}
+				if !genericSerial(e.Serial) {
+					d.Serial = e.Serial
+				}
+			}
+			if e.Configured {
+				props["configured"] = ConfigFile()
+			}
+		}
+		if id, ok := known[e.ID]; ok {
+			if e.Sim == nil {
+				d.Name = id.Chip + " via TI ROM bootloader"
+			}
+			props["chip"], props["ieee"], props["chip_id"] = id.Chip, id.IEEE, id.ChipID
+			// The chip's IEEE address selects the device (--device 00124b...).
+			d.Serial = strings.ToLower(strings.ReplaceAll(id.IEEE, ":", ""))
+			props["flash_bytes"] = strconv.Itoa(id.FlashBytes)
+			props["identified_utc"], props["identified_port"] = id.SeenUTC, id.Port
+			props["identity_source"] = "cache of the last bootloader connection (listing does not touch the port)"
 		}
 		d.Properties = props
 		out = append(out, d)
@@ -205,7 +268,7 @@ func (p *Plugin) find(id string) (Entry, error) {
 			return e, nil
 		}
 	}
-	return Entry{}, status.Errorf(codes.NotFound, "tibsl port %q is not configured: list it in %s as name=/dev/ttyUSB0[@baud][:manual|dtr-rts|rts-dtr]", id, PortsEnv)
+	return Entry{}, status.Errorf(codes.NotFound, "tibsl device %q is not present: plug the board in (CP210x/CH34x/FTDI/XDS110 bridges are discovered), or list the port in %s as name=/dev/ttyUSB0[@baud][:manual|dtr-rts|rts-dtr]", id, PortsEnv)
 }
 
 // options are the device-level settings.
@@ -265,7 +328,7 @@ func defaultOptions(e Entry) options {
 	}
 	en := e.Entry
 	if en == "" {
-		en = bsl.EntryManual
+		en = bsl.EntryDTRRTS
 	}
 	return options{baud: b, timeout: 2 * time.Second, entry: en}
 }
@@ -321,6 +384,7 @@ func (p *Plugin) connect(ctx context.Context, e Entry, o options) (*device, erro
 	if d.chip, err = bsl.Identify(cl); err != nil {
 		return fail(status.Errorf(codes.Unavailable, "%s: identify: %v", e.ID, err))
 	}
+	p.cache.store(e.ID, d)
 	return d, nil
 }
 
