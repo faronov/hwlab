@@ -37,6 +37,7 @@ Code, fixtures and passing tests are not hardware validation.
 | stlink: native Go ST-Link V2 protocol (Linux usbfs or macOS IOKit) + SWD/JTAG + generic Cortex-M (ADIv5 DP/MEM-AP, SCB, FPB, DWT) + STM32 F1 and WB55 (real silicon) and F4 (simulator only) flash layers + STM32WB coprocessor FUS | partial | real-hardware-partial | real | native | no |
 | stm32dfu: native USB DFU 1.1 + ST DfuSe control transfers | complete | synthetic | synthetic | native | no |
 | telink: native SWS/SWire over UART | complete | real-hardware-partial | real | native | no (was inherited from plugins/uart on darwin) |
+| tibsl: native ROM bootloader protocol over a UART (DTR/RTS or manual entry) | complete | real-hardware-partial | synthetic | native | no |
 | uart: serial (go.bug.st/serial) | complete | real-hardware-partial | real | native | no (device listing on darwin without cgo is a /dev/cu.* glob without VID/PID) |
 | usbcap: usbmon text input | partial | synthetic | synthetic | native | no |
 | usbcap: physical USB bus analyzer | missing | untested | none | vendor-sdk | n/a |
@@ -701,6 +702,45 @@ Code, fixtures and passing tests are not hardware validation.
   - only the TLSR825x family driver exists (TLSR826x/8208 chip ids are recognised but have no target driver)
   - board layouts: tb04-512k (factory block programmed) and tb04-512k-nofactory (factory block blank); 0x78000-0x80000 stays undescribed and refused
   - optional TlsrPgm/probe-rs fallbacks are not wired
+
+### tibsl — TI CC13xx/CC26xx/CC2538 ROM serial bootloader (UART)
+
+**native ROM bootloader protocol over a UART (DTR/RTS or manual entry)**
+
+- implementation: complete; validation: real-hardware-partial; dependency: native (plugins/uart serial ports (DTR/RTS changed in one TIOCMSET on Linux/macOS); cc2538-bsl and Python are not used)
+- capabilities:
+
+  | Capability | Status | Evidence |
+  |---|---|---|
+  | DTR/RTS bootloader entry (dtr-rts) | REAL_HW_VERIFIED | Sonoff ZBDongle-P style CP2102N: atomic (1,0)->(0,1)->(1,0) sequence entered the BSL on a CC2652P1F |
+  | rts-dtr entry | SIMULATED_ONLY | same sequence with the roles swapped |
+  | resync of a running bootloader | REAL_HW_VERIFIED | manual entry after an earlier session: 85-byte packet completed, PING |
+  | identify | REAL_HW_VERIFIED | GET_CHIP_ID, ICEPICK, USER_ID, FLASH_SIZE, FCFG1 IEEE, CCFG backdoor on a CC2652P1F; equal to cc2538-bsl's values |
+  | memory read | REAL_HW_VERIFIED | FCFG1 MAC_15_4 and flash |
+  | flash read / backup / verify | REAL_HW_VERIFIED | 352 KiB read twice (19.5 s at 460800 Bd), SHA-256 equal, ROM CRC32 equal; unchanged sectors byte-identical to an independent cc2538-bsl backup |
+  | program plan (dry run) | REAL_HW_VERIFIED | per-sector ROM CRC32 plan equal to the host diff |
+  | reset to the application | REAL_HW_VERIFIED | lines released + COMMAND_RESET |
+  | sector/bank erase, program, restore | SIMULATED_ONLY | changed sectors only, CRC32 per sector and range, backup gate, tokens |
+  | CCFG/CCA protected region and lockout check | SIMULATED_ONLY | confirm_config, CCFG sector last, bootloader/backdoor/pin/DAP/TAP/erase/protection checks |
+  | CC2538 dialect | SIMULATED_ONLY | ERASE with size, reversed 4-byte MEMORY_READ, CCA checks |
+
+- verified:
+  - atomic DTR/RTS entry and reset to the application on a CC2652P1F ZBDongle-P
+  - identify and CCFG decode
+  - resync of an already synchronized bootloader
+  - full-flash backup: two identical reads equal to the ROM CRC32, cross-checked with a cc2538-bsl backup
+  - write planning by ROM CRC32 (dry run)
+- unverified:
+  - erase, program and restore on hardware (the shared dongle was kept read-only)
+  - the CCFG gate on a real write
+  - rts-dtr wiring
+  - CC2538, CC26x0/CC13x0, CC13x2x7/CC26x2x7 and CC1352 parts
+  - Windows (no atomic DTR/RTS change)
+- known gaps:
+  - CC13x1/CC26x1 and unknown wafer ids are read-only
+  - CC13x4/CC26x4 (CCFG at 0x50000000) not supported for writes
+  - MEMORY_WRITE and SET_CCFG are never sent
+  - no Intel HEX input (raw .bin only)
 
 ### uart — Serial port capture and TX
 
