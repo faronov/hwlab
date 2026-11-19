@@ -179,6 +179,12 @@ additionally need the plugin's own confirmation token (--token).`,
 			c.Flags().StringVar(&f.address, "address", "", "vector table base, aligned to 0x200 (default 0x08000000)")
 		}),
 	)
+	bl := &cobra.Command{Use: "bsl", Short: "ROM serial bootloader (TI CC13xx/CC26xx/CC2538: plugin tibsl)"}
+	bl.AddCommand(
+		add("identify", "Enter the bootloader and identify the chip (read only; it stays in the bootloader)", "bsl-identify", nil),
+		add("reset", "Leave the bootloader and start the flash image (--yes)", "bsl-reset", nil),
+		add("ccfg-info", "Decode the CCFG/CCA: bootloader backdoor, debug/TAP enables, protection", "ccfg-info", nil),
+	)
 	jt := &cobra.Command{Use: "jtag", Short: "JTAG chain (probe transport, no CPU debug)"}
 	jt.AddCommand(
 		add("scan", "Reset the TAPs and enumerate the JTAG chain (IDCODE/BYPASS)", "jtag-scan", nil),
@@ -197,7 +203,7 @@ additionally need the plugin's own confirmation token (--token).`,
 		add("wait-halt", "Wait for the CPU to halt (--arg wait_ms=N) and report the cause", "wait-halt", nil),
 		add("reconnect", "Drop the session and rediscover the same device by serial", "reconnect", nil),
 		add("set-speed", "Change the probe clock (--arg khz=N)", "set-speed", nil),
-		mem, fl, bp, wp, cc, wb, dfu, jt,
+		mem, fl, bp, wp, cc, wb, dfu, bl, jt,
 	)
 	return root
 }

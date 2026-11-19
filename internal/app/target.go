@@ -63,6 +63,11 @@ var TargetOps = map[string][2]string{
 	// STM32 ROM USB DFU bootloader (stm32dfu plugin): leave DFU and jump to
 	// the application.
 	"dfu-leave": {pluginv1.CapFlashProgramming, "leave"},
+	// ROM serial bootloaders (TI CC13xx/CC26xx/CC2538 tibsl plugin, also
+	// bflb): identify through the bootloader, and leave it into the
+	// application.
+	"bsl-identify": {pluginv1.CapTargetIdentify, "identify"},
+	"bsl-reset":    {pluginv1.CapFlashProgramming, "reset"},
 	// JTAG probe transport (FTDI/MPSSE): enumerate and identify the TAP
 	// chain. Neither touches target registers or memory.
 	"jtag-scan":     {pluginv1.CapJTAGScan, "scan"},

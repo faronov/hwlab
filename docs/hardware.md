@@ -19,6 +19,7 @@
 | Modbus RTU / TCP devices | `modbus` | **unvalidated on real hardware** (synthetic slave, replay) | see below, [ADR 0022](adr/0022-modbus.md), [results](notes/phase9-modbus-results.md) |
 | Telink SWire programmer + TLSR8258 | `telink` | **unvalidated on real hardware** (simulator, replay); no chip erase | see below, [ADR 0023](adr/0023-telink-swire.md), [results](notes/phase13-telink-results.md) |
 | Bouffalo BL702 boot-ROM ISP (USB or UART) | `bflb` | **real-hardware verified over USB** on one XT-ZB1 DevKit: identify, helper load, full backup, erase/program/SHA verify, reset; restore and UART not run; needs `HWLAB_BFLB_EFLASH_LOADER` | see below, [ADR 0036](adr/0036-bflb-native-isp.md), [results](notes/bflb-bl702-usb-isp-results.md) |
+| TI CC13xx/CC26xx/CC2538 ROM serial bootloader (UART; CC2652P/R/P7/R7, CC1352P/R, CC26x0/CC13x0, CC2538) | `tibsl` | **real-hardware verified read-only** on one CC2652P1F ZBDongle-P (CP2102N, DTR/RTS entry): entry, identify, flash read + ROM CRC32, full backup equal to an independent cc2538-bsl backup, reset to the application; erase/program/restore and the CCFG gate **simulator-only**; CC2538 dialect simulator-only | [below](#ti-cc13xxcc26xxcc2538-rom-serial-bootloader-tibsl), [results](notes/tibsl-cc2652p-results.md) |
 | Silicon Labs Wireless Starter Kit (BRD4001A mainboard + radio board) | `wstk` | USB (J-Link EMUCOM) **real-hardware verified** on one BRD4001A + BRD4183A: discovery with board list, 10 kHz AEM current/voltage capture; Ethernet (admin console, AEM polling, PTI → pcapng) **synthetic only**; no PTI over USB | see below, [ADR 0037](adr/0037-wstk-native.md), [results](notes/wstk-native-results.md) |
 | PicoScope oscilloscopes | `picoscope` | **no real driver, never connected** (synthetic scope, replay); contract only | see below, [ADR 0024](adr/0024-picoscope.md), [results](notes/phase10-picoscope-results.md) |
 | USB packet capture (Linux usbmon) | `usbcap` | **live backend never run** (no root/debugfs); synthetic + text-file + replay only | see below, [ADR 0025](adr/0025-usb-packet-capture.md), [results](notes/phase11-usb-results.md) |
@@ -882,6 +883,71 @@ HWLAB_WSTK_SERIAL=<J-Link serial> [HWLAB_WSTK_SECONDS=5] go test -tags=hardware 
 hwlab invoke bflb/cu.usbmodemEXAMPLE TargetIdentify.identify
 hwlab invoke bflb/cu.usbmodemEXAMPLE FlashProgramming.backup --yes
 hwlab invoke bflb/cu.usbmodemEXAMPLE FlashProgramming.program --yes -a path=fw.flash.bin -a address=0 -a backup=<backup .bin>
+```
+
+## TI CC13xx/CC26xx/CC2538 ROM serial bootloader (`tibsl`)
+
+A native Go client of the TI ROM bootloader (TRM SWCU117/SWCU185 "ROM
+Bootloader"; SWRU319 for CC2538) over a UART: 0x55 0x55 auto-baud, ACK
+0x00 0xCC / NACK 0x00 0x33, packets `[size][checksum][cmd data]`.
+cc2538-bsl and Python are not used. MEMORY_WRITE and SET_CCFG are never sent.
+
+1. List the port: `HWLAB_TIBSL_PORTS=name=/dev/ttyUSB0[@baud][:entry]`
+   (comma-separated; baud default 460800). Nothing is auto-probed: a
+   CP210x/CH340 can be anything.
+2. Choose how the chip enters the bootloader (`entry`, or the session config
+   `bsl_entry`):
+   * `dtr-rts` — Sonoff ZBDongle-P style boards (CP2102N): RTS drives RESET,
+     DTR the backdoor pin DIO15 through two transistors. (DTR=0, RTS=1) holds
+     RESET low, (DTR=1, RTS=0) pulls DIO15 low, equal levels release both.
+     hwlab sets both lines in ONE `TIOCMSET` ioctl: (1,0) 100 ms → (0,1)
+     100 ms → (1,0) held 500 ms, then 0x55 0x55 and back to (0,0). Setting the
+     lines one at a time (as pyserial and `cc2538-bsl --bootloader-sonoff-usb`
+     do) passes through "reset released, DIO15 high" and boots the
+     application instead. Windows has no single call: the lines change one
+     after the other (`lines_atomic=false` in the result).
+   * `rts-dtr` — the same circuit with the roles swapped.
+   * `manual` (default) — hold the BSL button (DIO15 on a ZBDongle-P) while
+     pressing reset or plugging in, then call hwlab. A bootloader still
+     synchronized from an earlier session is resynchronized automatically.
+3. With a wired entry every call (or session) resets the chip into the
+   bootloader and it stays there: `FlashProgramming.reset` (`hwlab target bsl
+   reset`) releases both lines and sends COMMAND_RESET to start the flash
+   image. A manual board: release the button first.
+4. `FlashProgramming.backup` first (whole flash read twice with MEMORY_READ,
+   SHA-256 equal and equal to the ROM's CRC32), then `program`/`erase`/
+   `restore`, which are refused without a backup of the same chip (FCFG1
+   IEEE, ICEPICK id, USER_ID, flash size).
+
+Safety:
+
+* Tokens: `confirm=program-flash`, `erase-flash-region`, `bank-erase`,
+  `restore-flash`.
+* The CCFG (last 88 bytes of flash; CC2538: the 44-byte CCA) lives in the
+  last sector. Any operation that changes that sector needs
+  `confirm_config=modify-ccfg`, writes it last, and the CCFG the sector would
+  hold is checked: disabling the bootloader or its backdoor, moving the
+  backdoor pin/level, clearing CPU_DAP_ENABLE, newly disabling a TAP or TI
+  FA, clearing CHIP/BANK_ERASE_DIS_N or newly write-protecting sectors
+  (CC2538: debug lock, page locks) is refused unless
+  `ccfg_override=allow-bsl-lockout`. A blank CCFG is accepted (no valid
+  image: the ROM starts the bootloader). Bank erase always touches it.
+* `program` erases and rewrites only sectors whose content changes (fully
+  covered sectors compared by the ROM's CRC32, partly covered ones read and
+  merged, so bytes outside the image are kept) and checks each sector and the
+  whole range by CRC32. `dry_run=true` shows the plan and the CCFG check.
+* Parts whose layout is not confirmed (unknown wafer ids, CC13x1/CC26x1,
+  CC13x4/CC26x4 with the CCFG at 0x50000000) are identify/read only.
+
+```sh
+export HWLAB_TIBSL_PORTS=cc2652p=/dev/cu.usbserial-0001@460800:dtr-rts
+hwlab target bsl identify --plugin tibsl --device cc2652p
+hwlab target flash backup --plugin tibsl --device cc2652p --post FlashProgramming.reset --yes
+hwlab target bsl ccfg-info --plugin tibsl --device cc2652p
+hwlab target flash program --plugin tibsl --device cc2652p --path fw.bin --token program-flash \
+    --arg backup=$HOME/.hwlab/artifacts/tibsl-flash/tibsl-flash-<ieee>-<sha>.bin --arg reset_after=true --yes
+# a full image that also changes the CCFG sector: add --token-config modify-ccfg
+hwlab target bsl reset --plugin tibsl --device cc2652p --yes
 ```
 
 ## Silicon Labs Wireless Starter Kit (`wstk`)
