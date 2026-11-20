@@ -43,7 +43,7 @@ Code, fixtures and passing tests are not hardware validation.
 | usbcap: physical USB bus analyzer | missing | untested | none | vendor-sdk | n/a |
 | wstk: native USB: J-Link EMUCOM channels of the kit's on-board J-Link (kit control 0x10000, AEM 0x10002) | partial | real-hardware-partial | real | native | no |
 | wstk: native Ethernet: admin console (TCP 4902) and debug channel (TCP 4905) | complete | synthetic | synthetic | native | no |
-| xds110: native Go XDS110 vendor protocol over Linux usbfs or macOS IOKit (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only | partial | real-hardware-partial | real | native | no |
+| xds110: native Go XDS110 vendor protocol over Linux usbfs or macOS IOKit (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + two-pin cJTAG with TI ICEPick routing and a JTAG-DP link (internal/ti/icepick, internal/adiv5/jtagdp, internal/ti/cc26xx) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) and its pending two-pin cJTAG/ICEpick chip erase patches were read as a reference only | partial | real-hardware-partial | real | native | no |
 
 ## Details
 
@@ -830,21 +830,29 @@ Code, fixtures and passing tests are not hardware validation.
   - needs target firmware that enables PTI (RAIL applications do)
   - PTI shows only the target radio's own traffic
 
-### xds110 — TI XDS110 probe: native SWD + JTAG chain scan + generic Cortex-M; real probe LP-XDS110ET with a user-owned CC2340 target; EnergyTrace range 0 (protocol partial)
+### xds110 — TI XDS110 probe: native SWD + two-pin cJTAG/ICEPick + JTAG chain scan + generic Cortex-M; real probes LP-XDS110ET (CC2340 target over SWD) and a stand-alone XDS110 (CC2652P ZBDongle-P over cJTAG); EnergyTrace range 0 (protocol partial)
 
-**native Go XDS110 vendor protocol over Linux usbfs or macOS IOKit (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) was read as a reference only**
+**native Go XDS110 vendor protocol over Linux usbfs or macOS IOKit (interface 2) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm) + JTAG chain scan (internal/jtag) + two-pin cJTAG with TI ICEPick routing and a JTAG-DP link (internal/ti/icepick, internal/adiv5/jtagdp, internal/ti/cc26xx) + target-memory RTT (internal/rtt); the wire protocol was reimplemented from observation of the real probe, OpenOCD xds110.c (GPL) and its pending two-pin cJTAG/ICEpick chip erase patches were read as a reference only**
 
 - implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access to the probe's debug interface (udev rule in docs/hardware.md), or macOS IOKit through purego, no cgo (no setup; ADR 0035); OpenOCD, Code Composer Studio, DSLite, xdsdfu, Python and libusb are not used)
 - capabilities:
 
   | Capability | Status | Evidence |
   |---|---|---|
-  | macOS IOKit transport | IMPLEMENTED_UNTESTED | implemented on the shared internal/usb IOKit transport (run read-only with one J-Link on macOS); never run against an XDS110 on macOS (the probe is on the Linux bench) |
+  | macOS IOKit transport | REAL_HW_VERIFIED | the shared internal/usb IOKit transport with a stand-alone XDS110 (fw 3.0.0.32) on macOS: connect, version, clock, OCD_SCAN_REQUEST batches and full 352 KiB cJTAG backups of a CC2652P |
   | discovery | REAL_HW_VERIFIED | LP-XDS110ET 0451:bef3 (Texas Instruments, "XDS110 (03.00.00.22) Embed with CMSIS-DAP"), identity = USB serial (never bus/device numbers); 7 interfaces mapped |
   | XDS110 protocol (connect, version, framing) | REAL_HW_VERIFIED | interface 2 (vendor, OUT 0x02 / IN 0x83, 512 B): firmware 3.0.0.22, hardware id 0x23; XDS_VERSION round trip median 80 us over 500 calls |
   | JTAG chain scan transport | REAL_HW_VERIFIED | CJTAG_CONNECT + 320-bit scan ends in Idle; with nothing attached TDO reads all zeros and the scan reports stuck-low with no device. No TAP was ever found on hardware |
   | JTAG TAP enumeration with a real chain | UNSUPPORTED_BY_ATTACHED_HW | no target attached; chain parsing is tested against a synthetic TAP model only |
-  | JTAG debugging of a core (JTAG-DP, ICEPick) | NOT_IMPLEMENTED | TAP enumeration only; no JTAG-DP link and no TI ICEPick routing |
+  | two-pin cJTAG (IEEE 1149.7 OScan1) activation | REAL_HW_VERIFIED | stand-alone XDS110 fw 3.0.0.32 (0451:bef3, serial LS420BFZ) to a SONOFF ZBDongle-P (CC2652P) wired TMS/TCK/RESET/3V3/GND only: XDS_SET_PROPERTY 4 answered -122, CJTAG_CONNECT format 7 activates OScan1 anyway; a second activation needs the nTRST pulse + 50 ms TCK run first (else all ones). The earlier four-pin jtag_scan read TDO stuck low because TDO is not wired on that board. OScan2 IMPLEMENTED_UNTESTED |
+  | TI ICEPick-C routing (CPU DAP) | REAL_HW_VERIFIED | ICEPick IDCODE 0x3BB4102F (IR capture 0b000001), ICEPICKCODE 0x41611CC0, router writes in Pause states, CPU DAP (IDCODE 0x4BA00477) linked on Run-Test/Idle, chain IR capture 0x011; OCD_SCAN_REQUEST batches, no Test-Logic-Reset |
+  | JTAG-DP link and MEM-AP over cJTAG | REAL_HW_VERIFIED | the same CC2652P: JTAG-DP v0 (no DPIDR, IDCODE reported), CTRL/STAT power-up, AHB-AP IDR 0x24770011, Cortex-M4 CPUID 0x410FC241; reads 20 KiB/s at 1 MHz, 90 KiB/s at 8.5 MHz; posted reads, in-order WAIT retry and reorder detection are unit-tested |
+  | CC13xx/CC26xx identify and CCFG over cJTAG (chip_info, FlashProgramming.info/ccfg_info) | REAL_HW_VERIFIED | CC2652P (wafer 0xBB41, PG 3, USER_ID 0x3202F000: PA, 7x7 mm), 352 KiB, factory IEEE from FCFG1, CCFG decoded with the tibsl rules (internal/ti/cc26xx); ROM flash API entry points read |
+  | CC13xx/CC26xx flash read/backup over cJTAG | REAL_HW_VERIFIED | full 352 KiB backup read twice at 1 MHz (34 s) and twice at 8.5 MHz (8 s) without halting the core: all four reads identical; manifest bound to ICEPICK_DEVICE_ID, USER_ID, IEEE and size |
+  | halt/resume/registers over cJTAG | REAL_HW_VERIFIED | status, halt (PC in flash), read_registers, resume, status on the CC2652P |
+  | CC13x2/CC26x2 erase/program/restore (ROM flash API on the halted core) | SIMULATED_ONLY | FlashSectorErase/FlashProgram from ROM_API_FLASH_TABLE, BKPT return stub, VIMS off, sector read-back verify; device permissions, tibsl tokens, backup gate and CCFG lockout rules exercised against the SYNTHETIC CC2652P model (xds.NewSimCC26x2); never run on hardware |
+  | reset over cJTAG (sysreset, nRESET) | SIMULATED_ONLY | the reset drops the two-pin format in the model; the plugin re-attaches and requires S_RESET_ST or a cleared C_DEBUGEN; not run on hardware |
+  | debug-locked detection and ICEPick chip erase | SIMULATED_ONLY | a DAP that does not join after routing is reported as DEBUG_LOCKED with the ICEPick details; chip erase through test TAP 21 (IR 0x1, DR 0x22) follows OpenOCD's cc26xx_chip_erase (validated by its author on a CC2650); model only |
   | SWD attach / DPIDR / AP discovery | REAL_HW_VERIFIED | XDS110 command 0x0f against a user-owned CC2340 module powered with SET_SUPPLY 3300 mV: DPIDR 0x6BA02477, MEM-AP 0 IDR 0x84770001, Cortex-M0+ r0p1, CPUID 0x410CC601, identical to the CMSIS-DAP HID result. The earlier -615 was two swapped wires (SWDIO/SWCLK), not a probe bug |
   | clock control | REAL_HW_VERIFIED | SET_TCK accepted at 100k, 400k, 1M, 2.5M, 5.5M, 8.5M, 10M, 12M and 14M; the reply carries no rate. Host-timed rates are 5-15 % below nominal (USB overhead in the burst); no precision is claimed |
   | target identify | REAL_HW_VERIFIED | CC2340 module over the native XDS110 SWD path: Cortex-M0+ r0p1 (CPUID 0x410CC601) |
@@ -875,7 +883,7 @@ Code, fixtures and passing tests are not hardware validation.
   | EnergyTrace: voltage and energy | NOT_IMPLEMENTED | the TI tool computes both host-side; the stream carries neither |
   | EnergyTrace: replay of the real stream | REPLAY_VERIFIED | sanitized fixture plugins/xds110/energytrace/testdata/real-lpxds110et: parser and command sequence tests run without the probe |
   | EnergyTrace: unplug during capture | REAL_HW_VERIFIED | probe removed during a 30 min capture: the capture ended in under a second, no hang, the 7.08M samples already stored stayed readable, no stop commands were sent to the missing probe, same serial rediscovered after replug and a new capture ran |
-  | flash programming | REAL_HW_VERIFIED | FlashProgramming is served for TI CC23xx targets by the shared SACI layer (see the cc2340 entry; erase, program, verify and backup through this probe on the real chip); other targets are refused with a clear error, flash belongs to target-specific layers |
+  | flash programming | REAL_HW_VERIFIED | FlashProgramming is served for TI CC23xx targets over SWD by the shared SACI layer (see the cc2340 entry; erase, program, verify and backup through this probe on the real chip) and for CC13x2/CC26x2 over cJTAG (read/backup on hardware, modification simulator-only, see above); other targets are refused with a clear error |
   | RTT (target memory) | REAL_HW_VERIFIED | SEGGER-compatible RTT read from target SRAM through the shared engine (internal/rtt, no SEGGER software): DebugProbe.rtt_info and an RTT capture (StartCapture with stream=rtt or any rtt_* setting; Log events on stream rtt), the same code path as the hardware-validated jlinknative RTT. On the CC2340 running zigbee-rs firmware: rtt_info found the control block at 0x20004bd0 with rtt_search_size=0x9000 (2048 B up buffer); captures recorded 28 boot lines (20 s) and a 338-line Zigbee join log (140 s) without loss or corruption. On a CC23xx every access leaves SACI like MemoryAccess.read. RTT and EnergyTrace captures exclude each other on one probe. rtt_write and re-attach after a reset during a capture are simulator-tested only |
   | RTT down channel (rtt_write) | SIMULATED_ONLY | exercised against the simulated Cortex-M and the CC23xx SACI model; the CC2340 firmware has no down channel |
 
@@ -891,9 +899,11 @@ Code, fixtures and passing tests are not hardware validation.
   - RTT: rtt_write, and a capture re-attaching after a target reset that happens during the capture
 - known gaps:
   - the same physical probe is listed by both the xds110 and cmsisdap plugins (different USB interfaces); they can be open together
-  - no JTAG-DP link and no ICEPick routing, so no TI target can be debugged over JTAG yet
+  - four-pin JTAG debug is not implemented (the probe's format 1 is used for chain scans); TI targets are debugged over two-pin cJTAG
+  - over two-pin cJTAG a reset also resets the debug logic: no halt at the reset vector (ICEpick wait-in-reset not implemented)
+  - CC26x0/CC13x0 and CC13x4/CC26x4 are read-only over cJTAG
   - EnergyTrace uses a synchronous bulk read per packet; no loss was seen at 256 kSPS, but there is no pending URB between reads
   - the LP-XDS110ET cannot switch its 3V3 pin by software (measured, phase 27), so power-cycle recovery was NOT exercised; earlier notes that a 10 s supply-off recovered the target are superseded by SACI reset
   - rtt_info lists the CC2340 RTT channels with empty names (cause not yet investigated)
   - while an RTT capture holds interface 2, another process cannot invoke the probe (BUSY): reset the target before starting the capture
-  - Linux only (usbfs)
+  - Linux (usbfs) and macOS (IOKit) only

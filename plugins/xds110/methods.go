@@ -37,7 +37,8 @@ func spec(c string, d pluginv1.Danger, name, desc, schema string) *pluginv1.Meth
 	return &pluginv1.MethodSpec{Capability: c, Name: name, Description: desc, Danger: d, ArgsSchemaJson: schema}
 }
 
-const optProps = `"clock_hz":{"type":"number","description":"SWD clock in Hz, 100000..14000000, default 1000000; the probe applies the nearest slower step"},"ap":{"type":"number","description":"MEM-AP index, default 0"},"timeout_ms":{"type":"number","description":"per-command probe timeout"}`
+const optProps = `"clock_hz":{"type":"number","description":"SWD/TCK clock in Hz, 100000..14000000, default 1000000; the probe applies the nearest slower step"},"ap":{"type":"number","description":"MEM-AP index, default 0"},"timeout_ms":{"type":"number","description":"per-command probe timeout"},` +
+	`"interface":{"type":"string","enum":["swd","cjtag"],"description":"target interface: swd (default) or cjtag = IEEE 1149.7 two-pin TMSC/TCKC to a TI ICEPick (CC13xx/CC26xx; wire TMS->TMSC, TCK->TCKC)"},"cjtag_format":{"type":"string","enum":["oscan1","oscan2"],"description":"two-pin scan format for interface=cjtag, default oscan1"}`
 
 // Info implements pluginsdk.Plugin.
 func (p *Plugin) Info() *pluginv1.PluginInfo {
@@ -56,7 +57,7 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 			spec(D, safe, "info", "probe identification: XDS110 firmware and hardware id, USB identity, every USB interface with its endpoints and bound kernel driver, and which interface hwlab claims; does not touch the target", `{"type":"object"}`),
 			spec(D, confirm, "clock_probe", "ask the probe to accept each clock (rates_hz in Hz, default 100k/400k/1M/2.5M/5.5M/8.5M/10M/12M/14M), report the delay word it was given and the nominal frequency the encoding implies, and time TCK cycles from the host; the probe has no read-back, so the effective rate is never claimed. Needs no target", obj(`"rates_hz":{"type":"array","items":{"type":"number"}}`)),
 			spec(D, confirm, "target_power", "DANGEROUS: set the programmable target supply of a stand-alone XDS110 (hardware id 0x21, UNVERIFIED: no such probe attached). Needs the device opened with allow_target_power=true; enabling also needs confirm=\"enable-target-power\" and millivolts (1800..3600). Never automatic. On the LP-XDS110ET it returns UNSUPPORTED_BY_ATTACHED_HW: that board's 3V3 pin cannot be switched by software", obj(`"enable":{"type":"boolean"},"millivolts":{"type":"number"},"confirm":{"type":"string"}`)),
-			spec(D, confirm, "jtag_scan", "switch the probe to JTAG, reset the TAPs and enumerate the chain with the shared JTAG driver; reports no-device when TDO floats high. Drives TCK/TMS/TDI. The probe has no raw TMS access, so this works through its state-move and scan commands", obj(`"clock_hz":{"type":"number"},"max_devices":{"type":"number"}`)),
+			spec(D, confirm, "jtag_scan", "switch the probe to four-pin JTAG, reset the TAPs and enumerate the chain with the shared JTAG driver; reports no-device when TDO floats high. Drives TCK/TMS/TDI. The probe has no raw TMS access, so this works through its state-move and scan commands. A CC13xx/CC26xx wired with TMS/TCK only (TDO stuck low here) needs interface=cjtag, which runs icepick_info instead", obj(`"clock_hz":{"type":"number"},"max_devices":{"type":"number"},"interface":{"type":"string","enum":["swd","cjtag"]},"cjtag_format":{"type":"string","enum":["oscan1","oscan2"]}`)),
 			spec(D, safe, "connect", "attach over SWD and identify the debug port and Cortex-M core; does not halt, reset or write the target", obj(optProps)),
 			spec(D, safe, "ap_scan", "list the access ports (IDR/BASE/CFG) and the first level of the CoreSight ROM table behind the selected MEM-AP; read-only", obj(optProps)),
 			spec(D, confirm, "disconnect", "release the SWD attachment (breakpoints and watchpoints installed by this device are restored first); the device stays open and target power is unchanged, so another backend can use the same probe", obj(optProps)),
@@ -86,7 +87,13 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 			spec(pluginv1.CapPowerMeasurement, safe, "info", "EnergyTrace status of the probe: protocol confidence, stream format, sample rate, what is and is not decoded, and the gating; sends no EnergyTrace command. Capture itself is started with capture_start on this device opened with allow_target_power", `{"type":"object"}`),
 		},
 	}
-	info.Methods = append(info.Methods, service.Specs(optProps)...)
+	info.Methods = append(info.Methods,
+		spec(D, safe, "chip_info", "TI CC13xx/CC26xx over interface=cjtag: route the CPU DAP through the ICEPick and identify the chip from FCFG1 (ICEPICK_DEVICE_ID, USER_ID: package, PA = P/R variant, protocols), FLASH_SIZE, the factory IEEE (FCFG1 MAC_15_4) and a CCFG summary (bootloader backdoor, TAP/DAP enables, erase enables, write protection); the output follows tibsl's identify. A chip whose CCFG closes the DAP is reported with debug_locked=true and the ICEPick details. Never halts or writes the target", obj(optProps)),
+		spec(D, safe, "icepick_info", "interface=cjtag (implied): activate the two-pin format, read the ICEPick IDCODE and ICEPICKCODE, route the CPU DAP and report whether it joined the chain (debug_locked otherwise); does not touch the core, works on a locked chip", obj(optProps)),
+		spec(D, confirm, "cc26xx_chip_erase", "DANGEROUS, CC13xx/CC26xx over interface=cjtag: erase the WHOLE chip (firmware, NV, CCFG incl. IEEE override) through the ICEPick chip erase test TAP; needs no CPU DAP, so it recovers a chip whose CCFG locks debug. Needs the device opened with allow_chip_erase=true and confirm=\""+tokICEPickErase+"\". No backup is possible on a locked chip; on an open chip take FlashProgramming.backup first. Procedure from OpenOCD's cc26xx_chip_erase (validated by its author on a CC2650), not yet on hardware by hwlab",
+			obj(optProps+`,"confirm":{"type":"string","enum":["`+tokICEPickErase+`"]}`)),
+	)
+	info.Methods = append(info.Methods, mergeCC26Specs(service.Specs(optProps))...)
 	return info
 }
 
@@ -235,7 +242,14 @@ func (p *Plugin) run(ctx context.Context, d *device, o options, method string, a
 	case "DebugProbe.clock_probe":
 		return d.clockProbe(args)
 	case "DebugProbe.jtag_scan":
+		if o.iface == ifaceCJTAG {
+			return d.icepickInfo(o)
+		}
 		return d.jtagScan(ctx, o, args)
+	case "DebugProbe.icepick_info":
+		return d.icepickInfo(o)
+	case "DebugProbe.cc26xx_chip_erase":
+		return d.chipEraseICEPick(o, args)
 	case "DebugProbe.disconnect":
 		if err := d.detach(); err != nil {
 			return nil, err
@@ -243,6 +257,21 @@ func (p *Plugin) run(ctx context.Context, d *device, o options, method string, a
 		return map[string]any{"disconnected": true}, nil
 	}
 	err = d.attach(o)
+	if o.iface == ifaceCJTAG {
+		if err != nil {
+			if method == "DebugProbe.chip_info" && strings.Contains(err.Error(), DebugLocked) {
+				return d.lockedChipInfo(o)
+			}
+			return nil, err
+		}
+		return d.runCJTAG(ctx, method, args)
+	}
+	if method == "DebugProbe.chip_info" {
+		if err != nil {
+			return nil, err
+		}
+		return nil, status.Error(codes.FailedPrecondition, "chip_info identifies TI CC13xx/CC26xx over interface=cjtag; over SWD use connect (any Cortex-M) or cc23xx_info (CC23xx)")
+	}
 	if err == nil && d.cc != nil {
 		if res, handled, cerr := d.runCC23xx(ctx, method, args); handled {
 			return res, cerr

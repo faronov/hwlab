@@ -91,7 +91,7 @@ func (d *device) info() (map[string]any, error) {
 	res := map[string]any{
 		"transport": d.probe.Describe(), "firmware": in.FirmwareText, "firmware_raw": fmt.Sprintf("0x%08x", in.Firmware),
 		"hardware_id": fmt.Sprintf("0x%02x", in.Hardware), "target_supply_capable": in.SupplyCapable,
-		"jtag_driven": "chain-scan-only", "validated": d.entry.Sim == nil,
+		"jtag_driven": "four-pin chain scan; two-pin cJTAG with ICEPick routing (interface=cjtag)", "validated": d.entry.Sim == nil,
 		"note": "the hardware id is reported as read; target_supply_capable is true only for the stand-alone id 0x21. On the LP-XDS110ET (0x23) the 3V3 pin is the probe rail selected by jumper P9 and cannot be switched by software",
 	}
 	if d.entry.Sim != nil {
@@ -207,7 +207,10 @@ func (d *device) jtagScan(ctx context.Context, o options, a map[string]any) (map
 	}
 	res := toMap(chain)
 	res["clock_hz"] = float64(clk)
-	res["note"] = "TAP enumeration only; debugging a core over JTAG (including TI ICEPick routing) is not implemented"
+	if res["status"] == "stuck-low" {
+		res["hint"] = "TDO reads all zeros: a TI CC13xx/CC26xx board that routes only TMS/TCK (two-pin cJTAG, e.g. a 5-pin 3V3/GND/TMS/TCK/RESET header) leaves TDO unconnected; use interface=cjtag (DebugProbe.icepick_info)"
+	}
+	res["note"] = "four-pin JTAG TAP enumeration; a TI CC13xx/CC26xx wired for two-pin cJTAG (TMSC/TCKC only) is reached with interface=cjtag (ICEPick routing, full debug)"
 	return res, nil
 }
 

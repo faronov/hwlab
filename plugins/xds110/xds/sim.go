@@ -45,6 +45,9 @@ type Sim struct {
 	csw, tar uint32
 	post     uint32
 
+	// cc26, when set, models a CC13x2/CC26x2 on two-pin cJTAG (simcc26.go).
+	cc26 *cc26Sim
+
 	// JTAG model.
 	tapState int
 	ir       []uint32 // per TAP loaded instruction
@@ -201,12 +204,29 @@ func (s *Sim) Exchange(req []byte, _ time.Duration) ([]byte, error) {
 		if s.srst && !level && !s.ignoreSRST {
 			s.pinResets++
 			_ = s.core.Write32(context.Background(), cortexm.AddrAIRCR, 0x05FA0004)
+			if s.cc26 != nil {
+				s.cc26.dropFormat()
+			}
 		}
 		s.srst = level
 	case CmdCycleTCK:
+		if s.cc26 != nil && len(a) >= 4 {
+			s.cc26CycleTCK(binary.LittleEndian.Uint32(a))
+		}
+	case CmdSetProperty:
+		// Firmware 3.0.0.32 does not know XDS_SET_PROPERTY.
+		return status(-122), nil
+	case CmdScanRequest:
+		if s.cc26 == nil {
+			return status(StatusFail), nil
+		}
+		return s.cc26ScanRequest(a), nil
 	case CmdCJTAGConnect:
 		s.cjtag = true
 		s.tapState = 1
+		if s.cc26 != nil && len(a) >= 4 {
+			s.cc26CJTAGConnect(binary.LittleEndian.Uint32(a))
+		}
 	case CmdCJTAGDisc:
 		s.cjtag = false
 	case CmdSWDConnect:
@@ -236,6 +256,13 @@ func (s *Sim) Exchange(req []byte, _ time.Duration) ([]byte, error) {
 		}
 		s.tapState = int(binary.LittleEndian.Uint32(a))
 	case CmdJTAGScan:
+		if s.cc26 != nil {
+			if len(a) < 18 {
+				return status(StatusFail), nil
+			}
+			nbits := int(binary.LittleEndian.Uint16(a))
+			return status(0, s.cc26Scan(a[2] == byte(StShiftIR), a[18:], nbits, uint32(a[4]))...), nil
+		}
 		return s.jtagScan(a), nil
 	case CmdPathMove:
 		return s.pathMove(a), nil
