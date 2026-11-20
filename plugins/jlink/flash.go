@@ -325,7 +325,7 @@ func (p *Plugin) state(ctx context.Context, id string, t Target) (bool, error) {
 	}
 	h, ok := firstHaltState(out)
 	if !ok {
-		return false, status.Errorf(codes.Internal, "J-Link: no CPU state in the IsHalted output: %v", tail(out, 3))
+		return false, status.Errorf(codes.Internal, "J-Link: no CPU state in the IsHalted output: %v; connect log: %v", tail(out, 3), connectLog(out))
 	}
 	return h, nil
 }
