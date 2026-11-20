@@ -719,3 +719,30 @@ func TestLaunchArgsEnableRTT(t *testing.T) {
 		}
 	}
 }
+
+func TestTargetAcceptsCJTAG(t *testing.T) {
+	tg, err := target(map[string]any{"interface": "cjtag", "target": "CC2652P1F"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tg.Interface != "cJTAG" {
+		t.Fatalf("interface = %q, want cJTAG", tg.Interface)
+	}
+	a := strings.Join(tg.args("20781318"), " ")
+	if !strings.Contains(a, "-If cJTAG") {
+		t.Fatalf("args %q lack -If cJTAG", a)
+	}
+	if _, err := target(map[string]any{"interface": "ICSP"}); err == nil {
+		t.Fatal("ICSP accepted")
+	}
+}
+
+func TestConnectLogKeepsConnectionLines(t *testing.T) {
+	out := "SEGGER J-Link Commander\nVTref=3.324V\nDevice \"CC2652R1F\" selected.\nConnecting to target via cJTAG\nICEPick found\nCannot connect to target.\nJ-Link>IsHalted\nTarget connection not established yet but required for command.\n"
+	got := fmt.Sprint(connectLog(out))
+	for _, want := range []string{"VTref=3.324V", "via cJTAG", "ICEPick found", "Cannot connect to target."} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("connectLog %q lacks %q", got, want)
+		}
+	}
+}

@@ -85,7 +85,7 @@ func confirm(capName, name, desc, schema string) *pluginv1.MethodSpec {
 	return &pluginv1.MethodSpec{Capability: capName, Name: name, Description: desc, Danger: pluginv1.Danger_DANGER_CONFIRM, ArgsSchemaJson: schema}
 }
 
-const targetProps = `"target":{"type":"string","description":"J-Link device name, e.g. NRF52840_XXAA"},"interface":{"type":"string","enum":["SWD","JTAG"]},"speed_khz":{"type":"number"}`
+const targetProps = `"target":{"type":"string","description":"J-Link device name, e.g. NRF52840_XXAA"},"interface":{"type":"string","enum":["SWD","JTAG","cJTAG"]},"speed_khz":{"type":"number"}`
 
 // flashGeomProps override SEGGER's flash layout for a target (device config).
 const flashGeomProps = `,"flash_base":{},"flash_size":{},"flash_sector_bytes":{"type":"number"}`
@@ -192,8 +192,11 @@ func target(cfg map[string]any) (Target, error) {
 		switch strings.ToUpper(s) {
 		case "SWD", "JTAG":
 			t.Interface = strings.ToUpper(s)
+		case "CJTAG":
+			// Two-wire IEEE 1149.7 (TMS/TCK), e.g. TI CC13xx/CC26xx.
+			t.Interface = "cJTAG"
 		default:
-			return t, fmt.Errorf("interface %v: want SWD or JTAG", v)
+			return t, fmt.Errorf("interface %v: want SWD, JTAG or cJTAG", v)
 		}
 	}
 	if v, ok := cfg["speed_khz"]; ok {

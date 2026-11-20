@@ -26,7 +26,7 @@ const DefaultRTTPort = 19021
 // Target selects the debug target behind a probe.
 type Target struct {
 	Device    string // J-Link device name, e.g. "NRF52840_XXAA"; empty = probe only
-	Interface string // "SWD" or "JTAG"
+	Interface string // "SWD", "JTAG" or "cJTAG"
 	SpeedKHz  int
 }
 
@@ -111,6 +111,11 @@ func (t Target) args(serial string) []string {
 		a = append(a, "-USB", serial)
 	}
 	a = append(a, "-If", iface, "-Speed", strconv.Itoa(speed))
+	if iface == "cJTAG" {
+		// Without it the commander asks for the JTAG chain position on connect
+		// and swallows the next script line as the answer.
+		a = append(a, "-JTAGConf", "-1,-1")
+	}
 	if t.Device != "" {
 		a = append(a, "-Device", t.Device, "-AutoConnect", "1")
 	}
@@ -135,6 +140,11 @@ func (c *ExecCommander) Run(ctx context.Context, serial string, t Target, script
 	lines := []string{}
 	if serial != "" {
 		lines = append(lines, dialogGuard...)
+	}
+	if t.Interface == "cJTAG" && t.Device != "" {
+		// JLinkExe's -AutoConnect does not start a cJTAG session by itself;
+		// an explicit connect does (TI CC13xx/CC26xx ICEPick).
+		lines = append(lines, "connect")
 	}
 	lines = append(append(lines, script...), "exit")
 	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {

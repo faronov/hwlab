@@ -140,7 +140,7 @@ func parseMem(out string, unit, n int) ([]byte, error) {
 		if f := failure(out); f != "" {
 			return nil, fmt.Errorf("%s", f)
 		}
-		return nil, fmt.Errorf("read %d of %d bytes: output had no memory dump", len(data), n)
+		return nil, fmt.Errorf("read %d of %d bytes: output had no memory dump; connect log: %v", len(data), n, connectLog(out))
 	}
 	return data[:n], nil
 }
@@ -282,4 +282,29 @@ func haltState(out string) (halted bool, pc string, ok bool) {
 		halted, pc, ok = m[1] == "", m[2], true
 	}
 	return halted, pc, ok
+}
+
+// connectLog keeps the commander lines that explain how the target connection
+// went (interface, VTref, scan, ICEPick/TAP/DAP discovery and errors), so a
+// failed session reports why it never connected instead of only its last lines.
+func connectLog(out string) []any {
+	keys := []string{"vtref", "target interface", "connect", "device", "cjtag", "jtag", "swd", "icepick", "tap", "dap", "ap[", "scan", "found", "cannot", "could not", "error", "fail", "unknown", "lock", "secure", "reset"}
+	var lines []any
+	for _, l := range strings.Split(out, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		low := strings.ToLower(l)
+		for _, k := range keys {
+			if strings.Contains(low, k) {
+				lines = append(lines, l)
+				break
+			}
+		}
+	}
+	if len(lines) > 30 {
+		lines = lines[len(lines)-30:]
+	}
+	return lines
 }
