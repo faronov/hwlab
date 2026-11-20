@@ -14,7 +14,7 @@
 | generic serial (any port) | `uart` | **TX validated on a real port; RX over pty/fakes only** | see below, [ADR 0017](adr/0017-generic-uart.md), [results](notes/phase5-uart-results.md) |
 | CAN / CAN-FD (SocketCAN, virtual bus) | `can` | **unvalidated on real hardware** (synthetic virtual bus + socketpair tests, tshark-decoded pcapng, replay) | see below, [ADR 0019](adr/0019-generic-can.md), [results](notes/phase6-can-results.md) |
 | SCPI oscilloscopes (Rigol, Siglent, generic) | `scpi` | **unvalidated on real hardware** (synthetic fake instrument, replay) | see below, [ADR 0020](adr/0020-generic-scpi.md), [results](notes/phase7-scpi-results.md) |
-| TI XDS110 (LP-XDS110ET, LaunchPad on-board XDS110) | `xds110` | probe side **real-hardware verified** on one standalone LP-XDS110ET; native SWD debug (attach, identify, halt/resume, registers read/write, SRAM write/restore, 100 steps, 4 hardware breakpoints, reset via SACI, flash backup/erase/program/verify/restore) verified on a user-owned CC2340 (Cortex-M0+), with results matching the same probe's HID CMSIS-DAP interface; DWT absent on that core (UNSUPPORTED_BY_ATTACHED_HW); target power switch UNSUPPORTED_BY_ATTACHED_HW (3V3 pin = probe rail, jumper P9; see [phase 27](notes/phase27-lp-xds110et-target-power.md)); EnergyTrace range 0 PROTOCOL_PARTIAL (current only, accuracy unverified); target-memory RTT **verified on hardware** on the CC2340 (`rtt_info` and capture; `rtt_write` simulator-only) | [docs/xds110.md](xds110.md), [phase 24 results](notes/phase24-xds110-results.md), [phase 25 results](notes/phase25-cc2340-m0plus-acceptance.md), [phase 26 results](notes/phase26-cc2340-saci-flash.md) |
+| TI XDS110 (LP-XDS110ET, LaunchPad on-board XDS110) | `xds110` | probe side **real-hardware verified** on one standalone LP-XDS110ET; native SWD debug (attach, identify, halt/resume, registers read/write, SRAM write/restore, 100 steps, 4 hardware breakpoints, reset via SACI, flash backup/erase/program/verify/restore) verified on a user-owned CC2340 (Cortex-M0+), with results matching the same probe's HID CMSIS-DAP interface; DWT absent on that core (UNSUPPORTED_BY_ATTACHED_HW); target power switch UNSUPPORTED_BY_ATTACHED_HW (3V3 pin = probe rail, jumper P9; see [phase 27](notes/phase27-lp-xds110et-target-power.md)); EnergyTrace range 0 PROTOCOL_PARTIAL (current only, accuracy unverified); target-memory RTT **verified on hardware** on the CC2340 (`rtt_info` and capture; `rtt_write` simulator-only); **two-pin cJTAG to TI CC13xx/CC26xx through the ICEPick** (`interface=cjtag`) **real-hardware verified read-only** with a stand-alone XDS110 on a CC2652P ZBDongle-P (ICEPick/DAP routing, identify, CCFG, halt/resume, full flash backup); CC13x2/CC26x2 erase/program/restore, cJTAG reset and the ICEPick chip erase **simulator-only** | [docs/xds110.md](xds110.md), [cJTAG section](xds110.md#cc13xxcc26xx-over-two-pin-cjtag-interfacecjtag), [cJTAG results](notes/xds110-cjtag-cc2652p-results.md), [phase 24 results](notes/phase24-xds110-results.md), [phase 25 results](notes/phase25-cc2340-m0plus-acceptance.md), [phase 26 results](notes/phase26-cc2340-saci-flash.md) |
 | CMSIS-DAP probes (DAPLink, Pi Debug Probe, BL702-DAPLink, ...) | `cmsisdap` | probe side **real-hardware verified** on one BL702-DAPLink (v2 bulk, no target attached) and, for the target side (SWD, identify, halt/resume, registers read/write, memory read/write, 100 steps, hardware breakpoints, reset, CC23xx flash) and v1 HID, on a CC2340 through the LP-XDS110ET's HID interface; target-memory RTT implemented and simulator-tested, **not yet verified on hardware**; no SWO/JTAG debug | see below, [ADR 0021](adr/0021-cmsis-dap.md), [phase 22 results](notes/phase22-cmsisdap-results.md) |
 | Modbus RTU / TCP devices | `modbus` | **unvalidated on real hardware** (synthetic slave, replay) | see below, [ADR 0022](adr/0022-modbus.md), [results](notes/phase9-modbus-results.md) |
 | Telink SWire programmer + TLSR8258 | `telink` | **unvalidated on real hardware** (simulator, replay); no chip erase | see below, [ADR 0023](adr/0023-telink-swire.md), [results](notes/phase13-telink-results.md) |
@@ -494,6 +494,25 @@ memory, step, breakpoint, watchpoint, reset) and CMSIS-DAP v1 HID.
 
 ## TI XDS110 probes
 
+TI CC13xx/CC26xx (no SWD) are reached over two-pin cJTAG with `interface=cjtag`
+(device config or per call): the probe activates OScan1, the TI ICEPick routes
+the CPU DAP into the chain and the usual Cortex-M methods, `DebugProbe.chip_info`,
+`icepick_info` and `FlashProgramming` (CC13x2/CC26x2, tibsl's tokens and CCFG
+rules plus the device permissions `allow_flash`/`allow_erase`/`allow_ccfg_write`)
+work over it; a chip whose CCFG closes the DAP is reported as `debug_locked`, and
+`cc26xx_chip_erase` (`allow_chip_erase`, `confirm=icepick-chip-erase`) erases it
+through the ICEPick. Wiring for a board with a 5-pin 3V3/GND/TMS/TCK/RESET header
+(SONOFF ZBDongle-P) from the XDS110 10-pin Cortex header: 1 VTref -> 3V3,
+2 TMS -> TMS, 4 TCK -> TCK, 10 nRESET -> RESET, 3/5/9 -> GND. A four-pin
+`jtag_scan` on such a board reads TDO "stuck low" (TDO is not wired), which is
+expected. Details: [xds110.md](xds110.md#cc13xxcc26xx-over-two-pin-cjtag-interfacecjtag).
+
+```
+hwlab invoke xds110/0451:bef3:<serial> DebugProbe.icepick_info -a interface=cjtag
+hwlab target identify --plugin xds110 --device <serial> --config interface=cjtag
+hwlab invoke --yes xds110/0451:bef3:<serial> FlashProgramming.backup -a interface=cjtag -a clock_hz=4000000
+```
+
 The `xds110` plugin drives the XDS110 vendor interface natively (see [xds110.md](xds110.md)): device id `xds110/<vid>:<pid>:<usb serial>`, only the debug interface is claimed, CDC and HID interfaces keep their drivers. Target-memory RTT (`rtt_info`, `rtt_write`, RTT capture with `stream: rtt`) is simulator-tested only, see [xds110.md](xds110.md#rtt-target-memory). udev: `SUBSYSTEM=="usb", ATTRS{idVendor}=="0451", ATTRS{idProduct}=="bef3", MODE="0660", GROUP="hwlab"`. The same probe is also listed by the `cmsisdap` plugin through its HID interface; the two use different interfaces and can be open together. Hardware tests (opt in): `HWLAB_XDS110_HW=1 go test -tags hardware -count=1 -v ./plugins/xds110/`; unplug (needs a person): `HWLAB_XDS110_UNPLUG=1 -run HWUnplugReplug`.
 
 ## Telink SWire programmer
@@ -844,7 +863,10 @@ busy, CDC coexistence, 10 open/connect/close rounds), see
 [results](notes/phase-macos-iokit-results.md). A timed-out read with the first
 build sent that probe into its bootloader; the probable cause (a data-toggle
 reset by old IOKit interface versions) is addressed, but the fix is not yet
-re-run on hardware. XDS110, CMSIS-DAP, ST-Link, ESP and FTDI were not run on macOS.
+re-run on hardware. A stand-alone XDS110 (fw 3.0.0.32) ran on macOS for the
+two-pin cJTAG work (CC2652P identify and full backups, see [TI XDS110
+probes](#ti-xds110-probes)); CMSIS-DAP, ST-Link, ESP and FTDI were not run on
+macOS.
 
 ## Hardware tests
 

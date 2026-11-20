@@ -297,7 +297,20 @@ func (p *Probe) SetSRST(level bool) error {
 // CJTAGConnect switches the target to 4-pin JTAG (format 1) via the cJTAG
 // escape sequence.
 func (p *Probe) CJTAGConnect() error {
-	_, err := p.Do(CmdCJTAGConnect, le32(1))
+	return p.CJTAGConnectFormat(FormatJTAG)
+}
+
+// CJTAGConnectFormat runs the probe's scan-format activation for format. The
+// two-pin formats (FormatOScan1, FormatOScan2) need PropertyCJTAG enabled
+// first and expect the target in its power-up scan format.
+func (p *Probe) CJTAGConnectFormat(format uint32) error {
+	_, err := p.Do(CmdCJTAGConnect, le32(format))
+	return err
+}
+
+// SetProperty sets a probe property (XDS_SET_PROPERTY).
+func (p *Probe) SetProperty(prop, value uint32) error {
+	_, err := p.Do(CmdSetProperty, append(le32(prop), le32(value)...))
 	return err
 }
 

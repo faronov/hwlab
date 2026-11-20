@@ -6,7 +6,10 @@
 // driver. It claims only the vendor debug interface, so the CDC UART ports,
 // the CMSIS-DAP HID interface and the second vendor interface stay with the
 // kernel. The plugin advertises the generic DebugProbe and MemoryAccess
-// capabilities, CC23xx flash programming, target-memory RTT (internal/rtt,
+// capabilities, CC23xx flash programming over SWD, CC13xx/CC26xx debug and
+// flash programming over two-pin cJTAG through the TI ICEPick
+// (interface=cjtag: internal/ti/icepick, internal/adiv5/jtagdp,
+// internal/ti/cc26xx), target-memory RTT (internal/rtt,
 // DebugProbe.rtt_info/rtt_write and an RTT capture) and, on the LP-XDS110ET,
 // the EnergyTrace stream.
 //
@@ -125,7 +128,7 @@ func powerCap() *pluginv1.Capability {
 }
 
 func deviceCaps(e Entry) []*pluginv1.Capability {
-	attrs := map[string]string{"interface": "SWD", "jtag": "chain-scan-only", "flash_programming": "CC23xx-only", "rtt": "target-memory", "swo": "no", "energytrace": "no"}
+	attrs := map[string]string{"interface": "SWD, cJTAG (TI ICEPick, CC13xx/CC26xx)", "jtag": "chain-scan, two-pin cJTAG ICEPick debug", "flash_programming": "CC23xx (SWD), CC13x2/CC26x2 (cJTAG)", "rtt": "target-memory", "swo": "no", "energytrace": "no"}
 	out := caps(attrs)
 	if supportsEnergyTrace(e) {
 		// LiveRawStream (advertised above) carries both the RTT and the
@@ -181,15 +184,26 @@ type options struct {
 	allowPower bool
 	// cc holds the CC23xx flash permissions, also granted only at open.
 	cc service.Config
+	// iface is the target interface: "swd" (default) or "cjtag" (IEEE
+	// 1149.7 two-pin TMSC/TCKC to a TI ICEPick, CC13xx/CC26xx).
+	iface string
+	// cjtagFormat is the two-pin scan format: xds.FormatOScan1 or FormatOScan2.
+	cjtagFormat uint32
 }
 
+// Target interfaces.
+const (
+	ifaceSWD   = "swd"
+	ifaceCJTAG = "cjtag"
+)
+
 var (
-	callKeys   = []string{"clock_hz", "ap", "timeout_ms"}
+	callKeys   = []string{"clock_hz", "ap", "timeout_ms", "interface", "cjtag_format"}
 	deviceKeys = append(append(append([]string{}, callKeys...), "allow_target_power"), service.ConfigKeys...)
 )
 
 func parseOptions(cfg map[string]any) (options, error) {
-	o := options{clockHz: 1_000_000, timeout: 2 * time.Second}
+	o := options{clockHz: 1_000_000, timeout: 2 * time.Second, iface: ifaceSWD, cjtagFormat: xds.FormatOScan1}
 	for k := range cfg {
 		known := false
 		for _, s := range deviceKeys {
@@ -223,6 +237,24 @@ func parseOptions(cfg map[string]any) (options, error) {
 		}
 		o.timeout = time.Duration(v) * time.Millisecond
 	}
+	if v, ok := cfg["interface"]; ok && v != nil {
+		switch v {
+		case ifaceSWD, ifaceCJTAG:
+			o.iface = v.(string)
+		default:
+			return o, fmt.Errorf("interface %v: want swd or cjtag", v)
+		}
+	}
+	if v, ok := cfg["cjtag_format"]; ok && v != nil {
+		switch v {
+		case "oscan1":
+			o.cjtagFormat = xds.FormatOScan1
+		case "oscan2":
+			o.cjtagFormat = xds.FormatOScan2
+		default:
+			return o, fmt.Errorf("cjtag_format %v: want oscan1 or oscan2", v)
+		}
+	}
 	if v, ok, err := optBool(cfg, "allow_target_power"); err != nil {
 		return o, err
 	} else if ok {
@@ -250,7 +282,9 @@ type device struct {
 	tgt   *adiv5.Target
 	core  *cortexm.Core
 	// cc is the CC23xx session when the attached target is one.
-	cc       *cc23xx.Session
+	cc *cc23xx.Session
+	// cj is the cJTAG/ICEPick attachment (interface=cjtag), nil over SWD.
+	cj       *cjtagLink
 	attached options
 	// supplyOn records a target supply this device enabled, so closing the
 	// device can switch it off again.
@@ -299,6 +333,9 @@ func (d *device) closeLocked(restore bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	var err error
+	if d.cj != nil {
+		d.cj.dap.SetContext(ctx)
+	}
 	if d.tgt != nil {
 		if restore {
 			err = d.trig.restoreAll(ctx, d.core)
@@ -306,8 +343,8 @@ func (d *device) closeLocked(restore bool) error {
 		// Best effort: do not leave the target debug-powered (it would not
 		// reach its real sleep current, e.g. for EnergyTrace).
 		_ = d.tgt.ReleasePower()
-		err = errors.Join(err, d.probe.SWDDisconnect())
-		d.tgt, d.core, d.cc = nil, nil, nil
+		err = errors.Join(err, d.releaseLink())
+		d.tgt, d.core, d.cc, d.cj = nil, nil, nil, nil
 	}
 	if restore {
 		if d.supplyOn {
@@ -324,17 +361,28 @@ func (d *device) closeLocked(restore bool) error {
 func (d *device) detach() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	if d.cj != nil {
+		d.cj.dap.SetContext(ctx)
+	}
 	if d.tgt != nil {
 		if err := d.trig.restoreAll(ctx, d.core); err != nil {
 			return err
 		}
 		_ = d.tgt.ReleasePower() // best effort, see closeLocked
-		if err := d.probe.SWDDisconnect(); err != nil {
+		if err := d.releaseLink(); err != nil {
 			return err
 		}
-		d.tgt, d.core, d.cc = nil, nil, nil
+		d.tgt, d.core, d.cc, d.cj = nil, nil, nil, nil
 	}
 	return nil
+}
+
+// releaseLink leaves the probe's target interface (SWD or cJTAG).
+func (d *device) releaseLink() error {
+	if d.cj != nil {
+		return d.probe.CJTAGDisconnect()
+	}
+	return d.probe.SWDDisconnect()
 }
 
 // attach connects to the target over SWD, reusing the attachment when the
@@ -349,6 +397,9 @@ func (d *device) attach(o options) error {
 	d.probe.SetTimeout(o.timeout)
 	if _, err := d.probe.SetClock(o.clockHz / 1000); err != nil {
 		return d.attachErr(err)
+	}
+	if o.iface == ifaceCJTAG {
+		return d.attachCJTAG(o)
 	}
 	t, core, cc, err := service.Attach(context.Background(), xds.NewSWDLink(d.probe), o.ap, d.pulseSRST)
 	if err != nil {
@@ -521,6 +572,12 @@ func parseOptionsOver(base options, over map[string]any) (options, error) {
 	}
 	if _, ok := over["timeout_ms"]; !ok {
 		o.timeout = base.timeout
+	}
+	if _, ok := over["interface"]; !ok {
+		o.iface = base.iface
+	}
+	if _, ok := over["cjtag_format"]; !ok {
+		o.cjtagFormat = base.cjtagFormat
 	}
 	o.allowPower = base.allowPower
 	o.cc = base.cc

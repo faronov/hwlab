@@ -50,7 +50,19 @@ const (
 	CmdDapRequest    = 0x3a
 	CmdScanRequest   = 0x3b
 	CmdPathMove      = 0x3c
+	CmdSetProperty   = 0x49
 )
+
+// Scan formats CJTAG_CONNECT activates: four-pin IEEE 1149.1 JTAG, or the
+// IEEE 1149.7 two-pin advanced formats on TMSC/TCKC.
+const (
+	FormatJTAG   uint32 = 1
+	FormatOScan1 uint32 = 7
+	FormatOScan2 uint32 = 8
+)
+
+// PropertyCJTAG enables the two-pin cJTAG formats (XDS_SET_PROPERTY).
+const PropertyCJTAG uint32 = 4
 
 // Status is the signed result code every response starts with.
 type Status int32
