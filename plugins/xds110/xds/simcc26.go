@@ -50,8 +50,11 @@ type cc26Sim struct {
 	pending, linked int
 	dapRes          uint32
 	flash           *cortexm.Region
-	chipErases      int
-	romCalls        []string
+	// hib models the boot ROM's halt-in-boot wait after a reset: the core
+	// spins in ROM until a debugger has set C_DEBUGEN.
+	hib, debugSeen bool
+	chipErases     int
+	romCalls       []string
 }
 
 const fmtLost = 0xFFFF
@@ -96,7 +99,7 @@ func NewSimCC26x2() *Sim {
 		{Base: 0x10000000, Data: rom, ROM: true},
 	}
 	core.Exec = s.cc26Exec
-	core.Hooks = append(core.Hooks, s.cc26AIRCR)
+	core.Hooks = append(core.Hooks, s.cc26AIRCR, s.cc26DHCSR)
 	return s
 }
 
@@ -145,13 +148,44 @@ func (s *Sim) cc26AIRCR(addr uint32, write bool, v uint32) (uint32, bool, error)
 	}
 	s.core.PowerOnResetFromHook()
 	s.cc26.dropFormat()
+	s.cc26EnterHIB()
 	return 0, true, nil
+}
+
+// Boot ROM wait loop of the halt-in-boot model (as observed on a CC2652P).
+const (
+	SimCC26HIBPC = 0x1000118E
+	simCC26HIBSP = 0x11001FF0
+)
+
+func (s *Sim) cc26EnterHIB() {
+	s.core.SetReg(15, SimCC26HIBPC)
+	s.core.SetReg(13, simCC26HIBSP)
+	s.cc26.hib, s.cc26.debugSeen = true, false
+}
+
+// cc26DHCSR notes a debugger enabling halting debug.
+func (s *Sim) cc26DHCSR(addr uint32, write bool, v uint32) (uint32, bool, error) {
+	if write && addr == cortexm.AddrDHCSR && v>>16 == 0xA05F && v&1 != 0 {
+		s.cc26.debugSeen = true
+	}
+	return 0, false, nil
 }
 
 // cc26Exec runs the ROM flash API and the BKPT stub.
 func (s *Sim) cc26Exec(m cortexm.Machine) bool {
 	cs := s.cc26
 	pc := m.Reg(15)
+	if cs.hib && pc == SimCC26HIBPC {
+		if cs.debugSeen {
+			cs.hib = false
+			sp, _ := m.Load(0, 4)
+			vec, _ := m.Load(4, 4)
+			m.SetReg(13, sp)
+			m.SetReg(15, vec&^1)
+		}
+		return true
+	}
 	switch pc {
 	case simCC26Erase &^ 1:
 		addr := m.Reg(0)
@@ -474,6 +508,7 @@ func (s *Sim) cc26ChipErase() {
 	cs.locked = false
 	s.core.PowerOnResetFromHook()
 	cs.dropFormat()
+	s.cc26EnterHIB()
 }
 
 // cc26ScanRequest answers OCD_SCAN_REQUEST.

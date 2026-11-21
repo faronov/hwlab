@@ -76,18 +76,20 @@ func TestCC26CoreAndMemoryOverCJTAG(t *testing.T) {
 	// SYSRESETREQ resets the debug logic and drops the two-pin format: the
 	// plugin re-attaches and proves the reset by the cleared C_DEBUGEN.
 	r = mustInvoke(t, p, "DebugProbe", "reset", nil)
-	if r["reattached"] != true || r["reset_seen"] != true || r["debug_lost"] != true {
+	if r["reattached"] != true || r["reset_seen"] != true || r["debug_lost"] != true || r["boot_rom_wait"] != true || r["left_boot_rom"] != true || r["halted"] != false {
 		t.Fatalf("%v", r)
 	}
 	if r := mustInvoke(t, p, "DebugProbe", "chip_info", nil); r["chip"] != "CC2652P" {
 		t.Fatalf("after reset: %v", r)
 	}
-	// The reset clears the vector catch with the debug logic: the core is
-	// halted after re-attaching and that is said, not passed off as a halt
-	// at the reset vector.
+	// The boot ROM waits for the debugger after the reset; a breakpoint on
+	// the reset vector stops the core at the application's first instruction.
 	r = mustInvoke(t, p, "DebugProbe", "reset", map[string]any{"halt": true})
-	if r["halted"] != true || r["at_reset_vector"] != false || r["note"] == nil {
+	if r["halted"] != true || r["at_reset_vector"] != true || r["pc"] != r["reset_vector"] {
 		t.Fatalf("%v", r)
+	}
+	if bp := mustInvoke(t, p, "DebugProbe", "list_breakpoints", nil); bp["slots_in_use"] != float64(0) {
+		t.Fatalf("breakpoint left behind: %v", bp)
 	}
 }
 
