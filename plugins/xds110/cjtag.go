@@ -219,7 +219,6 @@ func (d *device) resetCJTAG(ctx context.Context, kind string, halt bool) (map[st
 	if err := d.trig.restoreAll(ctx, d.core); err != nil {
 		return nil, fmt.Errorf("debug trigger cleanup before reset: %w", err)
 	}
-	vcatch := false
 	switch kind {
 	case "core":
 		rr, err := d.core.Reset(ctx, cortexm.ResetCore, halt)
@@ -235,11 +234,6 @@ func (d *device) resetCJTAG(ctx context.Context, kind string, halt bool) (map[st
 		return res, nil
 	case "sysreset":
 		bus := d.core.Bus
-		if halt {
-			if demcr, err := bus.Read32(ctx, cortexm.AddrDEMCR); err == nil && bus.Write32(ctx, cortexm.AddrDEMCR, demcr|cortexm.DEMCRVCCoreReset) == nil {
-				vcatch = true
-			}
-		}
 		if err := bus.Write32(ctx, cortexm.AddrDHCSR, 0xA05F0000|cortexm.DHCSRDebugEn); err != nil {
 			return nil, err
 		}
@@ -274,30 +268,111 @@ func (d *device) resetCJTAG(ctx context.Context, kind string, halt bool) (map[st
 		return nil, err
 	}
 	seen := (perr == nil && pre.ResetSeen) || st.ResetSeen || !st.DebugEnabled
-	res["reattached"], res["reset_seen"], res["halted"] = true, seen, st.Halted
+	res["reattached"], res["reset_seen"] = true, seen
 	if !seen {
 		return nil, fmt.Errorf("re-attached after the %s request, but the core shows no reset (DHCSR 0x%08x): a reset is not proven", kind, st.DHCSR)
 	}
-	if !halt {
-		return res, nil
+	rel, err := d.releaseBoot(ctx, halt)
+	if err != nil {
+		return nil, err
 	}
-	if st.Halted && vcatch {
-		if c, err := d.core.HaltCause(ctx); err == nil && c.Has("vector-catch") {
-			pc, _ := d.core.ReadRegister(ctx, cortexm.RegPC)
-			res["pc"], res["at_reset_vector"] = hex32(pc), true
-			return res, nil
-		}
+	for k, v := range rel {
+		res[k] = v
 	}
+	return res, nil
+}
+
+// romBase/romEnd bound the CC13xx/CC26xx boot ROM.
+const romBase, romEnd = 0x10000000, 0x10040000
+
+// releaseBoot finishes a reset over cJTAG. The TCK activity of the
+// re-activation right after the reset makes the CC13xx/CC26xx boot ROM wait
+// for the debugger ("halt in boot"): the core spins in ROM with its stack in
+// GPRAM until a debugger has halted and released it (observed on a
+// CC2652P). The core is halted there and either released into the
+// application (halt false, then sampled once to show it left the ROM) or
+// run to a breakpoint on the application's reset vector (halt true).
+func (d *device) releaseBoot(ctx context.Context, halt bool) (map[string]any, error) {
+	res := map[string]any{}
 	hs, err := d.core.Halt(ctx)
 	if err != nil {
 		return nil, err
 	}
-	res["halted"] = hs.Halted
-	if pc, err := d.core.ReadRegister(ctx, cortexm.RegPC); err == nil {
-		res["pc"] = hex32(pc)
+	pc, err := d.core.ReadRegister(ctx, cortexm.RegPC)
+	if err != nil {
+		return nil, err
 	}
-	res["at_reset_vector"] = false
-	res["note"] = "the reset also reset the debug logic (two-pin format and vector catch lost), so the core could not be held at its reset vector: it was halted after re-attaching, wherever it was"
+	inROM := pc >= romBase && pc < romEnd
+	res["boot_rom_wait"] = inROM
+	res["pc_after_reset"] = hex32(pc)
+	// In the boot ROM VTOR points at the ROM's own table; the application
+	// the ROM starts has its vector table at flash address 0.
+	vec, err := d.core.Bus.Read32(ctx, 4)
+	if err != nil {
+		return nil, err
+	}
+	vec &^= 1
+	res["reset_vector"] = hex32(vec)
+	if halt && inROM && vec != 0 && vec < romBase {
+		fpb, err := d.core.DiscoverFPB(ctx)
+		if err != nil {
+			return nil, err
+		}
+		saved, err := fpb.Save(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := fpb.Set(ctx, vec); err != nil {
+			return nil, err
+		}
+		_ = d.core.ClearCause(ctx)
+		_, rerr := d.core.Resume(ctx)
+		st, werr := d.core.WaitHalted(ctx, 2*time.Second)
+		if err := fpb.Restore(context.WithoutCancel(ctx), saved); err != nil {
+			return nil, fmt.Errorf("restore the FPB after the reset vector stop: %w", err)
+		}
+		if err := errors.Join(rerr, werr); err != nil {
+			return nil, fmt.Errorf("run from the boot ROM to the reset vector 0x%08x: %w", vec, err)
+		}
+		pc, err = d.core.ReadRegister(ctx, cortexm.RegPC)
+		if err != nil {
+			return nil, err
+		}
+		res["halted"], res["pc"] = st.Halted, hex32(pc)
+		res["at_reset_vector"] = pc&^1 == vec
+		if pc&^1 != vec {
+			return nil, fmt.Errorf("the core stopped at 0x%08x, not at the reset vector 0x%08x", pc, vec)
+		}
+		return res, nil
+	}
+	if halt {
+		res["halted"], res["pc"], res["at_reset_vector"] = hs.Halted, hex32(pc), pc&^1 == vec
+		if !inROM {
+			res["note"] = "the core had already left the boot ROM when it was halted after re-attaching: not stopped at its reset vector"
+		}
+		return res, nil
+	}
+	if _, err := d.core.Resume(ctx); err != nil {
+		return nil, err
+	}
+	if !inROM {
+		res["halted"] = false
+		return res, nil
+	}
+	// Show that the boot continued: the core must be out of the ROM shortly.
+	time.Sleep(200 * time.Millisecond)
+	if _, err := d.core.Halt(ctx); err != nil {
+		return nil, err
+	}
+	pc2, err := d.core.ReadRegister(ctx, cortexm.RegPC)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := d.core.Resume(ctx); err != nil {
+		return nil, err
+	}
+	res["halted"], res["pc_sample"] = false, hex32(pc2)
+	res["left_boot_rom"] = pc2 < romBase || pc2 >= romEnd
 	return res, nil
 }
 

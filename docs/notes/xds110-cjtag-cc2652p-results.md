@@ -89,7 +89,44 @@ All four full reads agree; the core kept running. Stored locally under
 `status`, `halt` (PC 0x00027E2A), `read_registers`, `resume`, `status`
 through `interface=cjtag` at 4 MHz.
 
+## Write and reset (2026-11-21, user-approved)
+
+The zigbee-rs CC2652P router (zigbee-rs master c18875b, `examples/cc26x2-router`,
+ZBDongle-P board) was programmed over cJTAG at 4 MHz with the backup above as
+the gate:
+
+- full 352 KiB image (`llvm-objcopy -O binary --gap-fill 0xff`, SHA-256
+  42c3e060...): 36 sectors changed, 8 already blank; ROM FlashSectorErase /
+  FlashProgram on the halted core, each sector read back, whole image read
+  back equal; 31.4 s including the reset. The CCFG check reported one
+  violation, the backdoor moving from DIO13 to DIO15 (the pin the dongle's
+  DTR/RTS circuit drives), accepted with `ccfg_override` on purpose. After the
+  reset the CCFG reads: bootloader enabled, backdoor DIO15 active low, CPU DAP
+  enabled, not debug-locked.
+- the router did not start: it waited in `cc26x2_hal::setup::wait_lf_clock`
+  for the 32.768 kHz crystal. DDI0_OSC STAT0 0x17DCACEC: XOSC_LF_EN set,
+  SCLK_LF_SRC 0 (RCOSC_HF/1536) for more than 10 minutes, so this V1.3 board's
+  LF crystal never qualifies (the stock TI image selected XOSC_LF too, but a
+  TI router never needs standby). DC/DC runs (AON_PMCTL PWRCTL 0x5).
+- rebuilt with the zigbee-rs `lf-rcosc` board feature (only MODE_CONF
+  SCLK_LF_OPTION differs, one byte) and programmed: 1 sector (the CCFG
+  sector) changed, 13.5 s. STAT0 0x51ACACEA: SCLK_LF_SRC 2 (RCOSC_LF). The
+  router reached network discovery and joined ZHA (Zigbee-RS
+  CC2652P-Router, NWK 0xF107, LQI 88, available).
+
+Reset over cJTAG on hardware:
+
+| Request | Result |
+|---|---|
+| sysreset | debug_lost, re-attached, reset_seen; boot ROM waited for the debugger (PC 0x1000118E, SP 0x11001FF0); released, PC sample in the application |
+| sysreset, halt=true | halted at the application reset vector 0x000000D8 (FPB breakpoint from the boot ROM wait), FPB restored, resumed |
+| hardware (nRESET, pin 10) | debug_lost, re-attached, reset_seen; the application was already running |
+
+The first version of the reset left the core in the boot ROM wait (the
+application never started until a halt/resume); the plugin now halts and
+releases it, which is what the table shows.
+
 ## Not run on hardware
 
-Erase, program, restore, reset over cJTAG and the ICEPick chip erase are
-exercised against the SYNTHETIC model only (`xds.NewSimCC26x2`).
+Region/bank erase, restore and the ICEPick chip erase are exercised against
+the SYNTHETIC model only (`xds.NewSimCC26x2`).
