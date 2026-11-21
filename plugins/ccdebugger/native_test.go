@@ -106,19 +106,47 @@ func TestNativeInfoAndCapabilities(t *testing.T) {
 	}
 }
 
-func TestSmartRF04ChipconIsDiscoveredToolOnly(t *testing.T) {
+func TestSmartRF04DDIsNative(t *testing.T) {
 	sr := map[string]string{"idVendor": "11a0", "idProduct": "eb20", "product": "SmartRF04DD", "busnum": "2", "devnum": "54"}
-	o := &opens{}
-	p := NewWithNative(sysfsWith(t, sr), &fakeTool{}, o.open)
+	a, _ := native.LookupAdapter(0x11A0, 0xEB20)
+	var addrs []native.Address
+	open := func(addr native.Address) (native.Transport, error) {
+		addrs = append(addrs, addr)
+		return native.NewSimulatorFor(a), nil
+	}
+	tool := &fakeTool{}
+	p := NewWithNative(sysfsWith(t, sr), tool, open)
 	devs, _ := p.ListDevices(context.Background())
-	if len(devs) != 1 || devs[0].Properties["vid"] != "11a0" || devs[0].Properties["native"] != "false" {
-		t.Fatalf("SmartRF04 discovery: %v", devs)
+	if len(devs) != 1 || devs[0].Properties["vid"] != "11a0" || devs[0].Properties["native"] != "true" {
+		t.Fatalf("SmartRF04DD discovery: %v", devs)
 	}
-	if pluginv1.HasCapability(devs[0].Capabilities, pluginv1.CapMemoryAccess) || !pluginv1.HasCapability(devs[0].Capabilities, pluginv1.CapFlashProgramming) {
-		t.Fatalf("SmartRF04 capabilities: %v", devs[0].Capabilities)
+	if !pluginv1.HasCapability(devs[0].Capabilities, pluginv1.CapMemoryAccess) {
+		t.Fatalf("SmartRF04DD capabilities: %v", devs[0].Capabilities)
 	}
+	if err := p.OpenDevice(context.Background(), "usb-2-54", map[string]any{"access": "reset-debug-session", "allow_target_reset": true, "allow_memory_access": true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := invoke(t, p, pluginv1.CapDebugProbe, "attach", "usb-2-54", nil); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	r, err := invoke(t, p, pluginv1.CapMemoryAccess, "read", "usb-2-54", map[string]any{"space": "xdata", "address": "0x0000", "length": 4.0})
+	if err != nil {
+		t.Fatalf("xdata read: %v", err)
+	}
+	if len(addrs) != 1 || addrs[0] != (native.Address{Bus: 2, Address: 54}) || len(tool.runs) != 0 {
+		t.Fatalf("auto backend did not use the native transport: native=%v runs=%v result=%v", addrs, tool.runs, r)
+	}
+}
+
+func TestSmartRF04EBStaysOnTool(t *testing.T) {
+	sr := map[string]string{"idVendor": "11a0", "idProduct": "db20", "product": "SmartRF04EB", "busnum": "2", "devnum": "54"}
+	o := &opens{}
 	tool := &fakeTool{out: "  Programmer: SmartRF04EB\n  Target: CC2530\n"}
-	p = NewWithNative(sysfsWith(t, sr), tool, o.open)
+	p := NewWithNative(sysfsWith(t, sr), tool, o.open)
+	devs, _ := p.ListDevices(context.Background())
+	if len(devs) != 1 || devs[0].Properties["native"] != "false" || pluginv1.HasCapability(devs[0].Capabilities, pluginv1.CapMemoryAccess) {
+		t.Fatalf("SmartRF04EB discovery: %v", devs)
+	}
 	if err := p.OpenDevice(context.Background(), "usb-2-54", nil); err != nil {
 		t.Fatal(err)
 	}

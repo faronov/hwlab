@@ -15,7 +15,7 @@ Code, fixtures and passing tests are not hardware validation.
 | bflb: native boot-ROM ISP over the chip's USB (or a UART) | complete | real-hardware-partial | real | vendor-sdk | no |
 | can: SocketCAN (Linux) + virtual bus | complete | synthetic | synthetic | native | no |
 | cc2340: internal/ti/cc23xx over internal/adiv5 + internal/cortexm; reached through native XDS110 and CMSIS-DAP HID | partial | real-hardware-partial | real | native | no |
-| ccdebugger: native Go USB (0451:16a2) | partial | real-hardware-partial | real | native | no |
+| ccdebugger: native Go USB (CC Debugger 0451:16a2, SmartRF04DD 11a0:eb20) | partial | real-hardware-partial | real | native | no |
 | ccdebugger: cc-tool fallback | complete | synthetic | none | optional-external-tool | no |
 | cmsisdap: native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1), or macOS IOKit bulk (v2 only) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt, simulator-tested) | partial | real-hardware-partial | real | native | no |
 | espusbjtag: native Go Espressif USB-JTAG transport (Linux usbfs or macOS IOKit) + JTAG + RISC-V DM (spec 0.13) or Xtensa OCD (ESP32-S3) + SPI1 flash driver over system bus access or a halted Xtensa core | partial | real-hardware-partial | real | native | no |
@@ -156,7 +156,7 @@ Code, fixtures and passing tests are not hardware validation.
 
 ### ccdebugger — TI CC-Debugger / CC2530 debug interface
 
-**native Go USB (0451:16a2)**
+**native Go USB (CC Debugger 0451:16a2, SmartRF04DD 11a0:eb20)**
 
 - implementation: partial; validation: real-hardware-partial; dependency: native (Linux usbfs access (udev rule))
 - verified:
@@ -174,6 +174,7 @@ Code, fixtures and passing tests are not hardware validation.
   - XDATA scratch write with restore and unchanged CPU state
   - halt and resume of a running target
   - hardware breakpoint and single step
+  - the same read/debug hardware tests through a SmartRF04DD (bulk endpoints 0x82/0x02 taken from its descriptor)
 - unverified:
   - chip erase
   - page erase
@@ -182,6 +183,7 @@ Code, fixtures and passing tests are not hardware validation.
   - secondary IEEE location 0x3FFE8 (this device's secondary address is erased, so the location is unconfirmed)
   - debug-locked targets
   - CC253x/CC254x chips other than the connected CC2530F256
+  - SmartRF04EB 11a0:db20 and SmartRF05EB 0451:16a0 (cc-tool only)
 - known gaps:
   - flash erase, program and config write are implemented natively but deliberately never run: the only CC2530 is private (implemented: yes, validation: simulator only)
   - reset (run) of the target without debug attach is cc-tool only

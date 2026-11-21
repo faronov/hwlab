@@ -29,6 +29,34 @@ const (
 	EndpointIn  = 0x84
 )
 
+// Adapter is a USB debug adapter that speaks the CC-Debugger protocol. The
+// adapters differ only in USB identity and bulk endpoint numbers; [Open]
+// checks that the endpoints exist in the descriptor before using them.
+type Adapter struct {
+	VID, PID    uint16
+	Name        string
+	EndpointIn  uint8
+	EndpointOut uint8
+}
+
+// Adapters lists the adapters the native backend drives. Each identity and
+// endpoint pair was read from a real device's descriptors and the debug
+// protocol was exercised on it.
+var Adapters = []Adapter{
+	{VID: VID, PID: PID, Name: "CC Debugger", EndpointIn: EndpointIn, EndpointOut: EndpointOut},
+	{VID: 0x11A0, PID: 0xEB20, Name: "SmartRF04DD", EndpointIn: 0x82, EndpointOut: 0x02},
+}
+
+// LookupAdapter returns the native adapter with the given USB identity.
+func LookupAdapter(vid, pid uint16) (Adapter, bool) {
+	for _, a := range Adapters {
+		if a.VID == vid && a.PID == pid {
+			return a, true
+		}
+	}
+	return Adapter{}, false
+}
+
 // CC2530 debug commands (SWRU191F).
 const (
 	cmdWriteConfig   = 0x1D

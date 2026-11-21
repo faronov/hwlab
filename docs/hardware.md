@@ -6,7 +6,7 @@
 | Nordic PPK2 (1915:c00a) | `ppk2` | **validated** (ampere, source, 10 min stress, replug); calibration vs. known load and digital signals unverified | [results](notes/phase2-ppk2-results.md) |
 | SEGGER J-Link / RTT (`jlink-segger`) | `jlink` | **hardware-validated (non-destructive ops on a J-Link OB); target RTT data, write and flash unverified** | see below, [ADR 0012](adr/0012-jlink-debugprobe.md), [results](notes/phase3c-jlink-results.md) |
 | SEGGER J-Link, native (`jlink-native`) | `jlinknative` | **real-hardware-validated on an EFR32MG1P** (SWD, Cortex-M debug, RTT, unplug/replug); JTAG untested, nRF52840/multi-probe not run. **macOS:** read-only run on a J-Link OB (discovery, info, SWD identify, memory reads, halt/resume, busy) | [J-Link native](#j-link-native-jlink-native), [ADR 0034](adr/0034-native-jlink.md), [results](notes/phase-native-jlink-results.md), [macOS](#native-usb-probes-on-macos) |
-| TI CC-Debugger (0451:16a2) + CC2530 | `ccdebugger` | **read/debug validated** (native identify, lock/IEEE/info page, registers, SFR, XDATA scratch write, halt/resume, breakpoint, step, flash read and CRC verify matching cc-tool; replay); native chip/page erase, program and config write implemented, **not run on hardware** | see below, [ADR 0018](adr/0018-native-ccdebugger.md), [ADR 0013](adr/0013-ccdebugger-backend.md), [results](notes/phase3d-native-results.md), [phase 15](notes/phase15-ccdebugger-results.md) |
+| TI CC-Debugger (0451:16a2) or Chipcon SmartRF04DD (11a0:eb20) + CC2530 | `ccdebugger` | **read/debug validated** (native identify, lock/IEEE/info page, registers, SFR, XDATA scratch write, halt/resume, breakpoint, step, flash read and CRC verify matching cc-tool; replay); native chip/page erase, program and config write implemented, **not run on hardware** | see below, [ADR 0018](adr/0018-native-ccdebugger.md), [ADR 0013](adr/0013-ccdebugger-backend.md), [results](notes/phase3d-native-results.md), [phase 15](notes/phase15-ccdebugger-results.md) |
 | ESP32-C6 native USB Serial/JTAG (303a:1001) | `espusbjtag` | **real-hardware-validated** (per-capability list in the [support matrix](support-matrix.md)): debug, reset, unplug/replug, flash backup/program/verify/restore; hart 1, app/chip erase not verified | see below, [ADR 0029](adr/0029-espressif-usb-jtag-riscv-dm.md), [ADR 0030](adr/0030-esp32c6-flash-and-debug.md), [phase 18](notes/phase18-esp-usb-jtag-results.md), [phase 19](notes/phase19-esp-flash-debug-results.md) |
 | Sipeed RV-Debugger-BL702 / XT-ZB1 (0403:6010, FT2232D emulation) | `ftdi` | **FTDI USB transport and MPSSE real-hardware-partial; JTAG target scan implemented but untested (no target attached)** | see below, [ADR 0028](adr/0028-native-ftdi-mpsse-jtag.md), [results](notes/phase16-ftdi-mpsse-jtag-results.md) |
 | Saleae Logic 2 | `saleae` | **hardware-validated (digital + UART/I2C analyzers, original Logic); analog unverified** | see below, [ADR 0015](adr/0015-saleae-logic2.md), [results](notes/phase3b-saleae-results.md) |
@@ -304,8 +304,8 @@ is an optional fallback (and cross-check); only a direct target `reset` still
 requires it. `hwlab doctor` reports the native backend and cc-tool separately.
 hwlab never bundles it.
 
-1. Add a udev rule (or group access) for `0451:16a2` so the `/dev/bus/usb` node is
-   user-accessible. Install `cc-tool` only if you need the fallback operations
+1. Add a udev rule (or group access) for `0451:16a2` (CC Debugger) or `11a0:eb20`
+   (SmartRF04DD) so the `/dev/bus/usb` node is user-accessible. Install `cc-tool` only if you need the fallback operations
    (`HWLAB_CC_TOOL` overrides the location). The native backend needs interface 0
    free; a cc-tool operation drops the native debug session first.
 2. Native capabilities: `DebugProbe` (attach, status, reset_halt, halt, resume,
