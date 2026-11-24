@@ -366,7 +366,7 @@ func (a *App) buildSteps(spec RunSpec, targets []capture.Target) ([]capture.Step
 		if ms == nil {
 			return nil, fmt.Errorf("step %d: plugin %q does not declare method %s", i+1, tg.PluginID, s.Call)
 		}
-		if needsConfirmation(ms, s.Args) {
+		if ms.GetDanger() != pluginv1.Danger_DANGER_SAFE {
 			act := policy.Action{Kind: policy.KindInvoke, Plugin: tg.PluginID, Device: tg.DeviceID, Capability: s.Capability(), Method: s.Method()}
 			if err := a.Policy.Authorize(act, spec.Confirm); err != nil {
 				return nil, fmt.Errorf("step %d (%s): %w", i+1, s.Call, err)

@@ -540,22 +540,6 @@ func TestProgramSurvivesALostBlock(t *testing.T) {
 	}
 }
 
-// Only program and restore mark dry_run for the core's no-confirmation path.
-func TestDryRunMarkedOnlyWhereItPlans(t *testing.T) {
-	for _, m := range (*Plugin)(nil).Info().Methods {
-		var s struct {
-			Properties map[string]map[string]any `json:"properties"`
-		}
-		if err := json.Unmarshal([]byte(m.ArgsSchemaJson), &s); err != nil {
-			t.Fatalf("%s: %v", m.Name, err)
-		}
-		marked, _ := s.Properties["dry_run"]["x-hwlab-dry-run"].(bool)
-		if want := m.Name == "program" || m.Name == "restore"; marked != want {
-			t.Errorf("%s.%s: dry-run mark %v", m.Capability, m.Name, marked)
-		}
-	}
-}
-
 // After a restore rewrote the partition table, the next gate uses the new
 // layout, and info shows it.
 func TestLayoutIsReadAgainAfterAModification(t *testing.T) {
@@ -610,29 +594,16 @@ func TestResetRefusedOnATIDongle(t *testing.T) {
 	must(t, p, "cp210x-loc1", "FlashProgramming.reset", map[string]any{"allow_reset": true, "allow_other_chip": true})
 }
 
-// A dry run (no confirmation) leaves a running chip running; a chip that
-// was already in the loader stays there.
-func TestDryRunPutsTheChipBack(t *testing.T) {
+// A dry run writes nothing and, like identify, leaves the chip in the loader.
+func TestDryRunLeavesTheChipInTheLoader(t *testing.T) {
 	e, s := simEntry("dut", rom.ESP32, rom.EntryClassic, KindUART)
 	p := newPlugin(t, e)
 	r := must(t, p, "dut", "FlashProgramming.program", map[string]any{"address": "0x110000", "path": appImage(t, rom.ESP32, "6"), "dry_run": true})
-	if s.Mode() != "app" || r["reset_after_dry_run"] == nil || !strings.Contains(r["loader_state"].(string), "reset back") {
+	if s.Mode() != "stub" || r["note"] != dryNote || s.Commands[rom.CmdFlashBegin]+s.Commands[rom.CmdEraseRegion] != 0 {
 		t.Fatalf("%v %v", r, s)
 	}
-	bk := backupOf(t, p, "dut") // single call: leaves the chip in the loader
-	r = must(t, p, "dut", "FlashProgramming.restore", map[string]any{"path": bk, "dry_run": true})
-	if s.Mode() != "app" || r["reset_after_dry_run"] == nil {
-		t.Fatalf("%v %v", r, s)
-	}
-	open(t, p, "dut", nil)
-	must(t, p, "dut", "TargetIdentify.identify", nil)
-	r = must(t, p, "dut", "FlashProgramming.restore", map[string]any{"path": bk, "dry_run": true})
-	if s.Mode() != "stub" || r["reset_after_dry_run"] != nil || !strings.Contains(r["loader_state"].(string), "already") {
-		t.Fatalf("%v %v", r, s)
-	}
-	j, _ := os.ReadFile(p.journalPath())
-	if !strings.Contains(string(j), `"reason":"after a dry run"`) {
-		t.Fatalf("%s", j)
+	if _, err := os.Stat(p.journalPath()); err == nil {
+		t.Fatal("a dry run is not journaled: it neither writes nor resets on its own")
 	}
 }
 

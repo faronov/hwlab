@@ -314,6 +314,7 @@ Code, fixtures and passing tests are not hardware validation.
   - flash with encryption or secure boot enabled is read-only; eFuses are never written
   - the esp-flasher-stub RUN_USER_CODE/FLASH_END reboot are no-ops: leaving the loader is a line reset (a manual board needs a button)
   - the H2 stub behind the S3 bridge has no UART flow control: a lost byte costs a block restart
+  - program/restore dry runs write nothing but need confirmation: like identify/info/backup they reset the chip into the loader and leave it there
 
 ### espusbjtag — Espressif native USB Serial/JTAG (ESP32-C6, ESP32-H2, ESP32-C5, ESP32-S3) + generic RISC-V Debug Module + generic Xtensa OCD + ESP flash
 

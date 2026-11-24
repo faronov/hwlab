@@ -25,7 +25,8 @@ corrupted FLASH_DATA restarts the download at that block (resync + new
 FLASH_BEGIN, bounded, `write_retries` reported and journaled); no error maps
 to `Unavailable` any more (a loader timeout is `DeadlineExceeded`); restore
 of one partition or address range from a verified backup; restore needs
-`allow_flash` only; program/restore dry runs need no `--yes`.
+`allow_flash` only. Dry runs keep needing `--yes`: they reset the chip into
+the loader.
 
 Not run: `usj` mode=bootloader on its own, recovery of an open `espusbjtag`
 session after a USJ reset, erase operations.

@@ -1082,11 +1082,10 @@ Safety (same names as `espusbjtag`):
   program, the region comes back without a new backup. `confirm_protected` is
   needed when a differing sector is protected in the backup's or the chip's
   layout.
-* `--arg dry_run=true` on program and restore only reads and plans; it needs
-  no `--yes`, token, permission or backup (the schema marks `dry_run` with
-  `x-hwlab-dry-run`, ADR 0004). Like identify/info it still resets the chip
-  once into the loader; a chip that was running is then reset back into its
-  application (`loader_state` in the result).
+* `--arg dry_run=true` on program and restore only reads and plans (no token,
+  permission or backup), but like identify/info/backup it resets the chip into
+  the loader and leaves it there, so it needs `--yes` like any other reset of
+  the target; `FlashProgramming.reset` starts the application again.
 * Errors: a loader that stops answering is TIMEOUT (`DeadlineExceeded`), never
   gRPC `Unavailable` (which the core reports as a crashed plugin).
 * Every erase/program/restore/reset is journaled in
@@ -1103,7 +1102,7 @@ hwlab target bsl reset    --plugin esprom --device usj-<mac> --config allow_rese
 hwlab target flash program --plugin esprom --device bridge-<S3 serial> --path app.bin --arg address=0x10000 \
     --token program-flash --arg backup=<backup .bin> --config allow_flash=true --yes
 hwlab target flash restore --plugin esprom --device bridge-<S3 serial> --arg backup=<backup .bin> --arg partition=ota_1 \
-    --arg dry_run=true                                     # plan only, no --yes
+    --arg dry_run=true --yes                               # plan only; the chip stays in the loader
 hwlab target flash restore --plugin esprom --device bridge-<S3 serial> --arg backup=<backup .bin> --arg partition=ota_1 \
     --token restore-flash --config allow_flash=true --yes
 ```

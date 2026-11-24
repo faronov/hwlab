@@ -58,9 +58,7 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 	backup := `,"backup":{"type":"string","description":"a FlashProgramming.backup .bin of this chip (required)"}`
 	prot := `,"confirm_protected":{"type":"string","enum":["` + tokProtected + `"],"description":"needed when the range touches the bootloader slot, the partition table or a non-app partition (nvs, phy_init, otadata, coredump, custom data), or anything without a valid partition table"}`
 	reset := `,"reset":{"type":"string","enum":["run","none"],"description":"after success: run boots the application (needs allow_reset), none (default) stays in the loader"}`
-	// The x-hwlab-dry-run mark lets the core run a dry run without
-	// confirmation (ADR 0004): a dry run here only reads and plans.
-	dry := `,"dry_run":{"type":"boolean","x-hwlab-dry-run":true,"description":"plan only (reads and chip MD5s, nothing is written): needs no confirmation, token, permission or backup"}`
+	dry := `,"dry_run":{"type":"boolean","description":"plan only (reads and chip MD5s, nothing is written; no token, permission or backup needed). It still resets the chip into the loader, where it stays, so the call is confirmed like any other"}`
 	return &pluginv1.PluginInfo{
 		Id: "esprom", Name: "Espressif serial bootloader (ROM download mode + flasher stub)", Vendor: "hwlab", Version: "0.1.0",
 		Capabilities:        deviceCaps(),

@@ -21,7 +21,6 @@ import (
 	"github.com/faronov/hwlab/internal/cortexm"
 	"github.com/faronov/hwlab/internal/policy"
 	"github.com/faronov/hwlab/internal/usb"
-	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 )
 
 func internalApp(t *testing.T) *App {
@@ -286,32 +285,5 @@ func TestArtifactsBoundedAndConfined(t *testing.T) {
 		if _, err := a.ReadArtifact(ref, 0, 4, "hex"); err == nil {
 			t.Errorf("ref %q readable", ref)
 		}
-	}
-}
-
-// Only a dry run of a method whose schema marks dry_run skips confirmation.
-func TestDryRunSkipsConfirmationOnlyWhenDeclared(t *testing.T) {
-	marked := &pluginv1.MethodSpec{Danger: pluginv1.Danger_DANGER_CONFIRM,
-		ArgsSchemaJson: `{"type":"object","properties":{"dry_run":{"type":"boolean","x-hwlab-dry-run":true}}}`}
-	plain := &pluginv1.MethodSpec{Danger: pluginv1.Danger_DANGER_CONFIRM,
-		ArgsSchemaJson: `{"type":"object","properties":{"dry_run":{"type":"boolean"}}}`}
-	for _, c := range []struct {
-		spec *pluginv1.MethodSpec
-		args map[string]any
-		want bool
-	}{
-		{marked, map[string]any{"dry_run": true}, false},
-		{marked, map[string]any{"dry_run": false}, true},
-		{marked, map[string]any{"dry_run": "true"}, true},
-		{marked, nil, true},
-		{plain, map[string]any{"dry_run": true}, true},
-	} {
-		if got := needsConfirmation(c.spec, c.args); got != c.want {
-			t.Errorf("%s %v: needs confirmation %v, want %v", c.spec.GetArgsSchemaJson(), c.args, got, c.want)
-		}
-	}
-	// The keyword is accepted by the schema validator.
-	if err := validateSchema(marked.GetArgsSchemaJson(), map[string]any{"dry_run": true}); err != nil {
-		t.Fatal(err)
 	}
 }

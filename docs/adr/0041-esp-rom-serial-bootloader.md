@@ -124,13 +124,13 @@ enters again by itself.
   `allow_chip_erase` (mode=chip), `allow_reset` (reset, `reset=run`) are
   dangerous configuration keys. Restore, like program, rewrites only
   changed sectors and needs `allow_flash` only.
-* `dry_run=true` on program and restore is marked `x-hwlab-dry-run` in the
-  schema: it only reads and plans, so the core does not ask for confirmation
-  (ADR 0004), and it needs no token, permission or backup. It still resets
-  the chip once to enter the loader; a chip that was not in the loader before
-  the call is reset back into its application afterwards (journaled,
-  `loader_state` and `reset_after_dry_run` in the result); with entry=none it
-  stays in the loader.
+* `dry_run=true` on program and restore writes nothing and needs no token,
+  permission or backup, but it enters the loader (a reset of the target) and
+  leaves the chip there like identify/info/backup, so it stays a CONFIRM call
+  that needs `--yes`/`confirm`. An automatic reset back into the application
+  was tried and dropped: after an erase or a failed write the chip is left in
+  the loader on purpose, and a plugin cannot tell that state apart reliably,
+  so an unconfirmed reset could boot half-written flash.
 * the partition table is read again after every erase, program or restore
   (successful or not), so later gates and `info` never use a stale layout.
 * `FlashProgramming.reset` applies the same tibsl guard as the ROM entry:

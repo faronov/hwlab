@@ -583,7 +583,8 @@ func Registry() []Entry {
 				"the FLASH_DATA block restart and the region restore on hardware", "ESP32-C6 identity", "rates above 921600 Bd", "Windows (no atomic DTR/RTS change)", "CH34x and FTDI bridges"},
 			Gaps: []string{"flash only on ESP32, ESP32-S3, ESP32-C6 and ESP32-H2 (stubs vendored); S2/C2/C3/C5/P4 are identify-only", "no compressed or encrypted writes, no secure download mode, no USB-OTG download",
 				"flash with encryption or secure boot enabled is read-only; eFuses are never written", "the esp-flasher-stub RUN_USER_CODE/FLASH_END reboot are no-ops: leaving the loader is a line reset (a manual board needs a button)",
-				"the H2 stub behind the S3 bridge has no UART flow control: a lost byte costs a block restart"},
+				"the H2 stub behind the S3 bridge has no UART flow control: a lost byte costs a block restart",
+				"program/restore dry runs write nothing but need confirmation: like identify/info/backup they reset the chip into the loader and leave it there"},
 		}}},
 		{Plugin: "stm32dfu", Title: "STM32 ROM USB DFU bootloader (DfuSe, 0483:df11): STM32WB5x user flash below SFSA", Backends: []Backend{{
 			Name: "native USB DFU 1.1 + ST DfuSe control transfers", Implementation: ImplComplete, Validation: ValSynthetic, Fixture: FixtureSynthetic,

@@ -664,36 +664,9 @@ func (d *device) backupGate(a map[string]any, addr uint32, n int) ([]byte, map[s
 	return b, res, nil
 }
 
-// dryRun runs a plan: a dry run needs no confirmation (ADR 0004), so it
-// must not leave a running target halted. When the chip was not in the
-// loader before the call, it is reset back into its application.
-func (d *device) dryRun(ctx context.Context, plan func() (map[string]any, error)) (map[string]any, error) {
-	wasInLoader := d.inROM
-	res, err := d.withROM(ctx, plan)
-	if err != nil || wasInLoader {
-		if err == nil {
-			res["loader_state"] = "unchanged: the chip was already in the loader"
-		}
-		return res, err
-	}
-	if !d.o.entry.Wired() {
-		res["loader_state"] = "entry=none drives no reset line: the chip stays in the loader until it is reset by hand"
-		return res, nil
-	}
-	j, jerr := d.p.journalStart(d, "reset", map[string]any{"mode": "run", "reason": "after a dry run"})
-	r, err := d.resetTo(ctx, "run", 0)
-	if jerr == nil {
-		_ = d.p.journalEnd(j, err, nil)
-	}
-	if err != nil {
-		res["reset_after_dry_run_error"] = err.Error()
-		res["loader_state"] = "the reset back into the application failed: the chip may still be in the loader"
-		return res, nil
-	}
-	res["reset_after_dry_run"] = r
-	res["loader_state"] = "entered for the plan, then reset back into the application"
-	return res, nil
-}
+// dryNote: a dry run writes nothing, but it entered the loader like
+// identify/info/backup, so it is confirmed like any reset of the target.
+const dryNote = "nothing was written; the chip stays in the loader until FlashProgramming.reset"
 
 // ---- write planning ----
 
@@ -970,11 +943,7 @@ func (d *device) flashProgram(ctx context.Context, a map[string]any) (map[string
 			return nil, err
 		}
 	}
-	run := d.withROM
-	if dry {
-		run = d.dryRun
-	}
-	return run(ctx, func() (map[string]any, error) {
+	return d.withROM(ctx, func() (map[string]any, error) {
 		if err := d.needStub(); err != nil {
 			return nil, err
 		}
@@ -1006,7 +975,7 @@ func (d *device) flashProgram(ctx context.Context, a map[string]any) (map[string
 				return nil, err
 			}
 			p.report(res)
-			res["dry_run"] = true
+			res["dry_run"], res["note"] = true, dryNote
 			need := "allow_flash, confirm=" + tokProgram + ", backup=<FlashProgramming.backup .bin>"
 			if protectedGate(map[string]any{}, hit) != nil {
 				need += ", confirm_protected=" + tokProtected
@@ -1248,11 +1217,7 @@ func (d *device) flashRestore(ctx context.Context, a map[string]any) (map[string
 			return nil, err
 		}
 	}
-	run := d.withROM
-	if dry {
-		run = d.dryRun
-	}
-	return run(ctx, func() (map[string]any, error) {
+	return d.withROM(ctx, func() (map[string]any, error) {
 		if err := d.needStub(); err != nil {
 			return nil, err
 		}
@@ -1280,7 +1245,7 @@ func (d *device) flashRestore(ctx context.Context, a map[string]any) (map[string
 		hit := p.sectorsTouched(append(regions(len(b), parts, ptErr), d.layout()...))
 		res["regions_changed"] = regionNames(hit)
 		if dry {
-			res["dry_run"] = true
+			res["dry_run"], res["note"] = true, dryNote
 			need := "allow_flash, confirm=" + tokRestore
 			if protectedGate(map[string]any{}, hit) != nil {
 				need += ", confirm_protected=" + tokProtected
