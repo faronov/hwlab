@@ -995,6 +995,99 @@ hwlab target flash program --plugin tibsl --device cp210x-loc20-7.2 --path fw.bi
 hwlab target bsl reset --plugin tibsl --device cp210x-loc20-7.2 --yes
 ```
 
+## Espressif serial bootloader (`esprom`)
+
+A native Go client of the ESP ROM download mode and Espressif's
+`esp-flasher-stub` (vendored, Apache-2.0 OR MIT, `third_party/esp-flasher-stub`)
+over a serial port ([ADR 0041](adr/0041-esp-rom-serial-bootloader.md)).
+esptool and Python are not used and no esptool code or stub is included.
+
+1. Plug the board in. Listing is passive (IORegistry/sysfs only) and offers
+   three target kinds:
+   * `esp32_uart` — CP210x/CH34x/FTDI bridges, ids like tibsl's
+     (`cp210x-<serial>`, `cp210x-loc<USB path>`). macOS publishes a CP210x
+     twice (`cu.usbserial-*` and the SiLabs VCP's `cu.SLAB_USBtoUART*`): that
+     is one device, the first node is opened, the other is `alt_ports`.
+     Example: the SONOFF Dongle Max is `esprom/cp210x-<CP2102N serial>`.
+   * `h2_bridge` — CDC 0 of the zigbee-rs-hub S3 firmware in bridge mode
+     (`303a:4002`, product "... bridge"), id `bridge-<S3 serial>`. The
+     console (CDC 1) is listed as `bridge_console_port` and never opened; a
+     bridge is never confused with the S3's own USB-Serial/JTAG (`303a:1001`).
+   * `usj` — a chip's own USB-Serial/JTAG CDC port (`303a:1001`), id
+     `usj-<mac>`, with `espusbjtag_device` naming the same chip's JTAG view.
+   A port where `tibsl` identified a TI chip is marked `tibsl_identified_chip`
+   and refused unless `allow_other_chip=true`. The last identity per id is
+   cached (`$HWLAB_HOME/cache/esprom-identity.json`); the MAC (hex, no colons)
+   then selects the device. Optional `$HWLAB_HOME/esprom.yaml` (per-device
+   `entry`/`baud`, `ignore` list) and `HWLAB_ESPROM_PORTS=name=/dev/tty[@baud][:classic|usj|none]`.
+2. Entry (`entry`, per device or call):
+   * `classic` (default on UART bridges and the S3 bridge): RTS drives EN,
+     DTR the boot strap through the two-transistor circuit; both lines change
+     in ONE `TIOCMSET`: (DTR,RTS)=(0,1) EN low 100 ms → (1,0) EN released with
+     the strap low, held 100 ms (550 ms on the automatic second attempt) →
+     (0,0). Equal levels release both, so opening a port never resets the
+     chip.
+   * `usj` (default on 303a:1001): the ESP32-S3 TRM v1.8 table 33.3-2 ((RTS,DTR)
+     (0,0) clears the download flag, (0,1) sets it, (1,0) resets the chip,
+     (1,1) nothing); download mode = flag set → (1,1) → reset → idle
+     (table 33.4-3).
+   * `none`: the chip is already in download mode (BOOT held at reset).
+   Every ROM operation resets the chip into download mode, SYNCs at 115200,
+   detects it (ROM word 0x40001000; GET_SECURITY_INFO chip id), uploads the
+   stub, switches to `baud` (921600 on UART bridges, 460800 behind the S3
+   bridge, none on USB) and attaches the flash. The chip stays in the loader
+   until `FlashProgramming.reset`.
+3. `FlashProgramming.reset` (`hwlab target bsl reset --config allow_reset=true
+   --yes`) only drives the lines (no ROM, works on a hung application):
+   `--arg mode=run` (default) is the classic RTS pulse with DTR released, or on
+   `usj` the USB-Serial/JTAG chip reset (table 33.4-4: clear flag, reset,
+   release); `--arg mode=bootloader` leaves the chip in ROM download mode and
+   checks it answers SYNC; `--arg console_ms=N` captures the application's
+   console at 115200 after a run reset. A port that re-enumerates after a
+   USB-Serial/JTAG reset is reopened (bounded wait).
+4. `FlashProgramming.backup` before any change: the whole flash read twice
+   (READ_FLASH, the stub's MD5 per 256 KiB segment, lost packets re-read),
+   identical SHA-256 and the chip's whole-flash SPI_FLASH_MD5 equal to the host
+   MD5; stored 0600 under `$HWLAB_HOME/artifacts/esprom-flash` (or `dir`) with a
+   manifest bound to chip, MAC, JEDEC id and size, including the decoded
+   partition table, app descriptors and OTA selection.
+
+Safety (same names as `espusbjtag`):
+
+* Tokens `program-flash`, `restore-flash`, `erase-flash-region`,
+  `erase-app-partition`, `erase-entire-chip`; device settings `allow_flash`,
+  `allow_erase`, `allow_chip_erase`, `allow_reset` (dangerous configuration,
+  `--yes`).
+* Protected ranges need `confirm_protected=modify-protected-region`: the
+  bootloader slot 0x0–0x8000 (ESP32 bootloader at 0x1000), the partition-table
+  sector and every partition that is not an application (nvs, phy_init,
+  otadata, coredump, nvs_keys, custom data such as `hubdata`); without a valid
+  table at 0x8000 the whole flash.
+* program/erase/restore need a verified backup of this chip whose bytes still
+  match the region; ESP images (0xE9) are parsed, must carry the chip's image
+  chip id and lie inside one region; other data needs `raw=true`. Only 4 KiB
+  sectors whose MD5 differs are rewritten (edge bytes kept), every run and the
+  result are checked by the chip's MD5. Flash with encryption or secure boot
+  enabled is read-only. eFuses are never written.
+* Every erase/program/restore/reset is journaled in
+  `$HWLAB_HOME/artifacts/esprom-flash/journal.jsonl` (refused if the journal
+  cannot be written).
+
+```sh
+hwlab devices                                            # esprom/cp210x-<serial> (unprobed)
+hwlab target bsl identify --plugin esprom --device cp210x-<serial>
+hwlab target flash info   --plugin esprom --device cp210x-<serial>
+hwlab target flash backup --plugin esprom --device cp210x-<serial> --arg dir=$HOME/.hwlab/artifacts/<board>
+hwlab target bsl reset    --plugin esprom --device cp210x-<serial> --config allow_reset=true --arg console_ms=5000 --yes
+hwlab target bsl reset    --plugin esprom --device usj-<mac> --config allow_reset=true --yes        # USB-Serial/JTAG chip reset
+hwlab target flash program --plugin esprom --device bridge-<S3 serial> --path app.bin --arg address=0x10000 \
+    --token program-flash --arg backup=<backup .bin> --config allow_flash=true --yes
+```
+
+Hardware test (read-only: identify, optional backup, run reset):
+`HWLAB_ESPROM_DEVICE=cp210x-<serial> [HWLAB_ESPROM_BACKUP_DIR=<dir>] go test -tags hardware -count=1 -v ./plugins/esprom/ -run TestHW`.
+Status: [docs/notes/esprom-sonoff-dongle-max-results.md](notes/esprom-sonoff-dongle-max-results.md).
+
 ## Silicon Labs Wireless Starter Kit (`wstk`)
 
 The `wstk` plugin talks to a WSTK mainboard (BRD4001A) natively; Simplicity

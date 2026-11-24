@@ -216,3 +216,35 @@ func TestXDS110DoesNotOverclaimTargetOperationsOrEnergyTrace(t *testing.T) {
 		}
 	}
 }
+
+// esprom ran read-only on one SONOFF Dongle Max (ESP32 + CP2102N). The H2
+// bridge, USB-Serial/JTAG and every write path never ran on hardware and must
+// stay graded as such until a documented run upgrades them.
+func TestESPROMClaimsOnlyTheDongleMaxRun(t *testing.T) {
+	e, ok := Lookup("esprom")
+	if !ok {
+		t.Fatal("esprom missing")
+	}
+	b := e.Backends[0]
+	if b.Validation != ValHardwarePartial || b.Cgo != "no" || b.Dependency != DepNative {
+		t.Fatalf("%+v", b)
+	}
+	got := map[string]CapStatus{}
+	for _, c := range b.Capabilities {
+		got[c.Name] = c.Status
+	}
+	for name, want := range map[string]CapStatus{
+		"classic DTR/RTS entry (esp32_uart)":                   CapRealHW,
+		"flash read / backup":                                  CapRealHW,
+		"h2_bridge (ESP32-H2 behind the S3 bridge)":            CapSimulatedOnly,
+		"usj entry and USB-Serial/JTAG chip reset (usj_reset)": CapSimulatedOnly,
+		"erase / program / restore":                            CapSimulatedOnly,
+	} {
+		if got[name] != want {
+			t.Errorf("%s: %q, want %q", name, got[name], want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join("..", "..", "docs", "notes", "esprom-sonoff-dongle-max-results.md")); err != nil {
+		t.Errorf("hardware evidence note missing: %v", err)
+	}
+}
