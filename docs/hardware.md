@@ -1063,12 +1063,29 @@ Safety (same names as `espusbjtag`):
   sector and every partition that is not an application (nvs, phy_init,
   otadata, coredump, nvs_keys, custom data such as `hubdata`); without a valid
   table at 0x8000 the whole flash.
-* program/erase/restore need a verified backup of this chip whose bytes still
-  match the region; ESP images (0xE9) are parsed, must carry the chip's image
-  chip id and lie inside one region; other data needs `raw=true`. Only 4 KiB
+* Permissions: program and restore need `allow_flash`; erase needs
+  `allow_flash` + `allow_erase` (+ `allow_chip_erase` for `mode=chip`);
+  reset and `reset=run` need `allow_reset`.
+* program/erase need a verified backup of this chip whose bytes still match
+  the region; ESP images (0xE9) are parsed, must carry the chip's image chip
+  id and lie inside one region; other data needs `raw=true`. Only 4 KiB
   sectors whose MD5 differs are rewritten (edge bytes kept), every run and the
-  result are checked by the chip's MD5. Flash with encryption or secure boot
-  enabled is read-only. eFuses are never written.
+  result are checked by the chip's MD5. A FLASH_DATA that gets no answer (or
+  a checksum error) restarts the download at that block (resync + new
+  FLASH_BEGIN, at most 4 times per run; `write_retries` in the result and the
+  journal). Flash with encryption or secure boot enabled is read-only. eFuses
+  are never written.
+* restore takes a verified backup of this chip and puts back the whole flash,
+  one partition of the backup's table (`--arg partition=ota_1`) or
+  `--arg address=0x110000 --arg length=0x100000` (4 KiB aligned): after a
+  program, the region comes back without a new backup. `confirm_protected` is
+  needed when a differing sector is protected in the backup's or the chip's
+  layout.
+* `--arg dry_run=true` on program and restore only reads and plans; it needs
+  no `--yes`, token, permission or backup (the schema marks `dry_run` with
+  `x-hwlab-dry-run`, ADR 0004).
+* Errors: a loader that stops answering is TIMEOUT (`DeadlineExceeded`), never
+  gRPC `Unavailable` (which the core reports as a crashed plugin).
 * Every erase/program/restore/reset is journaled in
   `$HWLAB_HOME/artifacts/esprom-flash/journal.jsonl` (refused if the journal
   cannot be written).
@@ -1082,11 +1099,19 @@ hwlab target bsl reset    --plugin esprom --device cp210x-<serial> --config allo
 hwlab target bsl reset    --plugin esprom --device usj-<mac> --config allow_reset=true --yes        # USB-Serial/JTAG chip reset
 hwlab target flash program --plugin esprom --device bridge-<S3 serial> --path app.bin --arg address=0x10000 \
     --token program-flash --arg backup=<backup .bin> --config allow_flash=true --yes
+hwlab target flash restore --plugin esprom --device bridge-<S3 serial> --arg backup=<backup .bin> --arg partition=ota_1 \
+    --arg dry_run=true                                     # plan only, no --yes
+hwlab target flash restore --plugin esprom --device bridge-<S3 serial> --arg backup=<backup .bin> --arg partition=ota_1 \
+    --token restore-flash --config allow_flash=true --yes
 ```
+
+Behind the S3 bridge the H2's stub has no UART flow control; a byte lost
+while it erases shows up as a FLASH_DATA timeout that the block restart
+absorbs. If restarts recur, lower the rate (`--config baud=230400`).
 
 Hardware test (read-only: identify, optional backup, run reset):
 `HWLAB_ESPROM_DEVICE=cp210x-<serial> [HWLAB_ESPROM_BACKUP_DIR=<dir>] go test -tags hardware -count=1 -v ./plugins/esprom/ -run TestHW`.
-Status: [docs/notes/esprom-sonoff-dongle-max-results.md](notes/esprom-sonoff-dongle-max-results.md).
+Status: [Dongle Max](notes/esprom-sonoff-dongle-max-results.md), [Thread BR board (H2 bridge, S3 USJ)](notes/esprom-thread-br-results.md).
 
 ## Silicon Labs Wireless Starter Kit (`wstk`)
 

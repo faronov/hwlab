@@ -91,6 +91,24 @@ download mode (`mode=bootloader`, checked by SYNC). A usj device lists
 the two views of one chip; `espusbjtag` keeps its `companion_cdc_tty`. A port
 that re-enumerates after the reset is reopened (bounded wait, same id).
 
+**Lost blocks.** The stub answers FLASH_DATA before it writes the block and
+ignores sequence numbers, so resending a block whose answer was lost would
+write it again at the next offset. When a FLASH_DATA gets no answer (or a
+checksum error), the client resynchronizes (SYNC is answered only after the
+stub finished the block it has) and restarts the download AT THAT BLOCK with
+a new FLASH_BEGIN, which erases the remaining sectors again before writing:
+a block that did land is rewritten in place. At most 4 restarts per run;
+the count is reported (`write_retries`) and journaled. The answer bound is
+`timeout_ms` + 3 s (the previous block's erase of up to four 4 KiB sectors
+or one 64 KiB block, and its 64 page programs) + three times the block's
+wire time (16 KiB: 0.36 s at 460800). Behind the S3 bridge the H2 stub has
+no flow control: a byte lost while it is busy shows up as exactly this
+timeout, which the restart absorbs; `baud` can be lowered if it recurs.
+
+**Error codes.** No esprom error uses gRPC `Unavailable`: the core reports
+that code as a crashed plugin. A loader that does not answer is
+`DeadlineExceeded` (TIMEOUT), failed entry/sync/attach `FailedPrecondition`.
+
 **Session.** OpenDevice only opens the port with both lines released; the ROM
 is entered lazily by the first operation that needs it (identify, info, read,
 verify, backup, erase, program, restore), so `bsl-reset` through `hwlab
@@ -102,9 +120,13 @@ enters again by itself.
 * identify/info/read/verify/backup are SAFE in the danger model (they reset the
   chip into download mode, like tibsl, but never write); erase/program/restore/
   reset are CONFIRM.
-* `allow_flash` (program, restore), `allow_erase` (erase, restore),
+* `allow_flash` (program, restore, erase), `allow_erase` (erase),
   `allow_chip_erase` (mode=chip), `allow_reset` (reset, `reset=run`) are
-  dangerous configuration keys.
+  dangerous configuration keys. Restore, like program, rewrites only
+  changed sectors and needs `allow_flash` only.
+* `dry_run=true` on program and restore is marked `x-hwlab-dry-run` in the
+  schema: it only reads and plans, so the core does not ask for confirmation
+  (ADR 0004), and it needs no token, permission or backup.
 * tokens: `program-flash`, `restore-flash`, `erase-flash-region`,
   `erase-app-partition`, `erase-entire-chip`; `confirm_protected=
   modify-protected-region` for protected ranges.
@@ -123,8 +145,11 @@ enters again by itself.
 * program/restore change only 4 KiB sectors whose MD5 differs (64 KiB blocks
   first), keep edge bytes (edge sectors read and merged; the stub erases whole
   sectors), verify every run and the result by the chip's MD5.
-* restore gates `confirm_protected` on the sectors that actually differ, using
-  the backup's own partition table.
+* restore covers the whole flash, one partition of the backup's table
+  (`partition=<label>`) or `address`+`length` (4 KiB aligned), so a region
+  can be put back after a program without a new backup; it gates
+  `confirm_protected` on the sectors that actually differ, protected in the
+  backup's or the chip's layout.
 * flash with encryption (odd FLASH_CRYPT_CNT / SPI_BOOT_CRYPT_CNT) or secure
   boot enabled is read-only; eFuses are never written.
 * a JSONL journal (`artifacts/esprom-flash/journal.jsonl`) records every
@@ -144,10 +169,21 @@ enters again by itself.
 * Hardware evidence is recorded per capability in the support matrix; only
   what ran on a device is REAL_HW_VERIFIED.
 
+## Hardware results
+
+* ESP32 behind a CP2102N (SONOFF Dongle Max): identify, info, verify, 16 MiB
+  verified backup, line resets (read-only;
+  [notes](../notes/esprom-sonoff-dongle-max-results.md)).
+* ESP32-H2 behind the S3 bridge and the S3 on its USB-Serial/JTAG (Thread BR
+  board): identify, info, 4 MiB backup, program into ota_1, whole-flash
+  restore, restore dry run, run resets; USJ identify and run reset with
+  re-enumeration ([notes](../notes/esprom-thread-br-results.md)). One
+  FLASH_DATA timeout there led to the block restart above.
+
 ## Not covered / unverified
 
 * Compressed writes (FLASH_DEFL_*), encrypted writes, secure download mode,
   ESP32-S2/C2/C3/C5/P4 flash (no stub vendored), USB-OTG download (S2/S3
   TinyUSB ROM), eFuse writes (never).
-* The USJ and h2_bridge paths and all write paths were not run on hardware by
-  this ADR's author; see docs/support-matrix.md.
+* Erase on hardware, `usj` mode=bootloader, the block restart and the region
+  restore on hardware; see docs/support-matrix.md.

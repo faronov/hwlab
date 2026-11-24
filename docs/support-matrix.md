@@ -279,10 +279,16 @@ Code, fixtures and passing tests are not hardware validation.
   | flash read / backup | REAL_HW_VERIFIED | 16 MiB read twice via READ_FLASH (stub MD5 per 256 KiB), SHA-256 6024d1b4... equal, chip SPI_FLASH_MD5 equal, 409 s at 921600 Bd; bootloader and app appended SHA-256 match the bytes read |
   | flash info and verify | REAL_HW_VERIFIED | partition table, protected ranges, app descriptor (Dongle-M, IDF v5.2.1) and otadata (ota_0) decoded on the device; verify of the 32 KiB bootloader slot by SPI_FLASH_MD5 matched |
   | reset: classic run (with console) and bootloader | REAL_HW_VERIFIED | line-only run reset booted SPI_FAST_FLASH_BOOT (ROM lines captured); mode=bootloader reached DOWNLOAD_BOOT and answered SYNC |
-  | h2_bridge (ESP32-H2 behind the S3 bridge) | SIMULATED_ONLY | classic mapping, 460800 Bd after the stub, H2 detection by GET_SECURITY_INFO chip id 16, EUI-64 from MAC_EXT; not run on the Thread BR board |
-  | usj entry and USB-Serial/JTAG chip reset (usj_reset) | SIMULATED_ONLY | TRM 33.4-3/33.4-4 sequences, port re-enumeration reopened; S3/C6/H2 stubs; not run on hardware |
-  | ESP32-S3/C6/H2 eFuse decode | SIMULATED_ONLY | ESP-IDF v5.5.1 eFuse tables (MAC, MAC_EXT, wafer version, package) |
-  | erase / program / restore | SIMULATED_ONLY | changed-sector plan by chip MD5, edge bytes kept, deferred stub write errors, run and image MD5 verify, protected ranges, backup gate, tokens, allow_*, journal; never run on hardware |
+  | h2_bridge (ESP32-H2 behind the S3 bridge) | REAL_HW_VERIFIED | Thread BR board (S3 7CDFA1FE67F0 in bridge mode, lines on): identify 1.3 s by GET_SECURITY_INFO chip id 16, EUI-64 equal to the NCP's; flash info; 4 MiB backup in 210 s at 460800 Bd, two reads equal, equal to an older esptool backup below zbnv (docs/notes/esprom-thread-br-results.md) |
+  | program and whole-flash restore (h2_bridge) | REAL_HW_VERIFIED | 744,288 B app into the inactive ota_1: 182 sectors, 25 s, chip MD5 verified; 1,966,080 B into ota_1 in 32.6 s (a first attempt hit one FLASH_DATA timeout); restore from the backup: 64 sectors, 15 s, whole-flash MD5 equal; restore dry run |
+  | run reset with console (h2_bridge) | REAL_HW_VERIFIED | console captured after the classic run sequence through the bridge |
+  | usj entry and identify (ESP32-S3) | REAL_HW_VERIFIED | S3 after the bridge's s3 usj: identify 0.6 s through the USB-Serial/JTAG download sequence; ESP32-S3, 8 MB PSRAM, 4 MB Zbit flash, MAC correct |
+  | usj run reset with re-enumeration (usj_reset) | REAL_HW_VERIFIED | TRM 33.4-4 sequence: the CDC port re-enumerated, the plugin reopened it, the S3 application came back |
+  | usj mode=bootloader on its own | SIMULATED_ONLY | TRM 33.4-3 sequence and SYNC check; on hardware only as part of identify |
+  | ESP32-C6 eFuse decode | SIMULATED_ONLY | ESP-IDF v5.5.1 eFuse tables (MAC, MAC_EXT, wafer version, package) |
+  | FLASH_DATA restart at a lost or corrupted block | SIMULATED_ONLY | added after one FLASH_DATA timeout on the H2 bridge: resync, new FLASH_BEGIN at the failed block (the stub ignores sequence numbers), at most 4 restarts per run, write_retries reported and journaled; simulated request loss, answer loss and corruption |
+  | region restore (partition or address+length) | SIMULATED_ONLY | a partition of the backup's table or an aligned range, protected in the backup's or the chip's layout needs confirm_protected |
+  | erase (region, app, chip) | SIMULATED_ONLY | blank check by chip MD5, tokens, allow_erase/allow_chip_erase, backup gate; never run on hardware |
 
 - verified:
   - passive discovery of the Dongle Max CP2102N as one device with its VCP alias, of the S3 bridge's CDC 0 and of USB-Serial/JTAG ports
@@ -291,10 +297,14 @@ Code, fixtures and passing tests are not hardware validation.
   - verified 16 MiB backup: two identical reads and the chip's whole-flash MD5 (docs/notes/esprom-sonoff-dongle-max-results.md)
   - flash info (partition table, app descriptor, otadata) and verify by SPI_FLASH_MD5
   - line-only run reset with console capture and bootloader reset
+  - ESP32-H2 behind the S3 bridge: identify, info, 4 MiB backup, program into ota_1, whole-flash restore, restore dry run, run reset (docs/notes/esprom-thread-br-results.md)
+  - ESP32-S3 over its USB-Serial/JTAG: identify through the USJ download sequence and run reset with port re-enumeration
 - unverified:
-  - the ESP32-H2 behind the S3 bridge (h2_bridge)
-  - USB-Serial/JTAG entry and chip reset (usj) on ESP32-S3/C6/H2
-  - erase, program and restore on any hardware
+  - erase on any hardware
+  - usj mode=bootloader on its own
+  - recovery of an open espusbjtag session after a USJ reset
+  - the FLASH_DATA block restart and the region restore on hardware
+  - ESP32-C6 identity
   - rates above 921600 Bd
   - Windows (no atomic DTR/RTS change)
   - CH34x and FTDI bridges
@@ -303,6 +313,7 @@ Code, fixtures and passing tests are not hardware validation.
   - no compressed or encrypted writes, no secure download mode, no USB-OTG download
   - flash with encryption or secure boot enabled is read-only; eFuses are never written
   - the esp-flasher-stub RUN_USER_CODE/FLASH_END reboot are no-ops: leaving the loader is a line reset (a manual board needs a button)
+  - the H2 stub behind the S3 bridge has no UART flow control: a lost byte costs a block restart
 
 ### espusbjtag — Espressif native USB Serial/JTAG (ESP32-C6, ESP32-H2, ESP32-C5, ESP32-S3) + generic RISC-V Debug Module + generic Xtensa OCD + ESP flash
 
