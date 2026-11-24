@@ -126,7 +126,15 @@ enters again by itself.
   changed sectors and needs `allow_flash` only.
 * `dry_run=true` on program and restore is marked `x-hwlab-dry-run` in the
   schema: it only reads and plans, so the core does not ask for confirmation
-  (ADR 0004), and it needs no token, permission or backup.
+  (ADR 0004), and it needs no token, permission or backup. It still resets
+  the chip once to enter the loader; a chip that was not in the loader before
+  the call is reset back into its application afterwards (journaled,
+  `loader_state` and `reset_after_dry_run` in the result); with entry=none it
+  stays in the loader.
+* the partition table is read again after every erase, program or restore
+  (successful or not), so later gates and `info` never use a stale layout.
+* `FlashProgramming.reset` applies the same tibsl guard as the ROM entry:
+  on a port where tibsl found a TI chip both drive that chip's reset lines.
 * tokens: `program-flash`, `restore-flash`, `erase-flash-region`,
   `erase-app-partition`, `erase-entire-chip`; `confirm_protected=
   modify-protected-region` for protected ranges.

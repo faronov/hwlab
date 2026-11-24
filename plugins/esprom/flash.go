@@ -664,6 +664,37 @@ func (d *device) backupGate(a map[string]any, addr uint32, n int) ([]byte, map[s
 	return b, res, nil
 }
 
+// dryRun runs a plan: a dry run needs no confirmation (ADR 0004), so it
+// must not leave a running target halted. When the chip was not in the
+// loader before the call, it is reset back into its application.
+func (d *device) dryRun(ctx context.Context, plan func() (map[string]any, error)) (map[string]any, error) {
+	wasInLoader := d.inROM
+	res, err := d.withROM(ctx, plan)
+	if err != nil || wasInLoader {
+		if err == nil {
+			res["loader_state"] = "unchanged: the chip was already in the loader"
+		}
+		return res, err
+	}
+	if !d.o.entry.Wired() {
+		res["loader_state"] = "entry=none drives no reset line: the chip stays in the loader until it is reset by hand"
+		return res, nil
+	}
+	j, jerr := d.p.journalStart(d, "reset", map[string]any{"mode": "run", "reason": "after a dry run"})
+	r, err := d.resetTo(ctx, "run", 0)
+	if jerr == nil {
+		_ = d.p.journalEnd(j, err, nil)
+	}
+	if err != nil {
+		res["reset_after_dry_run_error"] = err.Error()
+		res["loader_state"] = "the reset back into the application failed: the chip may still be in the loader"
+		return res, nil
+	}
+	res["reset_after_dry_run"] = r
+	res["loader_state"] = "entered for the plan, then reset back into the application"
+	return res, nil
+}
+
 // ---- write planning ----
 
 type run struct {
@@ -785,6 +816,7 @@ const writeAttempts = 4
 // (whose answer also carries a deferred write error of the run's last
 // block). It returns how many times a download restarted at a block.
 func (d *device) execute(p *writePlan) (int, error) {
+	defer d.layoutChanged()
 	total := 0
 	for i, r := range p.runs {
 		n, err := d.cl.WriteFlash(r.addr, r.data, writeAttempts)
@@ -938,7 +970,11 @@ func (d *device) flashProgram(ctx context.Context, a map[string]any) (map[string
 			return nil, err
 		}
 	}
-	return d.withROM(ctx, func() (map[string]any, error) {
+	run := d.withROM
+	if dry {
+		run = d.dryRun
+	}
+	return run(ctx, func() (map[string]any, error) {
 		if err := d.needStub(); err != nil {
 			return nil, err
 		}
@@ -1119,6 +1155,7 @@ func (d *device) flashErase(ctx context.Context, a map[string]any) (map[string]a
 		} else {
 			err = d.cl.EraseRegion(addr, n)
 		}
+		d.layoutChanged()
 		if err == nil {
 			var got [16]byte
 			if got, err = d.cl.FlashMD5(addr, n); err == nil && got != md5Of(bytes.Repeat([]byte{0xFF}, n)) {
@@ -1167,6 +1204,9 @@ func restoreRange(a map[string]any, b []byte, parts []esp.Partition, ptErr error
 		}
 		for _, p := range parts {
 			if p.Label == label {
+				if p.Size == 0 || p.Offset%sector != 0 || p.Size%sector != 0 || uint64(p.Offset)+uint64(p.Size) > uint64(len(b)) {
+					return 0, 0, "", status.Errorf(codes.FailedPrecondition, "partition %q [0x%X, +0x%X) of the backup's table is empty, unaligned or outside the %d-byte backup", label, p.Offset, p.Size, len(b))
+				}
 				return p.Offset, int(p.Size), "partition " + label + " (" + p.Kind() + ")", nil
 			}
 		}
@@ -1208,7 +1248,11 @@ func (d *device) flashRestore(ctx context.Context, a map[string]any) (map[string
 			return nil, err
 		}
 	}
-	return d.withROM(ctx, func() (map[string]any, error) {
+	run := d.withROM
+	if dry {
+		run = d.dryRun
+	}
+	return run(ctx, func() (map[string]any, error) {
 		if err := d.needStub(); err != nil {
 			return nil, err
 		}

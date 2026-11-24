@@ -25,9 +25,12 @@ writing flash or sending raw SCPI can damage hardware.
   args schema with `"x-hwlab-dry-run": true`. A call with `dry_run: true`
   (a JSON boolean) to such a method needs no confirmation; the plugin
   promises that it then only reads and plans (the same footprint as its SAFE
-  methods). Unmarked methods need confirmation whatever their arguments,
-  and dangerous configuration keys still need it. First used by `esprom`
-  program/restore (ADR 0041).
+  methods) and leaves the target as it found it: a dry run may still reset
+  the target once to reach it (as a SAFE identify can), but must not leave a
+  running target halted or in a bootloader. Unmarked methods need
+  confirmation whatever their arguments, and dangerous configuration keys
+  still need it. First used by `esprom` program/restore (ADR 0041), which
+  reset a chip they entered for the plan back into its application.
 
 ## Consequences
 

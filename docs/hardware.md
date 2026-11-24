@@ -1016,7 +1016,8 @@ esptool and Python are not used and no esptool code or stub is included.
    * `usj` — a chip's own USB-Serial/JTAG CDC port (`303a:1001`), id
      `usj-<mac>`, with `espusbjtag_device` naming the same chip's JTAG view.
    A port where `tibsl` identified a TI chip is marked `tibsl_identified_chip`
-   and refused unless `allow_other_chip=true`. The last identity per id is
+   and refused (ROM operations and `FlashProgramming.reset`) unless
+   `allow_other_chip=true`. The last identity per id is
    cached (`$HWLAB_HOME/cache/esprom-identity.json`); the MAC (hex, no colons)
    then selects the device. Optional `$HWLAB_HOME/esprom.yaml` (per-device
    `entry`/`baud`, `ignore` list) and `HWLAB_ESPROM_PORTS=name=/dev/tty[@baud][:classic|usj|none]`.
@@ -1083,7 +1084,9 @@ Safety (same names as `espusbjtag`):
   layout.
 * `--arg dry_run=true` on program and restore only reads and plans; it needs
   no `--yes`, token, permission or backup (the schema marks `dry_run` with
-  `x-hwlab-dry-run`, ADR 0004).
+  `x-hwlab-dry-run`, ADR 0004). Like identify/info it still resets the chip
+  once into the loader; a chip that was running is then reset back into its
+  application (`loader_state` in the result).
 * Errors: a loader that stops answering is TIMEOUT (`DeadlineExceeded`), never
   gRPC `Unavailable` (which the core reports as a crashed plugin).
 * Every erase/program/restore/reset is journaled in

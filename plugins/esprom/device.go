@@ -208,6 +208,19 @@ func printable(b []byte) string {
 	return strings.TrimSpace(sb.String())
 }
 
+// otherChipGuard refuses to drive the lines of a port where tibsl found a TI
+// chip: on a ZBDongle-P style board DTR/RTS drive its nRESET and BSL pin.
+func (d *device) otherChipGuard() error {
+	if s := tibslIdentities()[d.id]; s != "" && !d.o.allowOtherChip {
+		return status.Errorf(codes.FailedPrecondition, "%s: the TI bootloader plugin identified %s behind this port; the ESP line sequences would only reset it. Pass allow_other_chip=true if the board was changed", d.id, s)
+	}
+	return nil
+}
+
+// layoutChanged forgets the cached partition table after any flash
+// modification (successful or not): later gates and info read it again.
+func (d *device) layoutChanged() { d.ptRead, d.parts, d.ptErr = false, nil, nil }
+
 // ensureROM brings up the loader session: entry, sync, chip detection, stub
 // upload, baud switch, flash attach and identification.
 func (d *device) ensureROM(ctx context.Context) error {
@@ -215,8 +228,8 @@ func (d *device) ensureROM(ctx context.Context) error {
 		d.cl.SetContext(ctx)
 		return nil
 	}
-	if s := tibslIdentities()[d.id]; s != "" && !d.o.allowOtherChip {
-		return status.Errorf(codes.FailedPrecondition, "%s: the TI bootloader plugin identified %s behind this port; the ESP entry sequence would only reset it. Pass allow_other_chip=true if the board was changed", d.id, s)
+	if err := d.otherChipGuard(); err != nil {
+		return err
 	}
 	d.syncs, d.stubNote = 0, ""
 	if err := d.enterAndSync(ctx); err != nil {

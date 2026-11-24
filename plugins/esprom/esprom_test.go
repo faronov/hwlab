@@ -18,6 +18,7 @@ import (
 	"github.com/faronov/hwlab/internal/usb"
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 	"github.com/faronov/hwlab/plugins/esprom/rom"
+	"github.com/faronov/hwlab/plugins/espusbjtag/esp"
 )
 
 func fast(t *testing.T) {
@@ -552,5 +553,98 @@ func TestDryRunMarkedOnlyWhereItPlans(t *testing.T) {
 		if want := m.Name == "program" || m.Name == "restore"; marked != want {
 			t.Errorf("%s.%s: dry-run mark %v", m.Capability, m.Name, marked)
 		}
+	}
+}
+
+// After a restore rewrote the partition table, the next gate uses the new
+// layout, and info shows it.
+func TestLayoutIsReadAgainAfterAModification(t *testing.T) {
+	e, s := simEntry("dut", rom.ESP32, rom.EntryClassic, KindUART)
+	p := newPlugin(t, e)
+	// Backup B: ota_1's range is a data partition in that layout.
+	tableB := append([]esp.Partition(nil), SimPartitions...)
+	tableB[4] = esp.Partition{Label: "nvs2", Type: 0x01, Subtype: 0x02, Offset: 0x110000, Size: 0x100000}
+	copy(s.Flash[esp.PartitionTableOffset:], esp.BuildPartitionTable(tableB))
+	open(t, p, "dut", restoreCfg)
+	bkB := backupOf(t, p, "dut")
+	_ = p.CloseDevice(context.Background(), "dut")
+	SimFlash(s) // layout A again (ota_1 is an app)
+	open(t, p, "dut", restoreCfg)
+	if r := must(t, p, "dut", "FlashProgramming.info", nil); !strings.Contains(fmtParts(r), "ota_1") {
+		t.Fatalf("%v", r["partitions"])
+	}
+	must(t, p, "dut", "FlashProgramming.restore", map[string]any{"path": bkB, "confirm": tokRestore, "confirm_protected": tokProtected})
+	if r := must(t, p, "dut", "FlashProgramming.info", nil); !strings.Contains(fmtParts(r), "nvs2") {
+		t.Fatalf("info shows the stale table: %v", r["partitions"])
+	}
+	_, err := call(t, p, "dut", "FlashProgramming.program", map[string]any{"address": "0x110000", "path": appImage(t, rom.ESP32, "5"), "confirm": tokProgram, "backup": bkB})
+	wantCode(t, err, codes.PermissionDenied, "partition nvs2")
+}
+
+func fmtParts(r map[string]any) string {
+	var l []string
+	for _, x := range r["partitions"].([]any) {
+		l = append(l, x.(map[string]any)["label"].(string))
+	}
+	return strings.Join(l, ",")
+}
+
+// FlashProgramming.reset drives the same lines as an entry: refused on a
+// port where tibsl found a TI chip.
+func TestResetRefusedOnATIDongle(t *testing.T) {
+	e, s := simEntry("cp210x-loc1", rom.ESP32, rom.EntryClassic, KindUART)
+	p := newPlugin(t, e)
+	dir := filepath.Join(hwlabHome(), "cache")
+	_ = os.MkdirAll(dir, 0o700)
+	_ = os.WriteFile(filepath.Join(dir, "tibsl-identity.json"), []byte(`{"cp210x-loc1":{"chip":"CC2652P","identified_utc":"2026-11-19T00:00:00Z"}}`), 0o600)
+	for _, mode := range []string{"run", "bootloader"} {
+		_, err := call(t, p, "cp210x-loc1", "FlashProgramming.reset", map[string]any{"allow_reset": true, "mode": mode})
+		wantCode(t, err, codes.FailedPrecondition, "CC2652P")
+	}
+	if len(s.LineLog) != 0 {
+		t.Fatalf("lines toggled: %v", s.LineLog)
+	}
+	if _, err := os.Stat(p.journalPath()); err == nil {
+		t.Fatal("a refused reset must not be journaled as started")
+	}
+	must(t, p, "cp210x-loc1", "FlashProgramming.reset", map[string]any{"allow_reset": true, "allow_other_chip": true})
+}
+
+// A dry run (no confirmation) leaves a running chip running; a chip that
+// was already in the loader stays there.
+func TestDryRunPutsTheChipBack(t *testing.T) {
+	e, s := simEntry("dut", rom.ESP32, rom.EntryClassic, KindUART)
+	p := newPlugin(t, e)
+	r := must(t, p, "dut", "FlashProgramming.program", map[string]any{"address": "0x110000", "path": appImage(t, rom.ESP32, "6"), "dry_run": true})
+	if s.Mode() != "app" || r["reset_after_dry_run"] == nil || !strings.Contains(r["loader_state"].(string), "reset back") {
+		t.Fatalf("%v %v", r, s)
+	}
+	bk := backupOf(t, p, "dut") // single call: leaves the chip in the loader
+	r = must(t, p, "dut", "FlashProgramming.restore", map[string]any{"path": bk, "dry_run": true})
+	if s.Mode() != "app" || r["reset_after_dry_run"] == nil {
+		t.Fatalf("%v %v", r, s)
+	}
+	open(t, p, "dut", nil)
+	must(t, p, "dut", "TargetIdentify.identify", nil)
+	r = must(t, p, "dut", "FlashProgramming.restore", map[string]any{"path": bk, "dry_run": true})
+	if s.Mode() != "stub" || r["reset_after_dry_run"] != nil || !strings.Contains(r["loader_state"].(string), "already") {
+		t.Fatalf("%v %v", r, s)
+	}
+	j, _ := os.ReadFile(p.journalPath())
+	if !strings.Contains(string(j), `"reason":"after a dry run"`) {
+		t.Fatalf("%s", j)
+	}
+}
+
+// A backup table entry that runs past the image is refused, not a panic.
+func TestRestoreRangeRejectsBadPartitionEntries(t *testing.T) {
+	b := make([]byte, 0x20000)
+	for _, p := range []esp.Partition{
+		{Label: "big", Type: 0x00, Offset: 0x10000, Size: 0x100000},
+		{Label: "empty", Type: 0x01, Subtype: 0x02, Offset: 0x9000, Size: 0},
+		{Label: "odd", Type: 0x01, Subtype: 0x02, Offset: 0x9100, Size: 0x1000},
+	} {
+		_, _, _, err := restoreRange(map[string]any{"partition": p.Label}, b, []esp.Partition{p}, nil)
+		wantCode(t, err, codes.FailedPrecondition, "outside")
 	}
 }

@@ -374,6 +374,9 @@ func (d *device) reset(ctx context.Context, a map[string]any) (map[string]any, e
 	if !d.o.perm.reset {
 		return nil, denied("FlashProgramming.reset needs allow_reset=true in the device configuration")
 	}
+	if err := d.otherChipGuard(); err != nil {
+		return nil, err
+	}
 	rec, err := d.p.journalStart(d, "reset", map[string]any{"mode": mode})
 	if err != nil {
 		return nil, err
