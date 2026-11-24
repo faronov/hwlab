@@ -42,8 +42,8 @@ const optProps = `"baud":{"type":"number","description":"link rate after the stu
 	`"entry":{"type":"string","enum":["classic","usj","none"],"description":"how the chip is reset: classic (RTS->EN, DTR->strap: USB-UART bridges and the S3 bridge), usj (the chip's USB-Serial/JTAG port), none (already in download mode; lines untouched)"},` +
 	`"stub":{"type":"boolean","description":"upload the flasher stub (default true; false: ROM only, identify and verify)"},` +
 	`"allow_other_chip":{"type":"boolean","description":"try even though the tibsl plugin found a TI chip behind this port"},` +
-	`"allow_flash":{"type":"boolean","description":"DANGEROUS config: permit flash program/restore"},` +
-	`"allow_erase":{"type":"boolean","description":"DANGEROUS config: permit flash erase (and restore)"},` +
+	`"allow_flash":{"type":"boolean","description":"DANGEROUS config: permit flash program and restore"},` +
+	`"allow_erase":{"type":"boolean","description":"DANGEROUS config: permit FlashProgramming.erase (with allow_flash)"},` +
 	`"allow_chip_erase":{"type":"boolean","description":"DANGEROUS config: permit whole-chip erase"},` +
 	`"allow_reset":{"type":"boolean","description":"DANGEROUS config: permit FlashProgramming.reset and reset=run after program/restore"}`
 
@@ -58,6 +58,9 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 	backup := `,"backup":{"type":"string","description":"a FlashProgramming.backup .bin of this chip (required)"}`
 	prot := `,"confirm_protected":{"type":"string","enum":["` + tokProtected + `"],"description":"needed when the range touches the bootloader slot, the partition table or a non-app partition (nvs, phy_init, otadata, coredump, custom data), or anything without a valid partition table"}`
 	reset := `,"reset":{"type":"string","enum":["run","none"],"description":"after success: run boots the application (needs allow_reset), none (default) stays in the loader"}`
+	// The x-hwlab-dry-run mark lets the core run a dry run without
+	// confirmation (ADR 0004): a dry run here only reads and plans.
+	dry := `,"dry_run":{"type":"boolean","x-hwlab-dry-run":true,"description":"plan only (reads and chip MD5s, nothing is written): needs no confirmation, token, permission or backup"}`
 	return &pluginv1.PluginInfo{
 		Id: "esprom", Name: "Espressif serial bootloader (ROM download mode + flasher stub)", Vendor: "hwlab", Version: "0.1.0",
 		Capabilities:        deviceCaps(),
@@ -74,9 +77,9 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 			spec(F, confirm, "erase", "erase flash: mode=region (address,length, 4 KiB aligned; confirm=\""+tokEraseReg+"\"), app (an app partition by label; \""+tokEraseApp+"\") or chip (\""+tokEraseChip+"\", needs allow_chip_erase). All need allow_flash+allow_erase and backup=; protected ranges need confirm_protected. The result is checked blank by SPI_FLASH_MD5",
 				req(`"mode","confirm","backup"`, `,"mode":{"type":"string","enum":["region","app","chip"]},"address":{},"length":{"type":"number"},"partition":{"type":"string"},"confirm":{"type":"string","enum":["`+tokEraseReg+`","`+tokEraseApp+`","`+tokEraseChip+`"]}`+backup+prot)),
 			spec(F, confirm, "program", "program an image (path, or hex data up to 4096 bytes) at address: ESP images (0xE9) are parsed first (truncated/corrupt refused; chip id must match; must lie inside one region: the bootloader slot or one partition); anything else needs raw=true. Only 4 KiB sectors whose SPI_FLASH_MD5 differs are erased and rewritten, edge bytes are preserved, each run and the image are verified by MD5. Needs allow_flash, confirm=\""+tokProgram+"\", backup= (confirm_protected for protected ranges); dry_run=true plans without writing or any gate",
-				obj(`,"address":{},"path":{"type":"string"},"data":{"type":"string"},"raw":{"type":"boolean"},"dry_run":{"type":"boolean"},"confirm":{"type":"string","enum":["`+tokProgram+`"]}`+backup+prot+reset)),
-			spec(F, confirm, "restore", "rewrite every 4 KiB sector that differs from a verified backup of this chip (path or backup), then require the chip's MD5 of the whole flash to equal the backup's. Needs allow_flash+allow_erase, confirm=\""+tokRestore+"\" and confirm_protected when a differing sector is protected. Restoring an old nvs rolls back keys, counters and network state: never restore onto a device that was used since",
-				obj(`,"path":{"type":"string"},"dry_run":{"type":"boolean"},"confirm":{"type":"string","enum":["`+tokRestore+`"]}`+backup+prot+reset)),
+				obj(`,"address":{},"path":{"type":"string"},"data":{"type":"string"},"raw":{"type":"boolean"},"confirm":{"type":"string","enum":["`+tokProgram+`"]}`+dry+backup+prot+reset)),
+			spec(F, confirm, "restore", "rewrite every 4 KiB sector that differs from a verified backup of this chip (path or backup) and require the chip's MD5 of the restored range to equal the backup's: the whole flash, one partition of the backup's table (partition=label) or address+length (4 KiB aligned) - a region restore needs no fresh backup after a program. Needs allow_flash, confirm=\""+tokRestore+"\" and confirm_protected when a differing sector is protected in the backup's or the chip's layout. Restoring an old nvs rolls back keys, counters and network state: never restore onto a device that was used since",
+				obj(`,"path":{"type":"string"},"partition":{"type":"string"},"address":{},"length":{"type":"number"},"confirm":{"type":"string","enum":["`+tokRestore+`"]}`+dry+backup+prot+reset)),
 			spec(F, confirm, "reset", "drive the reset lines only (no ROM needed, works on a hung application): mode=run (default) resets the chip into its application (classic: RTS pulse with DTR released; usj: the USB-Serial/JTAG chip reset, TRM table 33.4-4), mode=bootloader resets it into ROM download mode and checks it answers SYNC. console_ms captures the application's console at 115200 after a run reset. Needs allow_reset",
 				obj(`,"mode":{"type":"string","enum":["run","bootloader"]},"console_ms":{"type":"number","description":"0..10000"}`)),
 		},
@@ -279,7 +282,8 @@ func wrap(err error) error {
 	case errors.Is(err, context.DeadlineExceeded):
 		return status.Error(codes.DeadlineExceeded, err.Error())
 	case errors.Is(err, rom.ErrTimeout):
-		return status.Error(codes.Unavailable, err.Error())
+		// Not Unavailable: the core reports that code as a crashed plugin.
+		return status.Error(codes.DeadlineExceeded, err.Error())
 	case errors.Is(err, rom.ErrDigest):
 		return status.Error(codes.DataLoss, err.Error())
 	case errors.As(err, &se):
@@ -375,7 +379,7 @@ func (d *device) reset(ctx context.Context, a map[string]any) (map[string]any, e
 		return nil, err
 	}
 	res, err := d.resetTo(ctx, mode, int(ms))
-	if jerr := d.p.journalEnd(rec, err); jerr != nil && err == nil {
+	if jerr := d.p.journalEnd(rec, err, nil); jerr != nil && err == nil {
 		res["journal_error"] = jerr.Error()
 	}
 	return res, err

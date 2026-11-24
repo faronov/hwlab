@@ -50,7 +50,7 @@ type device struct {
 func (p *Plugin) newDevice(e Entry, o options) (*device, error) {
 	c, err := p.open(e)
 	if err != nil {
-		return nil, status.Errorf(codes.Unavailable, "open %s (%s): %v", e.ID, e.Port, err)
+		return nil, status.Errorf(codes.FailedPrecondition, "open %s (%s): %v", e.ID, e.Port, err)
 	}
 	return &device{p: p, id: e.ID, e: e, o: o, conn: c, ctx: context.Background(), linkBaud: romBaud}, nil
 }
@@ -99,7 +99,7 @@ func (d *device) reopen(ctx context.Context) error {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	return status.Errorf(codes.Unavailable, "%s did not come back after the reset: %v", d.id, last)
+	return status.Errorf(codes.FailedPrecondition, "%s did not come back after the reset: %v", d.id, last)
 }
 
 func (d *device) setBaud(b int) error {
@@ -110,6 +110,9 @@ func (d *device) setBaud(b int) error {
 		return err
 	}
 	d.linkBaud = b
+	if d.cl != nil {
+		d.cl.Baud = b
+	}
 	return nil
 }
 
@@ -157,7 +160,7 @@ func (d *device) enterAndSync(ctx context.Context) error {
 		}
 		d.longHold = long
 		d.cl = rom.New(d.conn.Link)
-		d.cl.Timeout = d.o.timeout
+		d.cl.Timeout, d.cl.Baud = d.o.timeout, d.linkBaud
 		d.cl.SetContext(ctx)
 		var r rom.SyncResult
 		r, err = d.cl.Sync(7, 100*time.Millisecond)
@@ -167,7 +170,7 @@ func (d *device) enterAndSync(ctx context.Context) error {
 				return err
 			}
 			d.cl = rom.New(d.conn.Link)
-			d.cl.Timeout = d.o.timeout
+			d.cl.Timeout, d.cl.Baud = d.o.timeout, d.linkBaud
 			d.cl.SetContext(ctx)
 			r, err = d.cl.Sync(7, 100*time.Millisecond)
 		}
@@ -185,7 +188,7 @@ func (d *device) enterAndSync(ctx context.Context) error {
 	case rom.EntryUSJ:
 		hint = "the USB-Serial/JTAG download-mode sequence got no answer: the firmware may have disabled USB-Serial/JTAG or the download mode may be disabled by eFuse; hold BOOT while resetting and retry with entry=none"
 	}
-	return status.Errorf(codes.Unavailable, "%s: %v: %s", d.id, err, hint)
+	return status.Errorf(codes.FailedPrecondition, "%s: %v: %s", d.id, err, hint)
 }
 
 // printable keeps the text of a boot message.
@@ -237,13 +240,13 @@ func (d *device) ensureROM(ctx context.Context) error {
 			return status.Error(codes.Internal, err.Error())
 		}
 		if err := d.cl.RunStub(st); err != nil {
-			return status.Errorf(codes.Unavailable, "%s: %v", d.id, err)
+			return status.Errorf(codes.FailedPrecondition, "%s: %v", d.id, err)
 		}
 		d.stubNote = rom.StubRelease + " running"
 	}
 	if d.cl.Stub() && d.o.baud != 0 && d.o.baud != romBaud && d.o.entry != rom.EntryUSJ {
 		if err := d.cl.ChangeBaud(d.o.baud, d.linkBaud); err != nil {
-			return status.Errorf(codes.Unavailable, "%s: CHANGE_BAUDRATE %d: %v", d.id, d.o.baud, err)
+			return status.Errorf(codes.FailedPrecondition, "%s: CHANGE_BAUDRATE %d: %v", d.id, d.o.baud, err)
 		}
 		if err := d.setBaud(d.o.baud); err != nil {
 			return err
@@ -251,15 +254,15 @@ func (d *device) ensureROM(ctx context.Context) error {
 		time.Sleep(50 * time.Millisecond)
 		_ = d.cl.Flush()
 		if _, err := d.cl.ReadReg(rom.ChipDetectAddr); err != nil {
-			return status.Errorf(codes.Unavailable, "%s: no answer after switching to %d Bd (%v): try a lower baud (the bridge or adapter may not support it)", d.id, d.o.baud, err)
+			return status.Errorf(codes.FailedPrecondition, "%s: no answer after switching to %d Bd (%v): try a lower baud (the bridge or adapter may not support it)", d.id, d.o.baud, err)
 		}
 	}
 	if det.Chip.SPI.Base != 0 {
 		if err := d.cl.SPIAttach(0); err != nil {
-			return status.Errorf(codes.Unavailable, "%s: SPI_ATTACH: %v", d.id, err)
+			return status.Errorf(codes.FailedPrecondition, "%s: SPI_ATTACH: %v", d.id, err)
 		}
 		if d.jedec, err = d.cl.FlashID(det.Chip); err != nil {
-			return status.Errorf(codes.Unavailable, "%s: flash JEDEC id: %v", d.id, err)
+			return status.Errorf(codes.FailedPrecondition, "%s: flash JEDEC id: %v", d.id, err)
 		}
 		d.size = rom.FlashSize(d.jedec)
 		if d.jedec == 0 || d.jedec == 0xFFFFFF {
@@ -267,7 +270,7 @@ func (d *device) ensureROM(ctx context.Context) error {
 		}
 		if d.size > 0 {
 			if err := d.cl.SPISetParams(uint32(d.size)); err != nil {
-				return status.Errorf(codes.Unavailable, "%s: SPI_SET_PARAMS: %v", d.id, err)
+				return status.Errorf(codes.FailedPrecondition, "%s: SPI_SET_PARAMS: %v", d.id, err)
 			}
 		}
 	}

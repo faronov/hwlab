@@ -40,6 +40,11 @@ type Sim struct {
 	ChangeFlashAfter  int // after n complete READ_FLASH runs, flip a flash byte (once)
 	FailWriteAt       int // a FLASH_DATA write covering this offset fails (-1 off)
 	NoOHAI            bool
+	// FLASH_DATA faults by the n-th FLASH_DATA frame received (1-based,
+	// once): dropped on the way in, its answer dropped, or corrupted.
+	DropFlashData       int
+	DropFlashDataAnswer int
+	CorruptFlashData    int
 	// Reenumerate makes the link fail after a USJ reset until Reopen.
 	Reenumerate bool
 
@@ -77,6 +82,7 @@ type Sim struct {
 	}
 	readRuns   int
 	pktCount   int
+	fdCount    int
 	pendingErr uint16
 }
 
@@ -569,6 +575,16 @@ func (s *Sim) stubOnly(op byte, data []byte, chk uint32, w func(int) uint32) {
 		s.fl.on, s.fl.left, s.fl.addr, s.fl.nextErase = true, size, addr, addr/SectorSize*SectorSize
 		s.reply(op, 0, nil, 0)
 	case CmdFlashData:
+		s.fdCount++
+		switch s.fdCount {
+		case s.DropFlashData:
+			s.DropFlashData = 0
+			return
+		case s.CorruptFlashData:
+			s.CorruptFlashData = 0
+			s.fail(op, 0, stubBadSum)
+			return
+		}
 		if !s.fl.on {
 			s.fail(op, 0, stubNotIn)
 			return
@@ -581,7 +597,11 @@ func (s *Sim) stubOnly(op byte, data []byte, chk uint32, w func(int) uint32) {
 			s.fail(op, 0, stubBadSum)
 			return
 		}
-		s.reply(op, 0, nil, 0)
+		if s.fdCount == s.DropFlashDataAnswer {
+			s.DropFlashDataAnswer = 0
+		} else {
+			s.reply(op, 0, nil, 0)
+		}
 		n := min(uint32(len(data)-16), s.fl.left)
 		end := s.fl.addr + n
 		s.eraseTo((end + SectorSize - 1) / SectorSize * SectorSize)

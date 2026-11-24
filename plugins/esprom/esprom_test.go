@@ -22,9 +22,11 @@ import (
 
 func fast(t *testing.T) {
 	t.Helper()
-	a, b, c, d := rom.ResetHold, rom.StrapHold, rom.StrapHoldLong, rom.USJStep
-	rom.ResetHold, rom.StrapHold, rom.StrapHoldLong, rom.USJStep = time.Millisecond, time.Millisecond, 30*time.Millisecond, time.Millisecond
-	t.Cleanup(func() { rom.ResetHold, rom.StrapHold, rom.StrapHoldLong, rom.USJStep = a, b, c, d })
+	a, b, c, d, e := rom.ResetHold, rom.StrapHold, rom.StrapHoldLong, rom.USJStep, rom.EraseAllowance
+	rom.ResetHold, rom.StrapHold, rom.StrapHoldLong, rom.USJStep, rom.EraseAllowance = time.Millisecond, time.Millisecond, 30*time.Millisecond, time.Millisecond, 0
+	t.Cleanup(func() {
+		rom.ResetHold, rom.StrapHold, rom.StrapHoldLong, rom.USJStep, rom.EraseAllowance = a, b, c, d, e
+	})
 }
 
 func newPlugin(t *testing.T, es ...Entry) *Plugin {
@@ -83,6 +85,9 @@ func open(t *testing.T, p *Plugin, dev string, cfg map[string]any) {
 }
 
 var writeCfg = map[string]any{"allow_flash": true, "allow_erase": true, "allow_reset": true}
+
+// restoreCfg: program and restore need allow_flash only.
+var restoreCfg = map[string]any{"allow_flash": true}
 
 func backupOf(t *testing.T, p *Plugin, dev string) string {
 	t.Helper()
@@ -383,7 +388,7 @@ func TestEraseModesAndRestore(t *testing.T) {
 	wantCode(t, err, codes.PermissionDenied, "allow_chip_erase")
 	// Restore: only the erased app sectors differ; none is protected.
 	r = must(t, p, "dut", "FlashProgramming.restore", map[string]any{"path": bk, "dry_run": true})
-	if r["would_need"] != nil || r["sectors_changed"] == float64(0) {
+	if strings.Contains(r["would_need"].(string), "confirm_protected") || r["sectors_changed"] == float64(0) {
 		t.Fatalf("%v", r)
 	}
 	r = must(t, p, "dut", "FlashProgramming.restore", map[string]any{"path": bk, "confirm": tokRestore})
@@ -462,5 +467,90 @@ func TestTIBSLGuardAndEncryption(t *testing.T) {
 	r := must(t, p, "cp210x-loc1", "TargetIdentify.identify", map[string]any{"allow_other_chip": true})
 	if r["flash_encrypted"] != true || r["writable"] != false {
 		t.Fatalf("%v", r)
+	}
+}
+
+// After a program, one partition is restored from the backup taken before
+// it, without a new backup and without touching anything else.
+func TestRegionRestoreAfterProgram(t *testing.T) {
+	e, s := simEntry("dut", rom.ESP32, rom.EntryClassic, KindUART)
+	p := newPlugin(t, e)
+	open(t, p, "dut", restoreCfg)
+	bk := backupOf(t, p, "dut")
+	before := append([]byte(nil), s.Flash...)
+	must(t, p, "dut", "FlashProgramming.program", map[string]any{"address": "0x110000", "path": appImage(t, rom.ESP32, "9.9.9"), "confirm": tokProgram, "backup": bk})
+	s.Flash[0x9010] ^= 0xFF // nvs changed since the backup too
+	nvs := s.Flash[0x9010]
+	r := must(t, p, "dut", "FlashProgramming.restore", map[string]any{"path": bk, "partition": "ota_1", "dry_run": true})
+	if r["restores"] != "partition ota_1 (app/ota_1)" || strings.Contains(r["would_need"].(string), "confirm_protected") || r["sectors_changed"] == float64(0) {
+		t.Fatalf("%v", r)
+	}
+	writes := s.Writes
+	r = must(t, p, "dut", "FlashProgramming.restore", map[string]any{"path": bk, "partition": "ota_1", "confirm": tokRestore})
+	if r["matches_backup"] != true || !bytes.Equal(s.Flash[0x110000:0x210000], before[0x110000:0x210000]) || s.Flash[0x9010] != nvs || s.Writes == writes {
+		t.Fatalf("%v", r)
+	}
+	// The nvs region is protected; address+length must be sector aligned.
+	_, err := call(t, p, "dut", "FlashProgramming.restore", map[string]any{"path": bk, "partition": "nvs", "confirm": tokRestore})
+	wantCode(t, err, codes.PermissionDenied, "confirm_protected")
+	_, err = call(t, p, "dut", "FlashProgramming.restore", map[string]any{"path": bk, "address": "0x9010", "length": float64(4096), "confirm": tokRestore})
+	wantCode(t, err, codes.InvalidArgument, "multiples")
+	_, err = call(t, p, "dut", "FlashProgramming.restore", map[string]any{"path": bk, "partition": "nope", "confirm": tokRestore})
+	wantCode(t, err, codes.NotFound, "nope")
+	must(t, p, "dut", "FlashProgramming.restore", map[string]any{"path": bk, "address": "0x9000", "length": float64(4096), "confirm": tokRestore, "confirm_protected": tokProtected})
+	if !bytes.Equal(s.Flash, before) {
+		t.Fatal("after both region restores the flash equals the backup")
+	}
+}
+
+// A FLASH_DATA lost on the way restarts at that block; the program succeeds
+// and the restart is reported and journaled. A device timeout never maps to
+// Unavailable, which the core reports as a crashed plugin.
+func TestProgramSurvivesALostBlock(t *testing.T) {
+	e, s := simEntry("dut", rom.ESP32, rom.EntryClassic, KindUART)
+	p := newPlugin(t, e)
+	cfg := map[string]any{"allow_flash": true, "timeout_ms": float64(100)}
+	open(t, p, "dut", cfg)
+	bk := backupOf(t, p, "dut")
+	s.DropFlashDataAnswer = s.Commands[rom.CmdFlashData] + 2 // the second of two blocks
+	img := appImage(t, rom.ESP32, "4.0.0")
+	r := must(t, p, "dut", "FlashProgramming.program", map[string]any{"address": "0x110000", "path": img, "confirm": tokProgram, "backup": bk})
+	b, _ := os.ReadFile(img)
+	if r["verified"] != true || r["write_retries"] != float64(1) || !bytes.Equal(s.Flash[0x110000:0x110000+len(b)], b) {
+		t.Fatalf("%v", r)
+	}
+	j, _ := os.ReadFile(p.journalPath())
+	if !strings.Contains(string(j), `"write_retries":1`) {
+		t.Fatalf("%s", j)
+	}
+	if c := status.Code(wrap(rom.ErrTimeout)); c != codes.DeadlineExceeded {
+		t.Fatal(c)
+	}
+	// A chip that never answers: a precondition, not Unavailable.
+	s.PowerOn()
+	_, err := call(t, p, "dut", "TargetIdentify.identify", nil)
+	if err == nil {
+		_ = p.CloseDevice(context.Background(), "dut")
+		open(t, p, "dut", map[string]any{"entry": "none", "timeout_ms": float64(100)})
+		_, err = call(t, p, "dut", "TargetIdentify.identify", nil)
+	}
+	if status.Code(err) == codes.Unavailable || err == nil {
+		t.Fatalf("%v", err)
+	}
+}
+
+// Only program and restore mark dry_run for the core's no-confirmation path.
+func TestDryRunMarkedOnlyWhereItPlans(t *testing.T) {
+	for _, m := range (*Plugin)(nil).Info().Methods {
+		var s struct {
+			Properties map[string]map[string]any `json:"properties"`
+		}
+		if err := json.Unmarshal([]byte(m.ArgsSchemaJson), &s); err != nil {
+			t.Fatalf("%s: %v", m.Name, err)
+		}
+		marked, _ := s.Properties["dry_run"]["x-hwlab-dry-run"].(bool)
+		if want := m.Name == "program" || m.Name == "restore"; marked != want {
+			t.Errorf("%s.%s: dry-run mark %v", m.Capability, m.Name, marked)
+		}
 	}
 }

@@ -777,22 +777,30 @@ func (p *writePlan) report(res map[string]any) {
 	res["sectors_changed"], res["sectors_unchanged"], res["runs"] = float64(p.changed), float64(p.unchanged), l
 }
 
+// writeAttempts bounds the restarts of one run after a lost or corrupted
+// FLASH_DATA (rom.Client.WriteFlash).
+const writeAttempts = 4
+
 // execute writes each run through the stub and checks it by the chip's MD5
-// (whose answer also carries a deferred write error of the run's last block).
-func (d *device) execute(p *writePlan) error {
+// (whose answer also carries a deferred write error of the run's last
+// block). It returns how many times a download restarted at a block.
+func (d *device) execute(p *writePlan) (int, error) {
+	total := 0
 	for i, r := range p.runs {
-		if err := d.cl.WriteFlash(r.addr, r.data, nil); err != nil {
-			return fmt.Errorf("run %d of %d at 0x%X: %w (that range may be erased or partly written)", i+1, len(p.runs), r.addr, err)
+		n, err := d.cl.WriteFlash(r.addr, r.data, writeAttempts)
+		total += n
+		if err != nil {
+			return total, fmt.Errorf("run %d of %d at 0x%X: %w (that range may be erased or partly written)", i+1, len(p.runs), r.addr, err)
 		}
 		got, err := d.cl.FlashMD5(r.addr, len(r.data))
 		if err != nil {
-			return fmt.Errorf("run %d of %d at 0x%X: %w (that range may be erased or partly written)", i+1, len(p.runs), r.addr, err)
+			return total, fmt.Errorf("run %d of %d at 0x%X: %w (that range may be erased or partly written)", i+1, len(p.runs), r.addr, err)
 		}
 		if got != md5Of(r.data) {
-			return status.Errorf(codes.DataLoss, "run 0x%X+0x%X: chip MD5 %x after writing, want %x", r.addr, len(r.data), got, md5Of(r.data))
+			return total, status.Errorf(codes.DataLoss, "run 0x%X+0x%X: chip MD5 %x after writing, want %x", r.addr, len(r.data), got, md5Of(r.data))
 		}
 	}
-	return nil
+	return total, nil
 }
 
 // ---- journal ----
@@ -844,9 +852,12 @@ func (p *Plugin) journalStart(d *device, op string, details map[string]any) (*jo
 	return &journalRec{rec: rec}, nil
 }
 
-func (p *Plugin) journalEnd(j *journalRec, opErr error) error {
+func (p *Plugin) journalEnd(j *journalRec, opErr error, extra map[string]any) error {
 	rec := map[string]any{}
 	for k, v := range j.rec {
+		rec[k] = v
+	}
+	for k, v := range extra {
 		rec[k] = v
 	}
 	rec["utc"], rec["phase"] = time.Now().UTC().Format(time.RFC3339Nano), "done"
@@ -985,14 +996,15 @@ func (d *device) flashProgram(ctx context.Context, a map[string]any) (map[string
 		if err != nil {
 			return nil, err
 		}
-		err = d.execute(p)
+		retries, err := d.execute(p)
 		if err == nil {
 			var got [16]byte
 			if got, err = d.cl.FlashMD5(addr, len(img)); err == nil && got != md5Of(img) {
 				err = status.Errorf(codes.DataLoss, "after programming the chip MD5 of 0x%X+%d is %x, want %x", addr, len(img), got, md5Of(img))
 			}
 		}
-		if jerr := d.p.journalEnd(j, err); jerr != nil && err == nil {
+		res["write_retries"] = float64(retries)
+		if jerr := d.p.journalEnd(j, err, map[string]any{"write_retries": retries}); jerr != nil && err == nil {
 			res["journal_error"] = jerr.Error()
 		}
 		if err != nil {
@@ -1113,7 +1125,7 @@ func (d *device) flashErase(ctx context.Context, a map[string]any) (map[string]a
 				err = status.Errorf(codes.DataLoss, "0x%X+%d is not blank after erasing", addr, n)
 			}
 		}
-		if jerr := d.p.journalEnd(j, err); jerr != nil && err == nil {
+		if jerr := d.p.journalEnd(j, err, nil); jerr != nil && err == nil {
 			err = jerr
 		}
 		if err != nil {
@@ -1131,6 +1143,49 @@ func (d *device) flashErase(ctx context.Context, a map[string]any) (map[string]a
 
 // ---- restore ----
 
+// restoreRange resolves what a restore covers: the whole flash, a partition
+// of the backup's table (partition=label) or address+length (4 KiB aligned).
+func restoreRange(a map[string]any, b []byte, parts []esp.Partition, ptErr error) (uint32, int, string, error) {
+	label, err := strArg(a, "partition")
+	if err != nil {
+		return 0, 0, "", err
+	}
+	addr, hasAddr, err := u32Arg(a, "address")
+	if err != nil {
+		return 0, 0, "", argErr(err)
+	}
+	nf, hasLen, err := optNumber(a, "length")
+	if err != nil {
+		return 0, 0, "", argErr(err)
+	}
+	switch {
+	case label != "" && (hasAddr || hasLen):
+		return 0, 0, "", argErr(errors.New("give either partition or address+length, not both"))
+	case label != "":
+		if ptErr != nil {
+			return 0, 0, "", status.Errorf(codes.FailedPrecondition, "the backup has no valid partition table, cannot resolve %q: %v", label, ptErr)
+		}
+		for _, p := range parts {
+			if p.Label == label {
+				return p.Offset, int(p.Size), "partition " + label + " (" + p.Kind() + ")", nil
+			}
+		}
+		return 0, 0, "", status.Errorf(codes.NotFound, "partition %q is not in the backup's partition table", label)
+	case hasAddr != hasLen:
+		return 0, 0, "", argErr(errors.New("a region restore needs both address and length"))
+	case hasAddr:
+		n := int(nf)
+		if nf < 1 || nf != float64(n) || addr%sector != 0 || n%sector != 0 {
+			return 0, 0, "", argErr(fmt.Errorf("address 0x%X and length %v must be multiples of the 4096-byte sector", addr, nf))
+		}
+		if uint64(addr)+uint64(n) > uint64(len(b)) {
+			return 0, 0, "", argErr(fmt.Errorf("0x%X+%d is outside the %d-byte backup", addr, n, len(b)))
+		}
+		return addr, n, fmt.Sprintf("region [0x%X, +0x%X)", addr, n), nil
+	}
+	return 0, len(b), "whole flash", nil
+}
+
 func (d *device) flashRestore(ctx context.Context, a map[string]any) (map[string]any, error) {
 	if _, ok := a["backup"]; !ok {
 		if p, ok := a["path"].(string); ok {
@@ -1143,7 +1198,7 @@ func (d *device) flashRestore(ctx context.Context, a map[string]any) (map[string
 	}
 	resetAfter := false
 	if !dry {
-		if err := d.needFlash(true); err != nil {
+		if err := d.needFlash(false); err != nil {
 			return nil, err
 		}
 		if err := tokenIs(a, "confirm", tokRestore, "restoring flash"); err != nil {
@@ -1164,39 +1219,48 @@ func (d *device) flashRestore(ctx context.Context, a map[string]any) (map[string
 		if err != nil {
 			return nil, err
 		}
-		p, err := d.plan(0, b)
+		// The layout that matters is the one being restored, and the one
+		// on the chip now: a sector protected in either needs the token.
+		parts, ptErr := esp.ParsePartitionTable(b[esp.PartitionTableOffset : esp.PartitionTableOffset+0xC00])
+		addr, n, what, err := restoreRange(a, b, parts, ptErr)
 		if err != nil {
 			return nil, err
 		}
-		res := map[string]any{"backup": bk, "warning": nvsWarn}
+		want := b[addr : int(addr)+n]
+		p, err := d.plan(addr, want)
+		if err != nil {
+			return nil, err
+		}
+		res := map[string]any{"backup": bk, "restores": what, "address": hex32(addr), "bytes": float64(n), "warning": nvsWarn}
 		p.report(res)
-		// The layout that matters is the one being restored.
-		parts, ptErr := esp.ParsePartitionTable(b[esp.PartitionTableOffset : esp.PartitionTableOffset+0xC00])
-		hit := p.sectorsTouched(regions(len(b), parts, ptErr))
+		hit := p.sectorsTouched(append(regions(len(b), parts, ptErr), d.layout()...))
 		res["regions_changed"] = regionNames(hit)
 		if dry {
 			res["dry_run"] = true
+			need := "allow_flash, confirm=" + tokRestore
 			if protectedGate(map[string]any{}, hit) != nil {
-				res["would_need"] = "confirm_protected=" + tokProtected
+				need += ", confirm_protected=" + tokProtected
 			}
+			res["would_need"] = need
 			return res, nil
 		}
 		if err := protectedGate(a, hit); err != nil {
 			return nil, err
 		}
-		j, err := d.p.journalStart(d, "restore", map[string]any{"backup": bk["path"], "runs": res["runs"]})
+		j, err := d.p.journalStart(d, "restore", map[string]any{"backup": bk["path"], "restores": what, "runs": res["runs"]})
 		if err != nil {
 			return nil, err
 		}
 		t0 := time.Now()
-		err = d.execute(p)
+		retries, err := d.execute(p)
 		if err == nil {
 			var got [16]byte
-			if got, err = d.cl.FlashMD5(0, len(b)); err == nil && got != md5Of(b) {
-				err = status.Errorf(codes.DataLoss, "after the restore the chip MD5 of the flash is %x, the backup's %x", got, md5Of(b))
+			if got, err = d.cl.FlashMD5(addr, n); err == nil && got != md5Of(want) {
+				err = status.Errorf(codes.DataLoss, "after the restore the chip MD5 of %s is %x, the backup's %x", what, got, md5Of(want))
 			}
 		}
-		if jerr := d.p.journalEnd(j, err); jerr != nil && err == nil {
+		res["write_retries"] = float64(retries)
+		if jerr := d.p.journalEnd(j, err, map[string]any{"write_retries": retries}); jerr != nil && err == nil {
 			res["journal_error"] = jerr.Error()
 		}
 		if err != nil {

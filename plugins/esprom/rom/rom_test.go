@@ -16,9 +16,9 @@ import (
 
 func fastTiming(t *testing.T) {
 	t.Helper()
-	a, b, c, d := ResetHold, StrapHold, StrapHoldLong, USJStep
-	ResetHold, StrapHold, StrapHoldLong, USJStep = time.Millisecond, time.Millisecond, 30*time.Millisecond, time.Millisecond
-	t.Cleanup(func() { ResetHold, StrapHold, StrapHoldLong, USJStep = a, b, c, d })
+	a, b, c, d, e := ResetHold, StrapHold, StrapHoldLong, USJStep, EraseAllowance
+	ResetHold, StrapHold, StrapHoldLong, USJStep, EraseAllowance = time.Millisecond, time.Millisecond, 30*time.Millisecond, time.Millisecond, 0
+	t.Cleanup(func() { ResetHold, StrapHold, StrapHoldLong, USJStep, EraseAllowance = a, b, c, d, e })
 }
 
 // romClient puts a classic-wired sim into download mode and syncs.
@@ -330,19 +330,19 @@ func TestReadBeyondSetParamsIsReported(t *testing.T) {
 func TestWriteFlashChunksAndDeferredError(t *testing.T) {
 	s, c := stubClient(t, ESP32, 1<<20)
 	data := bytes.Repeat([]byte{0xA5, 0x5A}, 0x6000/2) // 24 KiB: two FLASH_DATA blocks
-	if err := c.WriteFlash(0x10000, data, nil); err != nil {
-		t.Fatal(err)
+	if n, err := c.WriteFlash(0x10000, data, 3); err != nil || n != 0 {
+		t.Fatal(n, err)
 	}
 	sum, err := c.FlashMD5(0x10000, len(data))
 	if err != nil || sum != md5.Sum(data) || s.Commands[CmdFlashData] != 2 || len(s.Erased) != 6 { //nolint:gosec
 		t.Fatalf("%v data=%d erased=%x", err, s.Commands[CmdFlashData], s.Erased)
 	}
-	if err := c.WriteFlash(0x10001, data, nil); err == nil {
+	if _, err := c.WriteFlash(0x10001, data, 3); err == nil {
 		t.Fatal("unaligned write accepted")
 	}
 	// A failing write is reported in the answer to the following command.
 	s.FailWriteAt = 0x20000 + 0x5000
-	if err := c.WriteFlash(0x20000, data, nil); err != nil {
+	if n, err := c.WriteFlash(0x20000, data, 3); err != nil || n != 0 {
 		t.Fatalf("the failure must surface only on the next command: %v", err)
 	}
 	_, err = c.FlashMD5(0x20000, len(data))
@@ -463,5 +463,59 @@ func TestContextCancelsWait(t *testing.T) {
 	s.IgnoreSyncs = 10
 	if _, err := c.Sync(3, time.Second); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
+	}
+}
+
+// A lost FLASH_DATA (either direction) or a corrupted one restarts the
+// download at that block with a new FLASH_BEGIN; nothing lands shifted.
+func TestWriteFlashRestartsAtTheFailedBlock(t *testing.T) {
+	data := make([]byte, 3*StubFlashBlock+SectorSize) // 4 blocks
+	for i := range data {
+		data[i] = byte(i*31 + i>>9)
+	}
+	for _, fault := range []string{"request lost", "answer lost", "corrupted"} {
+		s, c := stubClient(t, ESP32, 1<<20)
+		c.Timeout, c.Baud = 50*time.Millisecond, 1<<30
+		n := s.Commands[CmdFlashData] + 2 // the second block of this download
+		switch fault {
+		case "request lost":
+			s.DropFlashData = n
+		case "answer lost":
+			s.DropFlashDataAnswer = n
+		case "corrupted":
+			s.CorruptFlashData = n
+		}
+		before := s.Commands[CmdFlashBegin]
+		retries, err := c.WriteFlash(0x40000, data, 3)
+		if err != nil || retries != 1 || s.Commands[CmdFlashBegin]-before != 2 {
+			t.Fatalf("%s: retries=%d begins=%d err=%v", fault, retries, s.Commands[CmdFlashBegin]-before, err)
+		}
+		if !bytes.Equal(s.Flash[0x40000:0x40000+len(data)], data) {
+			t.Fatalf("%s: flash differs after the restart", fault)
+		}
+		if sum, err := c.FlashMD5(0x40000, len(data)); err != nil || sum != md5.Sum(data) { //nolint:gosec
+			t.Fatalf("%s: %v", fault, err)
+		}
+	}
+	// Out of attempts: the timeout is returned, not hidden.
+	s, c := stubClient(t, ESP32, 1<<20)
+	c.Timeout, c.Baud = 50*time.Millisecond, 1<<30
+	s.DropFlashData = s.Commands[CmdFlashData] + 1
+	if _, err := c.WriteFlash(0x40000, data, 0); !errors.Is(err, ErrTimeout) {
+		t.Fatal(err)
+	}
+}
+
+func TestBlockTimeoutCoversEraseAndWire(t *testing.T) {
+	c := New(nil)
+	c.Timeout, c.Baud = 3*time.Second, 460800
+	// 16 KiB at 460800 is 0.36 s on the wire; the bound leaves 3 s for the
+	// previous block's erase and program plus three wire times.
+	if got := c.blockTimeout(); got < 7*time.Second || got > 8*time.Second {
+		t.Fatal(got)
+	}
+	c.Baud = 0
+	if got := c.blockTimeout(); got < 10*time.Second {
+		t.Fatalf("115200: %v", got)
 	}
 }

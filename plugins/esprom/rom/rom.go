@@ -176,7 +176,9 @@ type Client struct {
 	buf []byte
 	// Timeout bounds one ordinary command; long commands scale it.
 	Timeout time.Duration
-	stub    bool
+	// Baud is the current line rate (bounds FLASH_DATA answers); 0 = 115200.
+	Baud int
+	stub bool
 	// statusLen is 4 for the ROM, 2 for the stub; learned from SYNC.
 	statusLen int
 	stats     Stats
@@ -598,39 +600,117 @@ func (c *Client) FlashBegin(size, blocks, blockSize, addr uint32) error {
 	if !c.stub {
 		return ErrNoStub
 	}
-	_, _, err := c.Command(CmdFlashBegin, le32(size, blocks, blockSize, addr), 0, c.Timeout+10*time.Second)
+	_, _, err := c.Command(CmdFlashBegin, le32(size, blocks, blockSize, addr), 0, c.blockTimeout())
 	return err
 }
 
 // FlashData sends one block. The stub answers before writing it; a write
 // error is reported in the answer to the NEXT command.
 func (c *Client) FlashData(seq uint32, data []byte) error {
-	_, _, err := c.Command(CmdFlashData, append(le32(uint32(len(data)), seq, 0, 0), data...), Checksum(data), c.Timeout+10*time.Second)
+	_, _, err := c.Command(CmdFlashData, append(le32(uint32(len(data)), seq, 0, 0), data...), Checksum(data), c.blockTimeout())
 	return err
 }
 
-// WriteFlash writes data at addr through the stub, StubFlashBlock bytes per
-// FLASH_DATA. addr and len(data) must be sector aligned (the stub erases
-// whole sectors). The result must be verified with FlashMD5, whose answer
-// also carries a write error of the last block.
-func (c *Client) WriteFlash(addr uint32, data []byte, progress func(done int)) error {
-	if addr%SectorSize != 0 || len(data)%SectorSize != 0 || len(data) == 0 {
-		return fmt.Errorf("write 0x%08X+%d: not sector aligned", addr, len(data))
+// blockTimeout bounds one FLASH_BEGIN/FLASH_DATA answer. The stub reads a
+// block only after it erased (up to four non-blank 4 KiB sectors, or one
+// 64 KiB block: about 2 s at most on common SPI NOR) and programmed (64
+// pages, well under 1 s) the previous one; the block itself is on the wire
+// for 16 KiB x 10 bits / baud (0.36 s at 460800), counted three times.
+func (c *Client) blockTimeout() time.Duration {
+	baud := c.Baud
+	if baud <= 0 {
+		baud = 115200
 	}
+	wire := time.Duration(StubFlashBlock*10) * time.Second / time.Duration(baud)
+	return c.Timeout + EraseAllowance + 3*wire
+}
+
+// EraseAllowance is the erase/program time the stub may spend on the
+// previous block before it reads the next (a variable so tests shorten it).
+var EraseAllowance = 3 * time.Second
+
+// writeFailure is a download that stopped at a block.
+type writeFailure struct {
+	offset int // bytes of the download before the failed block
+	err    error
+}
+
+func (e *writeFailure) Error() string { return e.err.Error() }
+func (e *writeFailure) Unwrap() error { return e.err }
+
+// retryable: no answer at all (a frame lost in either direction) or a
+// checksum error (a corrupted block that the stub refused). A stub error
+// such as a failed SPI operation is not retried.
+func retryable(err error) bool {
+	var se *StatusError
+	if errors.As(err, &se) {
+		return se.Stub && (se.Status == 0xC1 || (se.Status == 1 && se.Code == 0xC1))
+	}
+	return errors.Is(err, ErrTimeout)
+}
+
+func (c *Client) download(addr uint32, data []byte) error {
 	blocks := (len(data) + StubFlashBlock - 1) / StubFlashBlock
 	if err := c.FlashBegin(uint32(len(data)), uint32(blocks), StubFlashBlock, addr); err != nil {
-		return err
+		return &writeFailure{0, err}
 	}
 	for i := 0; i < blocks; i++ {
 		blk := data[i*StubFlashBlock : min(len(data), (i+1)*StubFlashBlock)]
 		if err := c.FlashData(uint32(i), blk); err != nil {
-			return fmt.Errorf("block %d of %d at 0x%08X: %w", i+1, blocks, addr+uint32(i*StubFlashBlock), err)
-		}
-		if progress != nil {
-			progress((i + 1) * StubFlashBlock)
+			return &writeFailure{i * StubFlashBlock, fmt.Errorf("block %d of %d at 0x%08X: %w", i+1, blocks, addr+uint32(i*StubFlashBlock), err)}
 		}
 	}
 	return nil
+}
+
+// WriteFlash writes data at addr through the stub, StubFlashBlock bytes per
+// FLASH_DATA; addr and len(data) must be sector aligned (the stub erases
+// whole sectors). When a block gets no answer, or a checksum error, the
+// link is resynchronized and the download restarts AT THAT BLOCK with a new
+// FLASH_BEGIN, at most attempts times. Resending the block inside the old
+// download would be unsafe: the stub ignores sequence numbers, so a block it
+// did receive (only its answer was lost) would be written again at the next
+// offset. The new FLASH_BEGIN erases the remaining sectors again before
+// writing, so a block that did land is rewritten in place. The result must
+// be verified with FlashMD5, whose answer also carries a deferred write
+// error of the last block. It returns the number of restarts.
+func (c *Client) WriteFlash(addr uint32, data []byte, attempts int) (int, error) {
+	if addr%SectorSize != 0 || len(data)%SectorSize != 0 || len(data) == 0 {
+		return 0, fmt.Errorf("write 0x%08X+%d: not sector aligned", addr, len(data))
+	}
+	if !c.stub {
+		return 0, ErrNoStub
+	}
+	retries, start := 0, 0
+	for {
+		err := c.download(addr+uint32(start), data[start:])
+		if err == nil {
+			return retries, nil
+		}
+		var wf *writeFailure
+		if !errors.As(err, &wf) || !retryable(wf.err) || retries >= attempts {
+			if retries > 0 {
+				return retries, fmt.Errorf("%w (after %d restart(s))", err, retries)
+			}
+			return retries, err
+		}
+		retries++
+		c.stats.Retries++
+		start += wf.offset
+		if rerr := c.resync(); rerr != nil {
+			return retries, fmt.Errorf("%w; resynchronizing for restart %d: %w", err, retries, rerr)
+		}
+	}
+}
+
+// resync drops pending input and waits for the stub to answer SYNC; the
+// stub answers only after it finished writing a block it received.
+func (c *Client) resync() error {
+	if err := c.Flush(); err != nil {
+		return err
+	}
+	_, err := c.Sync(10, 500*time.Millisecond)
+	return err
 }
 
 // EraseRegion erases whole sectors through the stub.
