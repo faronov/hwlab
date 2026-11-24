@@ -240,7 +240,7 @@ func (a *App) Invoke(ctx context.Context, req InvokeRequest) (map[string]any, er
 	if err != nil {
 		return nil, err
 	}
-	if spec.GetDanger() != pluginv1.Danger_DANGER_SAFE {
+	if needsConfirmation(spec, req.Args) {
 		act := policy.Action{Kind: policy.KindInvoke, Plugin: req.Plugin, Device: dev.LocalID, Capability: req.Capability, Method: req.Method}
 		if err := a.Policy.Authorize(act, req.Confirm); err != nil {
 			return nil, err

@@ -189,7 +189,7 @@ func (a *App) Target(ctx context.Context, req TargetRequest) (*TargetResult, err
 		if err != nil {
 			return err
 		}
-		if spec.GetDanger() != pluginv1.Danger_DANGER_SAFE {
+		if needsConfirmation(spec, c.Args) {
 			act := policy.Action{Kind: policy.KindInvoke, Plugin: d.PluginID, Device: d.LocalID, Capability: c.Capability, Method: c.Method}
 			if err := a.Policy.Authorize(act, req.Confirm); err != nil {
 				return err

@@ -14,6 +14,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/faronov/hwlab/internal/apperr"
+	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 )
 
 // maxExactInt is the largest integer a JSON number (float64) holds exactly.
@@ -187,6 +188,33 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// DryRunKeyword marks a method's boolean dry_run argument in its args
+// schema ("dry_run":{"type":"boolean","x-hwlab-dry-run":true}). The plugin
+// promises that a call with dry_run=true changes nothing on the target, so
+// the core does not ask for confirmation for it (ADR 0004). Methods without
+// the mark keep needing confirmation whatever their arguments say.
+const DryRunKeyword = "x-hwlab-dry-run"
+
+// isDryRun reports a call its method declares free of side effects.
+func isDryRun(spec interface{ GetArgsSchemaJson() string }, args map[string]any) bool {
+	if v, _ := args["dry_run"].(bool); !v {
+		return false
+	}
+	var s struct {
+		Properties map[string]map[string]any `json:"properties"`
+	}
+	if json.Unmarshal([]byte(spec.GetArgsSchemaJson()), &s) != nil {
+		return false
+	}
+	marked, _ := s.Properties["dry_run"][DryRunKeyword].(bool)
+	return marked
+}
+
+// needsConfirmation: every non-SAFE method, except a declared dry run.
+func needsConfirmation(spec *pluginv1.MethodSpec, args map[string]any) bool {
+	return spec.GetDanger() != pluginv1.Danger_DANGER_SAFE && !isDryRun(spec, args)
 }
 
 // ArtifactsRoot is the only host directory file arguments may point into
