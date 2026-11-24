@@ -216,3 +216,42 @@ func TestXDS110DoesNotOverclaimTargetOperationsOrEnergyTrace(t *testing.T) {
 		}
 	}
 }
+
+// esprom ran on a SONOFF Dongle Max (read-only) and on the Thread BR board
+// (H2 bridge incl. program/restore, S3 USJ identify and run reset). Erase,
+// usj bootloader mode and the post-run fixes (block restart, region restore)
+// never ran on hardware and must stay graded as such.
+func TestESPROMClaimsMatchTheHardwareRuns(t *testing.T) {
+	e, ok := Lookup("esprom")
+	if !ok {
+		t.Fatal("esprom missing")
+	}
+	b := e.Backends[0]
+	if b.Validation != ValHardwarePartial || b.Cgo != "no" || b.Dependency != DepNative {
+		t.Fatalf("%+v", b)
+	}
+	got := map[string]CapStatus{}
+	for _, c := range b.Capabilities {
+		got[c.Name] = c.Status
+	}
+	for name, want := range map[string]CapStatus{
+		"classic DTR/RTS entry (esp32_uart)":              CapRealHW,
+		"flash read / backup":                             CapRealHW,
+		"h2_bridge (ESP32-H2 behind the S3 bridge)":       CapRealHW,
+		"program and whole-flash restore (h2_bridge)":     CapRealHW,
+		"usj run reset with re-enumeration (usj_reset)":   CapRealHW,
+		"usj mode=bootloader on its own":                  CapSimulatedOnly,
+		"FLASH_DATA restart at a lost or corrupted block": CapSimulatedOnly,
+		"region restore (partition or address+length)":    CapSimulatedOnly,
+		"erase (region, app, chip)":                       CapSimulatedOnly,
+	} {
+		if got[name] != want {
+			t.Errorf("%s: %q, want %q", name, got[name], want)
+		}
+	}
+	for _, note := range []string{"esprom-sonoff-dongle-max-results.md", "esprom-thread-br-results.md"} {
+		if _, err := os.Stat(filepath.Join("..", "..", "docs", "notes", note)); err != nil {
+			t.Errorf("hardware evidence note missing: %v", err)
+		}
+	}
+}

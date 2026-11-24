@@ -179,10 +179,10 @@ additionally need the plugin's own confirmation token (--token).`,
 			c.Flags().StringVar(&f.address, "address", "", "vector table base, aligned to 0x200 (default 0x08000000)")
 		}),
 	)
-	bl := &cobra.Command{Use: "bsl", Short: "ROM serial bootloader (TI CC13xx/CC26xx/CC2538: plugin tibsl)"}
+	bl := &cobra.Command{Use: "bsl", Short: "ROM serial bootloader (TI CC13xx/CC26xx/CC2538: plugin tibsl; Espressif: plugin esprom)"}
 	bl.AddCommand(
 		add("identify", "Enter the bootloader and identify the chip (read only; it stays in the bootloader)", "bsl-identify", nil),
-		add("reset", "Leave the bootloader and start the flash image (--yes)", "bsl-reset", nil),
+		add("reset", "Leave the bootloader and start the flash image (--yes; esprom: --config allow_reset=true, --arg mode=run|bootloader, --arg console_ms=N)", "bsl-reset", nil),
 		add("ccfg-info", "Decode the CCFG/CCA: bootloader backdoor, debug/TAP enables, protection", "ccfg-info", nil),
 	)
 	jt := &cobra.Command{Use: "jtag", Short: "JTAG chain (probe transport, no CPU debug)"}

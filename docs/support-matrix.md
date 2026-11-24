@@ -18,6 +18,7 @@ Code, fixtures and passing tests are not hardware validation.
 | ccdebugger: native Go USB (CC Debugger 0451:16a2, SmartRF04DD 11a0:eb20) | partial | real-hardware-partial | real | native | no |
 | ccdebugger: cc-tool fallback | complete | synthetic | none | optional-external-tool | no |
 | cmsisdap: native Go CMSIS-DAP over Linux usbfs bulk (v2) and hidraw (v1), or macOS IOKit bulk (v2 only) + generic ADIv5 (internal/adiv5) + generic Cortex-M (internal/cortexm, shared with ST-Link) + JTAG chain scan (internal/jtag) + target-memory RTT (internal/rtt, simulator-tested) | partial | real-hardware-partial | real | native | no |
+| esprom: native Go ESP serial protocol (SLIP, ROM + esp-flasher-stub v2.0.0 vendored, Apache-2.0 OR MIT) over plugins/uart ports; classic and USB-Serial/JTAG DTR/RTS sequences; passive discovery | complete | real-hardware-partial | synthetic | native | no |
 | espusbjtag: native Go Espressif USB-JTAG transport (Linux usbfs or macOS IOKit) + JTAG + RISC-V DM (spec 0.13) or Xtensa OCD (ESP32-S3) + SPI1 flash driver over system bus access or a halted Xtensa core | partial | real-hardware-partial | real | native | no |
 | fake: in-process simulation | complete | synthetic | synthetic | native | no |
 | ftdi: native Go FTDI protocol (Linux usbfs or macOS IOKit) + MPSSE + JTAG | partial | real-hardware-partial | real | native | no |
@@ -260,6 +261,60 @@ Code, fixtures and passing tests are not hardware validation.
   - the firmware does not answer undefined commands, so one stray out-of-sync reply may be reported before the stream is back in step
   - SWO, UART/COM port and JTAG debugging are not implemented
   - Linux only (usbfs and hidraw)
+
+### esprom — Espressif serial bootloader (ROM download mode + esp-flasher-stub): ESP32 on USB-UART bridges, the ESP32-H2 behind the S3 bridge, USB-Serial/JTAG ports
+
+**native Go ESP serial protocol (SLIP, ROM + esp-flasher-stub v2.0.0 vendored, Apache-2.0 OR MIT) over plugins/uart ports; classic and USB-Serial/JTAG DTR/RTS sequences; passive discovery**
+
+- implementation: complete; validation: real-hardware-partial; dependency: native (plugins/uart serial ports (DTR/RTS in one TIOCMSET on Linux/macOS), internal/usb for discovery, the vendored stub images (third_party/esp-flasher-stub); esptool and Python are not used and no esptool code or stub is included (ADR 0041))
+- capabilities:
+
+  | Capability | Status | Evidence |
+  |---|---|---|
+  | passive USB discovery | REAL_HW_VERIFIED | macOS host: the SONOFF Dongle Max CP2102N listed once (cu.usbserial-14730 opened, cu.SLAB_USBtoUART17 as alt_ports), the S3 bridge (303a:4002) as CDC 0 only with the console port never opened, three 303a:1001 ports as usj with their espusbjtag ids, the tibsl-identified CC2652P dongle flagged; nothing opened |
+  | classic DTR/RTS entry (esp32_uart) | REAL_HW_VERIFIED | SONOFF Dongle Max (ESP32-D0WDR2-V3 + CP2102N): atomic (0,1) 100 ms -> (1,0) 100 ms -> (0,0) entered DOWNLOAD_BOOT on every try (4 entries), SYNC after 3-4 attempts |
+  | ESP32 detection and eFuse identity | REAL_HW_VERIFIED | ROM word 0x00F01D83; MAC 70:4b:ca:f7:46:f4, package ESP32-D0WDR2-V3, revision v3.1, features, FLASH_CRYPT_CNT/secure boot/JTAG/download fields |
+  | stub upload and baud switch (ESP32) | REAL_HW_VERIFIED | esp-flasher-stub v2.0.0 esp32.json uploaded with MEM_*, OHAI received, CHANGE_BAUDRATE to 921600 |
+  | flash JEDEC id and size (ESP32 SPI1 registers) | REAL_HW_VERIFIED | 85 20 18 (Puya, 16 MiB) with SPI pins remapped by eFuse (configsip 153911750); SPI_SET_PARAMS 16 MiB |
+  | flash read / backup | REAL_HW_VERIFIED | 16 MiB read twice via READ_FLASH (stub MD5 per 256 KiB), SHA-256 6024d1b4... equal, chip SPI_FLASH_MD5 equal, 409 s at 921600 Bd; bootloader and app appended SHA-256 match the bytes read |
+  | flash info and verify | REAL_HW_VERIFIED | partition table, protected ranges, app descriptor (Dongle-M, IDF v5.2.1) and otadata (ota_0) decoded on the device; verify of the 32 KiB bootloader slot by SPI_FLASH_MD5 matched |
+  | reset: classic run (with console) and bootloader | REAL_HW_VERIFIED | line-only run reset booted SPI_FAST_FLASH_BOOT (ROM lines captured); mode=bootloader reached DOWNLOAD_BOOT and answered SYNC |
+  | h2_bridge (ESP32-H2 behind the S3 bridge) | REAL_HW_VERIFIED | Thread BR board (S3 7CDFA1FE67F0 in bridge mode, lines on): identify 1.3 s by GET_SECURITY_INFO chip id 16, EUI-64 equal to the NCP's; flash info; 4 MiB backup in 210 s at 460800 Bd, two reads equal, equal to an older esptool backup below zbnv (docs/notes/esprom-thread-br-results.md) |
+  | program and whole-flash restore (h2_bridge) | REAL_HW_VERIFIED | 744,288 B app into the inactive ota_1: 182 sectors, 25 s, chip MD5 verified; 1,966,080 B into ota_1 in 32.6 s (a first attempt hit one FLASH_DATA timeout); restore from the backup: 64 sectors, 15 s, whole-flash MD5 equal; restore dry run |
+  | run reset with console (h2_bridge) | REAL_HW_VERIFIED | console captured after the classic run sequence through the bridge |
+  | usj entry and identify (ESP32-S3) | REAL_HW_VERIFIED | S3 after the bridge's s3 usj: identify 0.6 s through the USB-Serial/JTAG download sequence; ESP32-S3, 8 MB PSRAM, 4 MB Zbit flash, MAC correct |
+  | usj run reset with re-enumeration (usj_reset) | REAL_HW_VERIFIED | TRM 33.4-4 sequence: the CDC port re-enumerated, the plugin reopened it, the S3 application came back |
+  | usj mode=bootloader on its own | SIMULATED_ONLY | TRM 33.4-3 sequence and SYNC check; on hardware only as part of identify |
+  | ESP32-C6 eFuse decode | SIMULATED_ONLY | ESP-IDF v5.5.1 eFuse tables (MAC, MAC_EXT, wafer version, package) |
+  | FLASH_DATA restart at a lost or corrupted block | SIMULATED_ONLY | added after one FLASH_DATA timeout on the H2 bridge: resync, new FLASH_BEGIN at the failed block (the stub ignores sequence numbers), at most 4 restarts per run, write_retries reported and journaled; simulated request loss, answer loss and corruption |
+  | region restore (partition or address+length) | SIMULATED_ONLY | a partition of the backup's table or an aligned range, protected in the backup's or the chip's layout needs confirm_protected |
+  | erase (region, app, chip) | SIMULATED_ONLY | blank check by chip MD5, tokens, allow_erase/allow_chip_erase, backup gate; never run on hardware |
+
+- verified:
+  - passive discovery of the Dongle Max CP2102N as one device with its VCP alias, of the S3 bridge's CDC 0 and of USB-Serial/JTAG ports
+  - classic DTR/RTS entry, SYNC, ROM-word detection and eFuse identity of an ESP32-D0WDR2-V3 v3.1
+  - esp-flasher-stub upload, 921600 Bd, flash JEDEC id and SPI_SET_PARAMS on that chip
+  - verified 16 MiB backup: two identical reads and the chip's whole-flash MD5 (docs/notes/esprom-sonoff-dongle-max-results.md)
+  - flash info (partition table, app descriptor, otadata) and verify by SPI_FLASH_MD5
+  - line-only run reset with console capture and bootloader reset
+  - ESP32-H2 behind the S3 bridge: identify, info, 4 MiB backup, program into ota_1, whole-flash restore, restore dry run, run reset (docs/notes/esprom-thread-br-results.md)
+  - ESP32-S3 over its USB-Serial/JTAG: identify through the USJ download sequence and run reset with port re-enumeration
+- unverified:
+  - erase on any hardware
+  - usj mode=bootloader on its own
+  - recovery of an open espusbjtag session after a USJ reset
+  - the FLASH_DATA block restart and the region restore on hardware
+  - ESP32-C6 identity
+  - rates above 921600 Bd
+  - Windows (no atomic DTR/RTS change)
+  - CH34x and FTDI bridges
+- known gaps:
+  - flash only on ESP32, ESP32-S3, ESP32-C6 and ESP32-H2 (stubs vendored); S2/C2/C3/C5/P4 are identify-only
+  - no compressed or encrypted writes, no secure download mode, no USB-OTG download
+  - flash with encryption or secure boot enabled is read-only; eFuses are never written
+  - the esp-flasher-stub RUN_USER_CODE/FLASH_END reboot are no-ops: leaving the loader is a line reset (a manual board needs a button)
+  - the H2 stub behind the S3 bridge has no UART flow control: a lost byte costs a block restart
+  - program/restore dry runs write nothing but need confirmation: like identify/info/backup they reset the chip into the loader and leave it there
 
 ### espusbjtag — Espressif native USB Serial/JTAG (ESP32-C6, ESP32-H2, ESP32-C5, ESP32-S3) + generic RISC-V Debug Module + generic Xtensa OCD + ESP flash
 

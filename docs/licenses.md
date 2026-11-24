@@ -32,6 +32,9 @@ are only in `go.sum` / the module graph and not linked were not audited.
   (LICENSE and NOTICE kept in `third_party/saleae/`); only change: `go_package`.
   Generated `plugins/saleae/internal/saleaepb` carries the upstream header
   comments and is covered by the same license.
+* `third_party/esp-flasher-stub/*.json`: Espressif esp-flasher-stub v2.0.0 prebuilt RAM
+  stubs, **Apache-2.0 OR MIT** (LICENSE-APACHE, LICENSE-MIT and provenance kept in that
+  directory), uploaded unchanged into ESP chips by the `esprom` plugin.
 * `proto/hwlab/**` and its generated Go: hwlab-owned.
 
 ## BSD-derived CC-Debugger code
@@ -70,6 +73,26 @@ security code (`plugins/espusbjtag/esp`) were read from public ESP-IDF headers
 (Apache-2.0) as documentation; no code was copied and the behaviour was verified
 on real hardware. OpenOCD, esptool and ESP-IDF are optional external references
 and are never required.
+
+## Espressif serial bootloader (`plugins/esprom`, `third_party/esp-flasher-stub`)
+
+The protocol client (`plugins/esprom/rom`) was written independently from
+Espressif's public *Serial Protocol* documentation (esptool docs,
+advanced-topics/serial-protocol), the ESP32-S3 TRM (USB-Serial/JTAG reset
+tables 33.3-2, 33.4-3, 33.4-4) and ESP-IDF v5.5.1 register headers and eFuse
+tables (Apache-2.0, read as documentation). The esp-flasher-stub sources
+(Apache-2.0 OR MIT) were read for the stub's behaviour, and the Apache-2.0
+espflash `SecurityInfo` flag table cross-checked the GET_SECURITY_INFO bits.
+**No esptool code (GPL-2.0-or-later) was copied or translated, and no
+esptool-shipped stub is included.**
+
+Vendored binaries: the prebuilt esp-flasher-stub v2.0.0 images for esp32,
+esp32s3, esp32c6 and esp32h2 (`third_party/esp-flasher-stub/*.json`),
+**Apache-2.0 OR MIT** at the user's option (both license texts kept
+unchanged; the images include esp-stub-lib, same licensing). Release tag,
+commit and SHA-256 of each file are recorded in
+`third_party/esp-flasher-stub/README.md` and checked by a test. Binary
+redistribution must carry the Apache-2.0 or MIT notice.
 
 ## ST-Link V2 and Cortex-M debug (`plugins/stlink`, `internal/cortexm`)
 

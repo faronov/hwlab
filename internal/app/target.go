@@ -63,9 +63,10 @@ var TargetOps = map[string][2]string{
 	// STM32 ROM USB DFU bootloader (stm32dfu plugin): leave DFU and jump to
 	// the application.
 	"dfu-leave": {pluginv1.CapFlashProgramming, "leave"},
-	// ROM serial bootloaders (TI CC13xx/CC26xx/CC2538 tibsl plugin, also
-	// bflb): identify through the bootloader, and leave it into the
-	// application.
+	// ROM serial bootloaders (TI CC13xx/CC26xx/CC2538 tibsl plugin, the
+	// Espressif esprom plugin, also bflb): identify through the bootloader,
+	// and leave it into the application (esprom: args.mode=run|bootloader,
+	// a line-only reset that also works on a hung application).
 	"bsl-identify": {pluginv1.CapTargetIdentify, "identify"},
 	"bsl-reset":    {pluginv1.CapFlashProgramming, "reset"},
 	// JTAG probe transport (FTDI/MPSSE): enumerate and identify the TAP
