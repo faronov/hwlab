@@ -22,16 +22,23 @@ type fakeLink struct {
 	seq      [][]byte
 	aborts   int
 	transfer int
+	// stuck models an AP transaction that never completes: every DP access
+	// but a DPIDR or CTRL/STAT read answers WAIT until DAPABORT.
+	stuck     bool
+	abortVals []uint32
+	// hangAP is an AP index whose access never completes (-1: none).
+	hangAP int
 }
 
 type fakeAP struct{ idr, base, cfg uint32 }
 
 func newFake() *fakeLink {
 	return &fakeLink{
-		dpidr: 0x2BA01477,
-		aps:   []fakeAP{{idr: 0x24770011, base: 0xE00FF003, cfg: 0}},
-		mem:   map[uint32]uint32{},
-		csw:   0x23000042,
+		dpidr:  0x2BA01477,
+		aps:    []fakeAP{{idr: 0x24770011, base: 0xE00FF003, cfg: 0}},
+		mem:    map[uint32]uint32{},
+		csw:    0x23000042,
+		hangAP: -1,
 	}
 }
 
@@ -59,7 +66,14 @@ func hasSuffix(h, tail []bool) bool {
 	return true
 }
 
-func (f *fakeLink) WriteABORT(uint32) error { f.aborts++; return nil }
+func (f *fakeLink) WriteABORT(v uint32) error {
+	f.aborts++
+	f.abortVals = append(f.abortVals, v)
+	if v&abortDAP != 0 {
+		f.stuck = false
+	}
+	return nil
+}
 
 func (f *fakeLink) Transfer(ops []Op) ([]uint32, error) {
 	f.transfer++
@@ -70,6 +84,9 @@ func (f *fakeLink) Transfer(ops []Op) ([]uint32, error) {
 	for i, op := range ops {
 		if f.waits > 0 {
 			f.waits--
+			return out, &TransferError{Done: i, Ack: 2, Err: ErrWait}
+		}
+		if f.stuck && (op.AP || !op.Read || (op.Reg != dpDPIDR && op.Reg != dpCtrl)) {
 			return out, &TransferError{Done: i, Ack: 2, Err: ErrWait}
 		}
 		if !op.AP {
@@ -92,16 +109,21 @@ func (f *fakeLink) Transfer(ops []Op) ([]uint32, error) {
 		if op.Reg >= 0xF0 {
 			reg = byte(f.sel&0xF0) | op.Reg&0x0F
 		}
+		if ap == f.hangAP {
+			f.stuck = true
+			return out, &TransferError{Done: i, Ack: 7, Err: ErrNoACK}
+		}
 		var a fakeAP
 		if ap < len(f.aps) {
 			a = f.aps[ap]
 		}
+		memAP := (a.idr>>13)&0xF == 8
 		switch {
 		case op.Read && reg == apIDR:
 			out = append(out, a.idr)
-		case op.Read && reg == apBase:
+		case op.Read && reg == apBase && memAP:
 			out = append(out, a.base)
-		case op.Read && reg == apCFG:
+		case op.Read && reg == apCFG && memAP:
 			out = append(out, a.cfg)
 		case op.Read && reg == apCSW:
 			out = append(out, f.csw)
@@ -422,5 +444,120 @@ func TestReadComponentRejectsBadPreamble(t *testing.T) {
 	tg, _ := Connect(newFake(), 0)
 	if _, err := tg.ReadComponent(0x20000000); err == nil {
 		t.Error("memory without a CoreSight preamble accepted")
+	}
+}
+
+func TestConnectAbortsAStuckAPTransaction(t *testing.T) {
+	f := newFake()
+	f.stuck = true // left behind by an earlier session
+	tg, err := Connect(f, 0)
+	if err != nil {
+		t.Fatalf("connect with a stuck AP transaction: %v", err)
+	}
+	if tg.WaitAborts != 1 || f.abortVals[len(f.abortVals)-1] != abortDAP|abortClearAll {
+		t.Fatalf("aborts %d, ABORT writes %#x", tg.WaitAborts, f.abortVals)
+	}
+	f.mem[0x20000000] = 0x11223344
+	if v, err := tg.ReadWord(0x20000000); err != nil || v != 0x11223344 {
+		t.Fatalf("read after recovery: %#x %v", v, err)
+	}
+}
+
+func TestPersistentWaitAbortsTheTransaction(t *testing.T) {
+	f := newFake()
+	tg, err := Connect(f, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.stuck = true
+	if _, err := tg.ReadWord(0x20000000); !errors.Is(err, ErrWait) {
+		t.Fatalf("want ErrWait, got %v", err)
+	}
+	if f.stuck || tg.WaitAborts != 1 {
+		t.Fatalf("the stuck transaction was not aborted (aborts %d)", tg.WaitAborts)
+	}
+	if _, err := tg.ReadWord(0x20000000); err != nil {
+		t.Fatalf("the next access must work: %v", err)
+	}
+}
+
+func TestSecureAccessWhenSecureDebugIsEnabled(t *testing.T) {
+	f := newFake()
+	f.aps[0].idr = 0x84770001 // Cortex-M33 AHB-AP (IDR says AHB3)
+	f.csw = 0x43800042        // HNONSEC left set by another tool, SPIDEN=1
+	tg, err := Connect(f, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tg.Security != "secure" {
+		t.Fatalf("security %q", tg.Security)
+	}
+	if _, err := tg.ReadWord(0x0FE08000); err != nil {
+		t.Fatal(err)
+	}
+	if f.csw&cswHNONSEC != 0 || f.csw&0x03000000 != 0x03000000 {
+		t.Fatalf("CSW %#08x: want a Secure access with the AP's HPROT kept", f.csw)
+	}
+}
+
+func TestAPBitsKeptWhenSecureDebugIsDisabled(t *testing.T) {
+	for _, c := range []struct {
+		csw  uint32
+		want string
+	}{
+		{0x43000042, "non-secure"}, // TrustZone AP limited to Non-secure
+		{0x23000042, ""},           // no TrustZone (Cortex-M3/M4 AHB-AP)
+	} {
+		f := newFake()
+		f.csw = c.csw
+		tg, err := Connect(f, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tg.Security != c.want {
+			t.Errorf("CSW %#08x: security %q, want %q", c.csw, tg.Security, c.want)
+		}
+		if _, err := tg.ReadWord(0x20000000); err != nil || f.csw&cswTopMask != c.csw&cswTopMask {
+			t.Errorf("CSW %#08x became %#08x (%v)", c.csw, f.csw, err)
+		}
+	}
+}
+
+func TestScanAPsSkipsNonMemAPsAndRecoversFromAHangingAP(t *testing.T) {
+	f := newFake()
+	f.aps = []fakeAP{
+		{idr: 0x84770001, base: 0xE00FE003},
+		{idr: 0x54770002, base: 0x00000003},
+		{idr: 0x04762000}, // a COM-AP: BASE/CFG fault
+	}
+	f.hangAP = 3 // an AP behind a domain that never answers
+	tg, err := Connect(f, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aps, err := tg.ScanAPs(8)
+	if err != nil {
+		t.Fatalf("a hanging AP must not fail the scan: %v", err)
+	}
+	if len(aps) != 4 || aps[2].Class != "COM-AP" || aps[2].Base != 0 || aps[3].Error == "" || aps[3].Present {
+		t.Fatalf("aps %+v", aps)
+	}
+	if f.stuck || tg.WaitAborts == 0 || tg.AP() != 0 {
+		t.Fatalf("debug port not recovered: stuck %v aborts %d ap %d", f.stuck, tg.WaitAborts, tg.AP())
+	}
+	f.mem[0x20000000] = 7
+	if v, err := tg.ReadWord(0x20000000); err != nil || v != 7 {
+		t.Fatalf("target unusable after the scan: %v %v", v, err)
+	}
+	rep, err := tg.ScanReport(8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := rep["aps"].([]any)
+	if last := list[len(list)-1].(map[string]any); last["error"] == nil {
+		t.Errorf("report %v", rep)
+	}
+	if _, ok := list[2].(map[string]any)["base"]; ok {
+		t.Errorf("a COM-AP has no BASE: %v", list[2])
 	}
 }

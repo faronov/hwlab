@@ -58,6 +58,8 @@ type APInfo struct {
 	Class   string `json:"class"`
 	Type    string `json:"type"`
 	Present bool   `json:"present"`
+	// Error is set when the AP did not answer; the scan stops there.
+	Error string `json:"error,omitempty"`
 }
 
 var apTypes = map[uint32]string{0: "JTAG-AP", 1: "AHB3-AP", 2: "APB2/3-AP", 3: "AXI3-AP", 4: "AHB5-AP", 5: "APB4/5-AP", 6: "AXI5-AP", 7: "AHB5-AP(HPROT)"}
@@ -80,9 +82,16 @@ func decodeIDR(idr uint32) (class, typ string) {
 	return
 }
 
-// ScanAPs reads IDR, BASE and CFG of access ports 0..max-1 and stops at the
-// first absent one (IDR reads 0). It only reads and leaves the selected AP as
-// it was.
+// ScanAPs reads IDR of access ports 0..max-1, and BASE and CFG of the
+// MEM-APs among them (those registers are not defined for a JTAG-AP or a
+// vendor COM-AP). It stops at the first absent AP (IDR reads 0) and at the
+// first one that does not answer: some devices have APs behind a power or
+// security domain whose access never completes, which leaves the DP
+// answering WAIT (or nothing). Such an AP is listed with Error, the stuck
+// transaction is aborted (DAPABORT) and the debug port is brought up again,
+// so the scan result is returned without an error. An error is returned only
+// when the debug port itself cannot be recovered. It only reads and leaves
+// the selected AP as it was.
 func (t *Target) ScanAPs(max int) ([]APInfo, error) {
 	saved := t.ap
 	defer func() {
@@ -93,24 +102,75 @@ func (t *Target) ScanAPs(max int) ([]APInfo, error) {
 	for i := 0; i < max && i < 256; i++ {
 		t.ap = uint8(i)
 		t.invalidate()
+		info := APInfo{Index: uint8(i)}
 		idr, err := t.ReadAP(apIDR)
-		if err != nil {
-			return out, fmt.Errorf("AP %d IDR: %w", i, err)
-		}
-		if idr == 0 {
+		if err == nil && idr == 0 {
 			break
 		}
-		info := APInfo{Index: uint8(i), IDR: idr, Present: true}
-		info.Class, info.Type = decodeIDR(idr)
-		if info.Base, err = t.ReadAP(apBase); err != nil {
-			return out, fmt.Errorf("AP %d BASE: %w", i, err)
+		if err == nil {
+			info.IDR, info.Present = idr, true
+			info.Class, info.Type = decodeIDR(idr)
+			if isMemAP(idr) {
+				if info.Base, err = t.ReadAP(apBase); err == nil {
+					info.CFG, err = t.ReadAP(apCFG)
+				}
+			}
 		}
-		if info.CFG, err = t.ReadAP(apCFG); err != nil {
-			return out, fmt.Errorf("AP %d CFG: %w", i, err)
+		if err != nil {
+			info.Error = err.Error()
+			out = append(out, info)
+			t.ap = saved
+			if rerr := t.Reinit(); rerr != nil {
+				return out, fmt.Errorf("AP %d did not answer (%w) and the debug port could not be recovered: %w", i, err, rerr)
+			}
+			break
 		}
 		out = append(out, info)
 	}
 	return out, nil
+}
+
+// ScanReport is the ap_scan result shared by the SWD probe plugins: the APs
+// (with errors for those that did not answer), the ROM table behind the
+// selected MEM-AP and how that AP is accessed.
+func (t *Target) ScanReport(max int) (map[string]any, error) {
+	aps, err := t.ScanAPs(max)
+	if err != nil {
+		return nil, err
+	}
+	hex32 := func(v uint32) string { return fmt.Sprintf("0x%08x", v) }
+	list := []any{}
+	var rom []any
+	for _, ap := range aps {
+		e := map[string]any{"index": float64(ap.Index), "present": ap.Present}
+		if ap.Error != "" {
+			e["error"] = ap.Error
+			list = append(list, e)
+			continue
+		}
+		e["idr"], e["class"], e["type"] = hex32(ap.IDR), ap.Class, ap.Type
+		if ap.Class == "MEM-AP" {
+			e["base"], e["cfg"] = hex32(ap.Base), hex32(ap.CFG)
+		}
+		list = append(list, e)
+		if ap.Index == t.ap && ap.Class == "MEM-AP" && ap.Base&1 != 0 && ap.Base != 0xFFFFFFFF {
+			comps, werr := t.WalkROM(ap.Base)
+			for _, c := range comps {
+				rom = append(rom, map[string]any{"address": hex32(c.Address), "class": float64(c.Class), "part": fmt.Sprintf("0x%03x", c.Part), "name": c.Name, "pid": fmt.Sprintf("0x%x", c.PID)})
+			}
+			if werr != nil {
+				rom = append(rom, map[string]any{"error": werr.Error()})
+			}
+		}
+	}
+	res := map[string]any{"dpidr": hex32(t.DPIDR), "aps": list, "rom_table": rom, "selected_ap": float64(t.ap), "csw": hex32(t.CSW)}
+	if t.Security != "" {
+		res["access"] = t.Security
+	}
+	if t.WaitAborts > 0 {
+		res["dap_aborts"] = float64(t.WaitAborts)
+	}
+	return res, nil
 }
 
 // Component is a CoreSight component found in a ROM table.

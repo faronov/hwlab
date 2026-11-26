@@ -27,6 +27,9 @@ import (
 const (
 	launchTimeout   = 15 * time.Second
 	shutdownTimeout = 3 * time.Second
+	// crashGrace is how long an Unavailable answer waits for the process to
+	// be seen exiting before it is reported as the plugin's own error.
+	crashGrace = 250 * time.Millisecond
 )
 
 // process is a running plugin executable with its gRPC client.
@@ -185,7 +188,14 @@ func (p *process) wrap(op string, err error) error {
 	default:
 	}
 	if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-		return fmt.Errorf("%s %s: %w: %w", p.info.GetId(), op, ErrCrashed, err)
+		// Plugins return Unavailable themselves too (a device that went away,
+		// a target that does not answer). Only a process that exits is a
+		// crash; a broken connection to a dying one shows that quickly.
+		select {
+		case <-p.done:
+			return fmt.Errorf("%s %s: %w: %w", p.info.GetId(), op, ErrCrashed, err)
+		case <-time.After(crashGrace):
+		}
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
