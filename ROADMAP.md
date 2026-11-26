@@ -26,7 +26,7 @@ Honest summary; a plugin is only called validated if it ran on real hardware.
 
 ## Open items from Milestone 1
 
-- ⬜ `wstk`: run the Ethernet path (admin, DCH 4905, PTI) on a kit on the LAN with PTI-enabled firmware; PTI and admin over USB (EMUCOM socket tunnel); AEM accuracy against a reference load
+- ⬜ `wstk`: run the Ethernet path (admin, DCH 4905, PTI) on a kit on the LAN with PTI-enabled firmware; PTI and admin over USB (EMUCOM socket tunnel); AEM accuracy against a reference load; explain and correct the 19–33 ms AEM timestamp lag seen against nRESET edges ([ADR 0042](docs/adr/0042-wstk-reset-during-aem-capture.md))
 - ⬜ PPK2: check calibration against a known load (resistor), digital inputs with real signals, long-capture drift against an external reference; decide on the reference's spike filter
 - ⬜ `saleae`: validate analog capture (needs a Logic Pro/analog model) and decoded SPI/I2C/UART on a real bus
 - ⬜ Artifact transfer over the wire (today: shared filesystem only)

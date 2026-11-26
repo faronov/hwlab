@@ -101,6 +101,7 @@ type Plugin struct {
 	mu   sync.Mutex
 	open map[string]map[string]any // opened device id -> config
 	busy map[string]bool           // device ids with a running capture
+	aem  map[string]*aemCapture    // running USB AEM captures (shared for reset)
 	meta map[string]*kitMeta       // identification cache by device id
 	// tried is when listing last tried to identify a kit.
 	tried map[string]time.Time
@@ -154,8 +155,8 @@ func (nopCloser) Close() error { return nil }
 
 // NewWith returns a plugin using env.
 func NewWith(env Env) *Plugin {
-	return &Plugin{env: env, open: map[string]map[string]any{}, busy: map[string]bool{}, meta: map[string]*kitMeta{},
-		tried: map[string]time.Time{}}
+	return &Plugin{env: env, open: map[string]map[string]any{}, busy: map[string]bool{}, aem: map[string]*aemCapture{},
+		meta: map[string]*kitMeta{}, tried: map[string]time.Time{}}
 }
 
 // ScanUSB keeps the J-Link probes that are Silicon Labs kits: SEGGER's VID
@@ -234,6 +235,7 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 				Description: "Ethernet only: run one read-only admin console command (args: command, one of " + strings.Join(protocol.AdminCommands(), ", ") + ")"},
 			{Capability: pluginv1.CapPacketCapture, Name: "pti_status", Danger: pluginv1.Danger_DANGER_SAFE,
 				Description: "Ethernet only: admin 'pti info' (PTI mode and packet counters)"},
+			resetSpec(),
 		},
 	}
 }
@@ -262,8 +264,16 @@ func (p *Plugin) ListDevices(ctx context.Context) ([]*pluginv1.Device, error) {
 				props["uart_device"] = "uart/" + filepath.Base(v)
 			}
 		}
+		// Every capability of a USB kit is the AEM's: a kit known to have
+		// none (an Explorer Kit) advertises nothing to measure with.
+		aem, _ := p.aemOf(id)
+		props["aem"] = aem
+		var dc []*pluginv1.Capability
+		if aem != aemNo {
+			dc = usbCaps()
+		}
 		out = append(out, &pluginv1.Device{Id: id, Name: p.deviceName(id), Serial: k.Serial, Transport: "usb",
-			Capabilities: usbCaps(), Properties: p.metaProps(id, props)})
+			Capabilities: dc, Properties: p.metaProps(id, props)})
 	}
 	hosts := p.env.Hosts()
 	names := make([]string, 0, len(hosts))
@@ -306,10 +316,68 @@ func (p *Plugin) identifyOnList(ctx context.Context, id string, k USBKit) {
 	}
 }
 
+// AEM presence of a USB kit.
+const (
+	aemYes     = "yes"
+	aemNo      = "no"
+	aemUnknown = "unknown until the kit is identified"
+)
+
+// aemMainboards are the mainboards that carry the Advanced Energy Monitor:
+// the Wireless Starter Kit (BRD4001) and Wireless Pro Kit (BRD4002)
+// mainboards. Explorer and Dev Kits (for example the xG24 Explorer Kit
+// BRD2703A) answer the same kit commands through their J-Link OB but have no
+// AEM; their kit firmware refuses the AEM stream.
+var aemMainboards = []string{"BRD4001", "BRD4002"}
+
+// aem says whether an identified USB kit has an AEM, from its mainboard
+// number and board list.
+func (m *kitMeta) aem() string {
+	if m == nil || (m.info.Mainboard == "" && len(m.boards) == 0) {
+		return aemUnknown
+	}
+	for _, mb := range aemMainboards {
+		if strings.HasPrefix(m.info.Mainboard, mb) {
+			return aemYes
+		}
+		for _, b := range m.boards {
+			if strings.HasPrefix(b.Part, mb) {
+				return aemYes
+			}
+		}
+	}
+	return aemNo
+}
+
+func (p *Plugin) aemOf(id string) (string, *kitMeta) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	m := p.meta[id]
+	return m.aem(), m
+}
+
+// errNoAEM refuses AEM work on a kit without an AEM. The prefix is the
+// UNSUPPORTED_BY_ATTACHED_HW class the core reports.
+func errNoAEM(id string, m *kitMeta) error {
+	var parts []string
+	for _, b := range m.boards {
+		parts = append(parts, b.ID())
+	}
+	if len(parts) == 0 {
+		parts = append(parts, m.info.Mainboard)
+	}
+	return status.Errorf(codes.FailedPrecondition, "UNSUPPORTED_BY_ATTACHED_HW: %s (%s) has no Advanced Energy Monitor: the AEM is on "+
+		"the Wireless Starter/Pro Kit mainboards (%s); Explorer and Dev Kits have none, so this kit cannot measure current",
+		id, strings.Join(parts, ", "), strings.Join(aemMainboards, ", "))
+}
+
 func (p *Plugin) deviceName(id string) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	name := "Silicon Labs Wireless Starter Kit"
+	if m := p.meta[id]; m.aem() == aemNo {
+		name = "Silicon Labs kit without AEM"
+	}
 	if m := p.meta[id]; m != nil && len(m.boards) > 0 {
 		var parts []string
 		for _, b := range m.boards {
@@ -477,6 +545,10 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 	args := req.GetArgs().AsMap()
 	var res map[string]any
 	switch m := req.GetCapability() + "." + req.GetMethod(); {
+	case m == pluginv1.CapDebugProbe+".reset" && t.usb == nil:
+		return nil, status.Errorf(codes.Unimplemented, "reset needs the kit on USB: over Ethernet it would be the admin console's target command family, which hwlab never sends")
+	case m == pluginv1.CapDebugProbe+".reset":
+		res, err = p.resetUSB(ctx, t, args)
 	case t.usb != nil:
 		if err := p.markBusy(t.id); err != nil {
 			return nil, err
@@ -504,6 +576,9 @@ func (p *Plugin) invokeUSB(ctx context.Context, t target, method string) (map[st
 	default:
 		return nil, status.Errorf(codes.Unimplemented, "unsupported method %s", method)
 	}
+	if aem, m := p.aemOf(t.id); method != pluginv1.CapPowerMeasurement+".info" && aem == aemNo {
+		return nil, errNoAEM(t.id, m)
+	}
 	e, release, err := p.openKit(t)
 	if err != nil {
 		return nil, err
@@ -515,7 +590,19 @@ func (p *Plugin) invokeUSB(ctx context.Context, t target, method string) (map[st
 			return nil, err
 		}
 		p.setMeta(t.id, m)
-		return metaResult(m), nil
+		res := metaResult(m)
+		res["aem"] = m.aem()
+		return res, nil
+	}
+	if aem, _ := p.aemOf(t.id); aem == aemUnknown {
+		m, err := identify(ctx, e)
+		if err != nil {
+			return nil, err
+		}
+		p.setMeta(t.id, m)
+		if m.aem() == aemNo {
+			return nil, errNoAEM(t.id, m)
+		}
 	}
 	b, err := readOneBuffer(ctx, e)
 	if err != nil {

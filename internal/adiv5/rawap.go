@@ -1,7 +1,5 @@
 package adiv5
 
-import "errors"
-
 // ReadAPOn reads register reg (0x00..0xFC) of access port ap and then returns
 // to the MEM-AP the Target was connected with. It is for vendor APs that sit
 // next to the MEM-AP (for example a configuration or mailbox AP).
@@ -46,11 +44,7 @@ func (t *Target) WriteAPBlockOn(ap uint8, reg byte, data []uint32) error {
 		}
 	}
 	if err := t.p.BlockWrite(true, reg, data); err != nil {
-		if errors.Is(err, ErrFault) {
-			t.recover()
-		} else {
-			t.invalidate()
-		}
+		t.recoverFrom(err)
 		return err
 	}
 	return nil
@@ -74,11 +68,7 @@ func (t *Target) ReadAPBlockOn(ap uint8, reg byte, words int) ([]uint32, error) 
 	}
 	out, err := t.p.BlockRead(true, reg, words)
 	if err != nil {
-		if errors.Is(err, ErrFault) {
-			t.recover()
-		} else {
-			t.invalidate()
-		}
+		t.recoverFrom(err)
 		return nil, err
 	}
 	return out, nil

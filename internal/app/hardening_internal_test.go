@@ -141,6 +141,30 @@ func TestValidateArgs(t *testing.T) {
 	}
 }
 
+func TestResolveCLITextFollowsTheSchema(t *testing.T) {
+	schema := `{"type":"object","properties":{"address":{},"data":{"type":"string"},"length":{"type":"number"},"verify":{"type":"boolean"}}}`
+	args := map[string]any{
+		"address": CLIText{Text: "0x20000000", Value: float64(0x20000000)},
+		"data":    CLIText{Text: "12345678", Value: float64(12345678)},
+		"length":  CLIText{Text: "4", Value: float64(4)},
+		"verify":  CLIText{Text: "false", Value: false},
+		"extra":   CLIText{Text: "0012", Value: float64(12)},
+	}
+	ResolveCLIText(schema, args)
+	want := map[string]any{"address": float64(0x20000000), "data": "12345678", "length": float64(4), "verify": false, "extra": float64(12)}
+	if fmt.Sprint(args) != fmt.Sprint(want) {
+		t.Fatalf("got %v, want %v", args, want)
+	}
+	if err := validateSchema(schema, args); err != nil {
+		t.Fatal(err)
+	}
+	noSchema := map[string]any{"data": CLIText{Text: "0x00ff", Value: float64(255)}}
+	ResolveCLIText("", noSchema)
+	if noSchema["data"] != float64(255) {
+		t.Errorf("without a schema the scalar reading is kept: %v", noSchema)
+	}
+}
+
 func TestParseUint64(t *testing.T) {
 	for in, want := range map[string]uint64{"0": 0, "16": 16, "0x10": 16, "0XFF": 255, "0xffffffffffffffff": math.MaxUint64} {
 		got, err := ParseUint64(in)

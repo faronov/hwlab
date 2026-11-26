@@ -70,10 +70,36 @@ errors. Codes: `INVALID_ARGUMENT`, `BAD_ADDRESS`, `NOT_FOUND`,
 * Flash programming through generic memory-write is refused.
 * Request size is bounded; a 3 MiB argument is rejected cleanly.
 
+## Long runs
+
+`experiment_run` waits at most `wait` (default `45s`, `0s` returns at once,
+maximum `1h`) so a client's request timeout is not hit. A run that finished by
+then is answered with its summary (`state: finished`, `result`). Otherwise the
+answer is `state: running` with the `session_id`, and the run continues in the
+background: poll `capture_status` with `{"session": "<id>"}`; once `state` is
+`finished` the same `result` is included (and `error`/`error_info` for a failed
+run). `capture_stop` ends a run early; like every early end (a cancelled request,
+server shutdown) it skips the steps that have not started. Only an expired
+`wait` detaches the run:
+cancelling the `experiment_run` request while it waits aborts the run (steps
+that have not started are skipped, a step in progress completes) and
+finalizes the partial session. When the client sends a
+progress token, a progress notification (elapsed and requested seconds,
+samples, events) goes out every 5 s while waiting. Without `session`,
+`capture_status` lists every run of this server process without results.
+
+Step file arguments of an MCP experiment (`path`, `backup`, …) are confined to
+`<HWLAB_HOME>/artifacts` like `device_invoke`'s (relative paths land under
+`artifacts/mcp/`), and missing parent directories are created there.
+
 ## Session model
 
 `target_op` is one ephemeral device session: open → `pre` calls → op → `post`
-calls → close. Halt state persists on the target between calls, but hardware
+calls → close. A device held by a running capture (for example a WSTK AEM
+capture, which keeps the kit's J-Link) is refused meanwhile; the wstk plugin's
+own `DebugProbe.reset` through `device_invoke` on the server running the
+capture is the exception, see
+[ADR 0042](adr/0042-wstk-reset-during-aem-capture.md). Halt state persists on the target between calls, but hardware
 breakpoints/watchpoints installed by a session are removed when it closes.
 For flows that need them armed, use `pre`/`post` (for example
 `pre=[set_watchpoint, resume]`, `op=wait-halt`, `post=[clear_watchpoint]`) or

@@ -20,14 +20,15 @@ type targetFlags struct {
 	token, tokenConfig string
 }
 
-func kvMap(items []string, what string) (map[string]any, error) {
+// kvMap parses key=value items with parse.
+func kvMap(items []string, what string, parse func(string) any) (map[string]any, error) {
 	m := map[string]any{}
 	for _, a := range items {
 		k, v, ok := strings.Cut(a, "=")
 		if !ok {
 			return nil, fmt.Errorf("--%s %q: expected key=value", what, a)
 		}
-		m[k] = parseScalar(v)
+		m[k] = parse(v)
 	}
 	return m, nil
 }
@@ -65,18 +66,18 @@ additionally need the plugin's own confirmation token (--token).`,
 		c := &cobra.Command{
 			Use: use, Short: short, Args: cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				cfg, err := kvMap(f.config, "config")
+				cfg, err := kvMap(f.config, "config", parseScalar)
 				if err != nil {
 					return err
 				}
-				args, err := kvMap(f.args, "arg")
+				args, err := kvMap(f.args, "arg", cliArg)
 				if err != nil {
 					return err
 				}
 				for k, v := range map[string]string{"path": f.path, "space": f.space, "address": f.address, "length": f.length,
 					"mode": f.mode, "verify": f.verify, "base": f.base, "confirm": f.token, "confirm_config": f.tokenConfig} {
 					if v != "" {
-						args[k] = parseScalar(v)
+						args[k] = cliArg(v)
 					}
 				}
 				pre, err := parseCalls(f.pre)

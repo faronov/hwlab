@@ -76,27 +76,7 @@ func (d *device) connectInfo(ctx context.Context) (map[string]any, error) {
 }
 
 func (d *device) apScan() (map[string]any, error) {
-	aps, err := d.tgt.ScanAPs(8)
-	if err != nil {
-		return nil, err
-	}
-	list := []any{}
-	var rom []any
-	for _, ap := range aps {
-		list = append(list, map[string]any{
-			"index": float64(ap.Index), "idr": hex32(ap.IDR), "base": hex32(ap.Base), "cfg": hex32(ap.CFG), "class": ap.Class, "type": ap.Type,
-		})
-		if ap.Index == d.attached.ap && ap.Base&1 != 0 && ap.Base != 0xFFFFFFFF {
-			comps, werr := d.tgt.WalkROM(ap.Base)
-			for _, c := range comps {
-				rom = append(rom, map[string]any{"address": hex32(c.Address), "class": float64(c.Class), "part": fmt.Sprintf("0x%03x", c.Part), "name": c.Name, "pid": fmt.Sprintf("0x%x", c.PID)})
-			}
-			if werr != nil {
-				rom = append(rom, map[string]any{"error": werr.Error()})
-			}
-		}
-	}
-	return map[string]any{"dpidr": hex32(d.tgt.DPIDR), "aps": list, "rom_table": rom, "selected_ap": float64(d.attached.ap)}, nil
+	return d.tgt.ScanReport(8)
 }
 
 func (d *device) withPC(ctx context.Context, res map[string]any, st cortexm.State) (map[string]any, error) {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/faronov/hwlab/internal/clockmap"
@@ -183,18 +185,26 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 }
 
 func (p *Plugin) startUSBAEM(ctx context.Context, t target, req pluginsdk.CaptureRequest, sink *pluginsdk.Sink) (pluginsdk.Capture, *pluginsdk.CaptureStart, error) {
+	if aem, m := p.aemOf(t.id); aem == aemNo {
+		return nil, nil, errNoAEM(t.id, m)
+	}
 	e, release, err := p.openKit(t)
 	if err != nil {
 		return nil, nil, err
 	}
 	// Identification is a few small transfers; it also proves the EMUCOM
-	// path works before the capture is reported as started.
+	// path works before the capture is reported as started, and tells
+	// whether the kit has an AEM before the stream is requested.
 	m, err := identify(ctx, e)
 	if err != nil {
 		release()
 		return nil, nil, fmt.Errorf("wstk %s: %w", t.id, err)
 	}
 	p.setMeta(t.id, m)
+	if m.aem() == aemNo {
+		release()
+		return nil, nil, errNoAEM(t.id, m)
+	}
 	c := &aemCapture{p: p, id: t.id, e: e, release: release, sink: sink, clock: req.Clock, cm: clockmap.NewClockMap(),
 		duration: req.Duration, done: make(chan struct{}), meta: m}
 	if c.cfg, err = aemStream(ctx, e, &c.sp); err != nil {
@@ -205,6 +215,9 @@ func (p *Plugin) startUSBAEM(ctx context.Context, t target, req pluginsdk.Captur
 		release()
 		return nil, nil, fmt.Errorf("wstk %s: AEM reports %d Hz; only %d Hz has been validated", t.id, c.cfg.SampleRate, int(1e9/samplePeriodNs))
 	}
+	p.mu.Lock()
+	p.aem[t.id] = c
+	p.mu.Unlock()
 	go c.run(ctx)
 	attrs := map[string]string{
 		"sample_period_ns": fmt.Sprint(samplePeriodNs), "source": "AEM over J-Link EMUCOM (USB)",
@@ -235,7 +248,7 @@ type aemCapture struct {
 	err       error
 	emitted   int64 // samples
 	limit     int64
-	events    uint64
+	events    atomic.Uint64
 	nextNs    int64 // earliest start of the next batch
 	firstNs   int64
 	gaps      int
@@ -243,6 +256,17 @@ type aemCapture struct {
 	lastUs    int64
 	lastLenUs int64
 	have      bool
+
+	// io serialises J-Link operations on the connection: the loop's EMUCOM
+	// reads and the commands of methods that share it (reset.go).
+	io sync.Mutex
+	// recent is the AEM history kept for reset evidence.
+	rmu    sync.Mutex
+	recent []sampleSpan
+	// users of the connection besides the loop; ended refuses new ones.
+	umu   sync.Mutex
+	users sync.WaitGroup
+	ended bool
 }
 
 func (c *aemCapture) Wait() error { <-c.done; return c.err }
@@ -250,19 +274,23 @@ func (c *aemCapture) Wait() error { <-c.done; return c.err }
 func (c *aemCapture) Result() *pluginv1.StopCaptureResponse {
 	<-c.done
 	return &pluginv1.StopCaptureResponse{Stats: &pluginv1.CaptureStats{
-		Events: c.events, Samples: uint64(c.emitted), DroppedBatches: c.sink.Dropped()}, Clock: c.clockInfo()}
+		Events: c.events.Load(), Samples: uint64(c.emitted), DroppedBatches: c.sink.Dropped()}, Clock: c.clockInfo()}
 }
 
 func (c *aemCapture) run(ctx context.Context) {
 	defer close(c.done)
 	defer c.p.clearBusy(c.id)
 	defer c.release()
+	defer c.endUse()
+	defer c.p.dropAEM(c.id, c)
 	if c.duration > 0 {
 		c.limit = int64((c.duration + samplePeriodNs - 1) / samplePeriodNs)
 	}
 	last := time.Now()
 	for ctx.Err() == nil && (c.limit == 0 || c.emitted < c.limit) {
+		c.io.Lock()
 		b, err := c.e.Read(ctx, protocol.ChanAEM, protocol.AEMMaxRead)
+		c.io.Unlock()
 		if err != nil {
 			if ctx.Err() == nil {
 				c.err = fmt.Errorf("wstk AEM read: %w", err)
@@ -343,6 +371,7 @@ func (c *aemCapture) onBuffer(ctx context.Context, b protocol.AEMBuffer, hostNs 
 	if c.emitted == 0 {
 		c.firstNs = ts
 	}
+	c.remember(ts, cur)
 	ev := &pluginv1.Event{TimestampNs: ts, StreamId: powerStream, Payload: &pluginv1.Event_Power{Power: &pluginv1.PowerBatch{
 		SamplePeriodNs: samplePeriodNs, CurrentNa: na, VoltageUv: uv}}}
 	c.emitted += int64(len(cur))
@@ -352,10 +381,10 @@ func (c *aemCapture) onBuffer(ctx context.Context, b protocol.AEMBuffer, hostNs 
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
 		if c.sink.Emit(fctx, ev) == nil {
-			c.events++
+			c.events.Add(1)
 		}
 	} else if c.sink.TryEmit(ev) {
-		c.events++
+		c.events.Add(1)
 	}
 	return true
 }

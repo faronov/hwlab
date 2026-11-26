@@ -36,8 +36,15 @@ const (
 	ctrlCSYSPwrAck = 1 << 31
 )
 
-// ABORT bits: clear every sticky flag.
-const abortClearAll = 0x1E
+// ABORT bits.
+const (
+	// abortClearAll clears every sticky flag.
+	abortClearAll = 0x1E
+	// abortDAP (DAPABORT) cancels an AP transaction that is stuck: while one
+	// is outstanding every DP access but DPIDR, CTRL/STAT and ABORT answers
+	// WAIT, across line resets and new sessions.
+	abortDAP = 0x01
+)
 
 // CSW fields.
 const (
@@ -46,6 +53,11 @@ const (
 	cswSize32  = 2
 	cswIncSing = 1 << 4
 	cswTopMask = 0xFF000000
+	// cswSPIDEN (read-only) is set when the AP may issue Secure accesses.
+	cswSPIDEN = 1 << 23
+	// cswHNONSEC selects a Non-secure access on a TrustZone (ARMv8-M) MEM-AP;
+	// 0 is a Secure access, which reaches both Secure and Non-secure memory.
+	cswHNONSEC = 1 << 30
 )
 
 const (
@@ -148,8 +160,16 @@ type Target struct {
 	// WokeFromDormant is set once the debug port only answered after the
 	// dormant-to-SWD wake-up.
 	WokeFromDormant bool
-	// cswProt keeps the AP's reset protection/mode bits (31:24) so the
-	// accesses use the privilege and security the AP defaults to.
+	// WaitAborts counts DAPABORTs written to cancel a stuck AP transaction.
+	WaitAborts int
+	// CSW is the AP's CSW as read at attach; Security says which accesses
+	// the Target issues ("secure", "non-secure" or "" when the AP has no
+	// TrustZone support or it could not be determined).
+	CSW      uint32
+	Security string
+	// cswProt keeps the AP's protection/mode bits (31:24) so the accesses
+	// use the privilege the AP defaults to; on a TrustZone MEM-AP bit 30 is
+	// chosen by configureSecurity.
 	cswProt  uint32
 	selected uint32
 	selOK    bool
@@ -173,11 +193,9 @@ func Connect(link Link, ap uint8) (*Target, error) {
 		return nil, fmt.Errorf("AP %d does not exist (IDR is 0)", t.ap)
 	}
 	t.APIDR = idr
-	csw, err := t.ReadAP(apCSW)
-	if err != nil {
-		return nil, fmt.Errorf("read AP %d CSW: %w", t.ap, err)
+	if err := t.configureSecurity(); err != nil {
+		return nil, err
 	}
-	t.cswProt = csw & cswTopMask
 	return t, nil
 }
 
@@ -206,13 +224,37 @@ func (t *Target) RefreshAP() error {
 	if idr == 0 {
 		return nil
 	}
+	return t.configureSecurity()
+}
+
+// configureSecurity reads CSW and picks the access security. A MEM-AP in
+// front of an ARMv8-M core with the Security Extension (an AHB5-AP, whose IDR
+// may still say AHB3) issues Secure or Non-secure accesses by CSW.HNONSEC
+// (bit 30). A Non-secure access to Secure memory is a bus error (a sticky
+// FAULT), and without SAU configuration or with Secure firmware nearly all
+// memory is Secure; another debugger can leave HNONSEC set. So when
+// CSW.SPIDEN says Secure debug is allowed, the accesses are Secure (they reach
+// both worlds) whatever bit 30 held. Otherwise the AP's own bits are kept: it
+// is either not a TrustZone AP or one that may only issue Non-secure
+// accesses.
+func (t *Target) configureSecurity() error {
 	csw, err := t.ReadAP(apCSW)
 	if err != nil {
 		return fmt.Errorf("read AP %d CSW: %w", t.ap, err)
 	}
+	t.CSW, t.Security = csw, ""
 	t.cswProt = csw & cswTopMask
+	switch {
+	case csw&cswSPIDEN != 0:
+		t.cswProt &^= cswHNONSEC
+		t.Security = "secure"
+	case csw&cswHNONSEC != 0 && isMemAP(t.APIDR):
+		t.Security = "non-secure"
+	}
 	return nil
 }
+
+func isMemAP(idr uint32) bool { return (idr>>13)&0xF == 8 }
 
 // Reinit repeats the SWD line reset, DPIDR read, error clearing and debug
 // power-up. Attach calls it; a reset that takes the debug port down needs it
@@ -234,7 +276,23 @@ func (t *Target) Reinit() error {
 	if err := t.p.WriteABORT(abortClearAll); err != nil {
 		return err
 	}
-	return t.powerUp()
+	err = t.powerUp()
+	if errors.Is(err, ErrWait) {
+		// An AP transaction left stuck (by an earlier session or a probe
+		// that went away) kept the DP answering WAIT; run has aborted it.
+		err = t.powerUp()
+	}
+	return err
+}
+
+// abortStalled writes DAPABORT and clears the sticky flags. It cancels an AP
+// transaction that does not complete (an AP or bus that never answers); the
+// abandoned transfer has no defined result. Used only after WAIT retries are
+// exhausted.
+func (t *Target) abortStalled() error {
+	t.WaitAborts++
+	t.invalidate()
+	return t.p.WriteABORT(abortDAP | abortClearAll)
 }
 
 func (t *Target) wakeDormant() error {
@@ -335,6 +393,20 @@ func (t *Target) recover() {
 	t.invalidate()
 }
 
+// recoverFrom leaves the DP usable after a failed block transfer: sticky
+// flags are cleared after a FAULT and a stuck transaction is aborted after
+// WAIT.
+func (t *Target) recoverFrom(err error) {
+	switch {
+	case errors.Is(err, ErrFault):
+		t.recover()
+	case errors.Is(err, ErrWait):
+		_ = t.abortStalled()
+	default:
+		t.invalidate()
+	}
+}
+
 // run executes ops, retrying a target WAIT on the failing op and resuming
 // after it. A FAULT clears the sticky flags and is returned.
 func (t *Target) run(ops []Op) ([]uint32, error) {
@@ -355,6 +427,9 @@ func (t *Target) run(ops []Op) ([]uint32, error) {
 			waits++
 			time.Sleep(waitPause)
 			ops = ops[te.Done:]
+		case errors.Is(err, ErrWait):
+			_ = t.abortStalled()
+			return out, err
 		case errors.Is(err, ErrFault):
 			t.recover()
 			return out, err
@@ -495,11 +570,7 @@ func (t *Target) blockRead(addr uint32, words int) ([]uint32, error) {
 		got, err := t.p.BlockRead(true, apDRW, n)
 		out = append(out, got...)
 		if err != nil {
-			if errors.Is(err, ErrFault) {
-				t.recover()
-			} else {
-				t.invalidate()
-			}
+			t.recoverFrom(err)
 			return out, err
 		}
 		addr += uint32(4 * n)
@@ -518,11 +589,7 @@ func (t *Target) blockWrite(addr uint32, data []uint32) error {
 			return err
 		}
 		if err := t.p.BlockWrite(true, apDRW, data[:n]); err != nil {
-			if errors.Is(err, ErrFault) {
-				t.recover()
-			} else {
-				t.invalidate()
-			}
+			t.recoverFrom(err)
 			return err
 		}
 		addr += uint32(4 * n)

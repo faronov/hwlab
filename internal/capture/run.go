@@ -84,6 +84,10 @@ type Run struct {
 
 	stepsDone chan struct{}
 	stepFails atomic.Int64
+	// skipSteps, closed by SkipSteps, keeps steps that have not started from
+	// running; a step in progress completes.
+	skipSteps chan struct{}
+	skipOnce  sync.Once
 
 	stopOnce sync.Once
 	stopErr  error
@@ -126,7 +130,7 @@ func Start(parent context.Context, sess *session.Session, targets []Target, opts
 	}
 	ctx, cancel := context.WithCancel(parent)
 	r := &Run{Session: sess, log: opts.Logger, epoch: time.Now(), opts: opts, cancel: cancel,
-		done: make(chan struct{}), stopped: make(chan struct{}), stepsDone: make(chan struct{})}
+		done: make(chan struct{}), stopped: make(chan struct{}), stepsDone: make(chan struct{}), skipSteps: make(chan struct{})}
 	for _, t := range targets {
 		if t.Control {
 			r.controls = append(r.controls, t)
@@ -260,6 +264,11 @@ func Start(parent context.Context, sess *session.Session, targets []Target, opts
 	return r, nil
 }
 
+// SkipSteps stops the steps that have not started yet (an aborted run must
+// not go on to reset, flash or power anything). A step already in progress
+// completes; interrupting a device call half way is worse than finishing it.
+func (r *Run) SkipSteps() { r.skipOnce.Do(func() { close(r.skipSteps) }) }
+
 // StepFailures counts steps whose call returned an error.
 func (r *Run) StepFailures() int { return int(r.stepFails.Load()) }
 
@@ -296,7 +305,15 @@ func (r *Run) runSteps(ctx context.Context, steps []Step) {
 		case <-ctx.Done():
 			timer.Stop()
 			return
+		case <-r.skipSteps:
+			timer.Stop()
+			return
 		case <-timer.C:
+		}
+		select {
+		case <-r.skipSteps:
+			return
+		default:
 		}
 		r.runStep(ctx, s)
 	}

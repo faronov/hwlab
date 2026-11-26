@@ -114,35 +114,58 @@ func parseEmuList(out string) []Probe {
 	return ps
 }
 
-// parseMem returns n bytes from MemN output lines ("20000000 = 01 02 ..."),
-// with unit 1, 2 or 4 bytes per printed item (little-endian target).
-func parseMem(out string, unit, n int) ([]byte, error) {
-	var data []byte
+// parseMemAt returns n bytes read at addr from mem8 output, checking that
+// every dump line continues at the address where the previous one ended, so
+// a missing or repeated line (or a chunk that failed) is never stitched over.
+func parseMemAt(out string, addr uint64, n int) ([]byte, error) {
+	data := make([]byte, 0, n)
+	next := addr
 	for _, line := range strings.Split(out, "\n") {
 		m := reMemLine.FindStringSubmatch(strings.TrimRight(line, "\r"))
 		if m == nil {
 			continue
 		}
+		at, err := strconv.ParseUint(m[1], 16, 64)
+		if err != nil {
+			return nil, err
+		}
+		if at != next {
+			return nil, fmt.Errorf("memory dump line at 0x%X, expected 0x%X after %d of %d bytes", at, next, len(data), n)
+		}
 		for _, tok := range strings.Fields(m[2]) {
-			if len(tok) != unit*2 {
-				return nil, fmt.Errorf("unexpected memory item %q (want %d hex digits)", tok, unit*2)
+			if len(tok) != 2 {
+				return nil, fmt.Errorf("unexpected memory item %q (want 2 hex digits)", tok)
 			}
-			v, err := strconv.ParseUint(tok, 16, 32)
+			v, err := strconv.ParseUint(tok, 16, 8)
 			if err != nil {
 				return nil, err
 			}
-			var b [4]byte
-			binary.LittleEndian.PutUint32(b[:], uint32(v))
-			data = append(data, b[:unit]...)
+			data = append(data, byte(v))
+			next++
 		}
 	}
 	if len(data) < n {
 		if f := failure(out); f != "" {
 			return nil, fmt.Errorf("%s", f)
 		}
+		if l := commanderError(out); l != "" {
+			return nil, fmt.Errorf("read %d of %d bytes: J-Link Commander: %s", len(data), n, l)
+		}
 		return nil, fmt.Errorf("read %d of %d bytes: output had no memory dump; connect log: %v", len(data), n, connectLog(out))
 	}
 	return data[:n], nil
+}
+
+// commanderError returns a Commander complaint about a command's arguments,
+// such as "NumBytes should be <= 0x10000", or "".
+func commanderError(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		l := strings.TrimSpace(line)
+		if strings.Contains(l, "should be") || strings.HasPrefix(strings.ToLower(l), "syntax") {
+			return l
+		}
+	}
+	return ""
 }
 
 // parseRegs returns "NAME" -> hex value for every "NAME = HEX" pair.

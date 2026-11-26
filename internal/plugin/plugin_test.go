@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 
 	"github.com/faronov/hwlab/internal/testutil"
@@ -74,6 +77,19 @@ func TestCrashIsReportedAndPluginRelaunched(t *testing.T) {
 	}
 	if devs, err := b2.ListDevices(ctx); err != nil || len(devs) == 0 {
 		t.Errorf("relaunched plugin unusable: %v %v", devs, err)
+	}
+}
+
+func TestUnavailableFromALivePluginIsNotACrash(t *testing.T) {
+	p := &process{info: &pluginv1.PluginInfo{Id: "probe"}, done: make(chan struct{})}
+	gone := status.Error(codes.Unavailable, "SWD_NO_ACK: no acknowledge from the target")
+	err := p.wrap("invoke", gone)
+	if errors.Is(err, ErrCrashed) || status.Code(errors.Unwrap(err)) != codes.Unavailable {
+		t.Errorf("a plugin's own Unavailable was reported as a crash: %v", err)
+	}
+	close(p.done)
+	if err := p.wrap("invoke", gone); !errors.Is(err, ErrCrashed) {
+		t.Errorf("an exited plugin must be reported as crashed: %v", err)
 	}
 }
 

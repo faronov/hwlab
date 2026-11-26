@@ -8,6 +8,12 @@ import (
 	"sync"
 )
 
+// J-Link probe commands that drive the nRESET output (no reply).
+const (
+	jlinkResetLow  = 0xDC
+	jlinkResetHigh = 0xDD
+)
+
 // SimKit is a simulated kit behind a Link, answering kit control and
 // streaming synthetic AEM buffers. It is used by tests and by the plugin's
 // simulated device.
@@ -21,6 +27,16 @@ type SimKit struct {
 	CurrentmA, VoltageV float32
 	// StartUs is the kit time of the first AEM buffer.
 	StartUs uint32
+	// ResetCmds records the J-Link nRESET commands received (0xDC low,
+	// 0xDD high); while nRESET is low the AEM buffers show ResetmA.
+	ResetCmds []byte
+	ResetmA   float32
+	inReset   bool
+	// ExplorerKit makes the kit an xG24 Explorer Kit (BRD2703A): its kit
+	// control reports that board alone and it has no AEM.
+	ExplorerKit bool
+	// AEMStarts counts AEM start requests received.
+	AEMStarts int
 
 	pendingCh  uint32
 	pendingLen int
@@ -35,7 +51,7 @@ type SimKit struct {
 
 // NewSimKit returns a kit with plausible defaults.
 func NewSimKit() *SimKit {
-	return &SimKit{CurrentmA: 1.5, VoltageV: 3.3, StartUs: 1_000_000, queues: map[uint32][]byte{}}
+	return &SimKit{CurrentmA: 1.5, VoltageV: 3.3, StartUs: 1_000_000, ResetmA: 0.4, queues: map[uint32][]byte{}}
 }
 
 // Exchange implements Link.
@@ -50,6 +66,10 @@ func (s *SimKit) Exchange(_ context.Context, cmd []byte, n int) ([]byte, error) 
 		}
 		s.handle(s.pendingCh, cmd)
 		return binary.LittleEndian.AppendUint32(nil, uint32(len(cmd))), nil
+	case len(cmd) == 1 && (cmd[0] == jlinkResetLow || cmd[0] == jlinkResetHigh) && n == 0:
+		s.ResetCmds = append(s.ResetCmds, cmd[0])
+		s.inReset = cmd[0] == jlinkResetLow
+		return nil, nil
 	case len(cmd) == 10 && cmd[0] == cmdEmucom && cmd[1] == 1 && n == 0:
 		s.pendingCh = binary.LittleEndian.Uint32(cmd[2:])
 		s.pendingLen = int(binary.LittleEndian.Uint32(cmd[6:]))
@@ -57,6 +77,13 @@ func (s *SimKit) Exchange(_ context.Context, cmd []byte, n int) ([]byte, error) 
 		return nil, nil
 	}
 	return nil, fmt.Errorf("sim: unexpected exchange % x / %d", cmd, n)
+}
+
+// Resets returns the nRESET commands received so far.
+func (s *SimKit) Resets() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]byte(nil), s.ResetCmds...)
 }
 
 // ExchangeUpTo implements Link.
@@ -101,17 +128,21 @@ func (s *SimKit) handle(ch uint32, data []byte) {
 	switch ch {
 	case ChanKit:
 		if len(data) >= kitHeaderLen {
-			s.queues[ch] = append(s.queues[ch], simKitReply(data[5], data[6])...)
+			s.queues[ch] = append(s.queues[ch], simKitReply(data[5], data[6], s.ExplorerKit)...)
 		}
 	case ChanAEM:
 		if len(data) >= 12 && binary.LittleEndian.Uint16(data[8:]) == AEMTypeStart {
+			s.AEMStarts++
+			if s.ExplorerKit {
+				return
+			}
 			s.aemOn, s.nextUs = true, s.StartUs
 			s.queues[ch] = append(s.queues[ch], simAEMConfig(s.StartUs/1000)...)
 		}
 	}
 }
 
-func simKitReply(cmd, arg byte) []byte {
+func simKitReply(cmd, arg byte, explorer bool) []byte {
 	body := []byte{cmd, arg}
 	field := func(tag byte, v ...byte) {
 		body = append(body, tag, byte(len(v)), byte(len(v)>>8))
@@ -123,7 +154,11 @@ func simKitReply(cmd, arg byte) []byte {
 		field(0x00, 0, 0)
 		field(0x01, 0x06, 0x14)
 		field(0x02, 0x93, 0x04)
-		field(0x07, 0x01, 0x40)
+		if explorer {
+			field(0x07, 0x03, 0x27)
+		} else {
+			field(0x07, 0x01, 0x40)
+		}
 		field(0x0b, 0x01, 0xc2, 0xeb, 0x0b)
 	case cmd == KitCmdBoards && arg == 1:
 		recs := make([]byte, 160)
@@ -132,7 +167,15 @@ func simKitReply(cmd, arg byte) []byte {
 		}
 		copy(recs, []byte{0x01, 0x40, 0, 0, 0, 0, 0x02, 0xff, 0x01, 0xc2, 0xeb, 0x0b, 0xe4, 0x07, 0x0b, 0x1e})
 		copy(recs[20:], []byte{0x83, 0x41, 0, 0, 0, 0, 0x00, 0xff, 0x02, 0xc2, 0xeb, 0x0b, 0xe4, 0x07, 0x0b, 0x14})
-		field(0x00, 2)
+		n := byte(2)
+		if explorer {
+			for i := range recs {
+				recs[i] = 0xff
+			}
+			copy(recs, []byte{0x03, 0x27, 0, 0, 0, 0, 0x02, 0xff, 0x01, 0xc2, 0xeb, 0x0b, 0xea, 0x07, 0x05, 0x15})
+			n = 1
+		}
+		field(0x00, n)
 		field(0x01, recs...)
 	default:
 		status = 2
@@ -172,7 +215,11 @@ func (s *SimKit) aemBuffer() []byte {
 	binary.LittleEndian.PutUint32(p[36:], s.nextUs)
 	p[52] = 0x11
 	for i := 0; i < n; i++ {
-		binary.LittleEndian.PutUint32(p[aemDataHeaderLen+4*i:], math.Float32bits(s.CurrentmA+0.001*float32(i)))
+		v := s.CurrentmA + 0.001*float32(i)
+		if s.inReset {
+			v = s.ResetmA
+		}
+		binary.LittleEndian.PutUint32(p[aemDataHeaderLen+4*i:], math.Float32bits(v))
 	}
 	s.seq++
 	s.nextUs += n * 100

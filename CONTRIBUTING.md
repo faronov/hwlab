@@ -55,6 +55,13 @@ experimenting so your own sessions are untouched.
   correlation, plots and replay). Keep it green.
 - `internal/plugin` tests cover launch, handshake and crash/relaunch;
   `internal/mcp` tests drive the server through an in-memory transport.
+- Tests start freshly built plugin binaries; `testutil.BuildPlugin` raises
+  the plugin start/handshake limit to 90 s (`HWLAB_PLUGIN_LAUNCH_TIMEOUT`).
+  On macOS a host that scans every new executable can hold many new test
+  binaries at `_dyld_start` for minutes when the whole module runs at full
+  parallelism (seen with `go test ./...` next to other heavy builds; the
+  test timeout never fires because the binary has not started). Use
+  `go test -p 2 ./...` there; CI is unaffected.
 
 ## Commits and reviews
 

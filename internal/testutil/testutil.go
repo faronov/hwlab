@@ -2,6 +2,7 @@
 package testutil
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -38,6 +39,13 @@ func BuildFakePlugin(tb testing.TB) string {
 // temporary directory and returns that directory.
 func BuildPlugin(tb testing.TB, name string) string {
 	tb.Helper()
+	// Every test starts a freshly built binary; on a loaded host (the whole
+	// module tested in parallel) or one that scans new executables on their
+	// first start, the default 15 s handshake limit is not enough.
+	// internal/plugin reads it (LaunchTimeoutEnv; not imported: cycle).
+	if os.Getenv("HWLAB_PLUGIN_LAUNCH_TIMEOUT") == "" {
+		_ = os.Setenv("HWLAB_PLUGIN_LAUNCH_TIMEOUT", "90s")
+	}
 	dir := tb.TempDir()
 	goBin, err := exec.LookPath("go")
 	if err != nil {

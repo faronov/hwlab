@@ -383,10 +383,82 @@ func TestReadMemoryToPath(t *testing.T) {
 	}
 }
 
-func TestParseMemWords(t *testing.T) {
-	b, err := parseMem("20000000 = 04030201 08070605\n", 4, 8)
-	if err != nil || fmt.Sprintf("%x", b) != "0102030405060708" {
+// commanderMem8 answers mem8 commands like J-Link Commander V9.24a: 16 bytes
+// per line, and no dump but a complaint for more than 0x10000 bytes.
+func commanderMem8(mem func(addr uint64) byte) func([]string) string {
+	return func(script []string) string {
+		var b strings.Builder
+		b.WriteString(connectOut)
+		for _, cmd := range script {
+			var addr, n uint64
+			if _, err := fmt.Sscanf(cmd, "mem8 0x%X 0x%X", &addr, &n); err != nil {
+				continue
+			}
+			if n > 0x10000 {
+				b.WriteString("NumBytes should be <= 0x10000\n")
+				continue
+			}
+			for off := uint64(0); off < n; off += 16 {
+				fmt.Fprintf(&b, "%08X =", addr+off)
+				for i := off; i < min(off+16, n); i++ {
+					fmt.Fprintf(&b, " %02X", mem(addr+i))
+				}
+				b.WriteString("\n")
+			}
+		}
+		return b.String()
+	}
+}
+
+func TestMemoryReadOver64KiBIsChunked(t *testing.T) {
+	mem := func(a uint64) byte { return byte(a*7 + a>>9) }
+	f := &fakeCmd{reply: commanderMem8(mem)}
+	p := NewWith(t.TempDir(), f)
+	const n = 96 * 1024
+	path := filepath.Join(t.TempDir(), "flash.bin")
+	res, err := invoke(t, p, "MemoryAccess", "read", map[string]any{"target": "X", "address": "0x08000000", "length": float64(n), "path": path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil || len(b) != n {
+		t.Fatalf("file: %d bytes, %v", len(b), err)
+	}
+	for i, v := range b {
+		if v != mem(0x08000000+uint64(i)) {
+			t.Fatalf("byte %d = %02x, want %02x", i, v, mem(0x08000000+uint64(i)))
+		}
+	}
+	if res["sha256"] != sha(b) {
+		t.Errorf("sha256 %v", res["sha256"])
+	}
+	if r := f.last(); len(r.script) != 2 {
+		t.Errorf("one session with two mem8 commands expected: %v", r.script)
+	}
+}
+
+func TestMemReadScriptChunksAt64KiB(t *testing.T) {
+	got := memReadScript(0x08000000, 0x17C00)
+	want := []string{"mem8 0x8000000 0x10000", "mem8 0x8010000 0x7C00"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if got := memReadScript(0x20000000, 0x10000); len(got) != 1 {
+		t.Errorf("64 KiB needs one command: %v", got)
+	}
+}
+
+func TestParseMemAtChecksContinuity(t *testing.T) {
+	b, err := parseMemAt("20000000 = 01 02 03 04\n20000004 = 05 06\n", 0x20000000, 6)
+	if err != nil || fmt.Sprintf("%x", b) != "010203040506" {
 		t.Fatalf("%x %v", b, err)
+	}
+	if _, err := parseMemAt("20000000 = 01 02 03 04\n20000008 = 05 06\n", 0x20000000, 6); err == nil {
+		t.Error("a gap in the dump was stitched over")
+	}
+	_, err = parseMemAt("J-Link>mem8 0x8000000 0x17C00\nNumBytes should be <= 0x10000\n", 0x08000000, 0x17C00)
+	if err == nil || !strings.Contains(err.Error(), "NumBytes should be <= 0x10000") {
+		t.Errorf("the Commander complaint must be reported: %v", err)
 	}
 }
 
