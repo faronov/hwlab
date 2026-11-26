@@ -221,3 +221,31 @@ func TestCancelledExperimentSkipsPendingSteps(t *testing.T) {
 		t.Fatalf("want only the early step, got %+v", inv)
 	}
 }
+
+// Shutting the app down finalises running captures without letting their
+// pending steps fire.
+func TestCloseSkipsPendingSteps(t *testing.T) {
+	a := newApp(t)
+	e := stepExperiment(experiment.Step{Name: "late", At: experiment.Duration(2 * time.Second), Device: "ctl", Call: "DebugProbe.echo"})
+	e.Duration = experiment.Duration(10 * time.Second)
+	e.Devices = append(e.Devices, experiment.DeviceSpec{Alias: "power", Plugin: "fake", Device: "power0", Config: map[string]any{}})
+	r, err := a.StartCapture(context.Background(), app.ExperimentSpec(e, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	t0 := time.Now()
+	a.Close(context.Background())
+	if d := time.Since(t0); d > 1500*time.Millisecond {
+		t.Errorf("Close took %v: it waited for the pending step", d)
+	}
+	res, _ := r.Result()
+	time.Sleep(2 * time.Second)
+	evs, err := a.QueryTimeline(app.TimelineQuery{Session: res.SessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inv := invokes(evs); len(inv) != 0 {
+		t.Fatalf("a step ran after Close: %+v", inv)
+	}
+}

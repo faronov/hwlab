@@ -58,6 +58,11 @@ func (a *App) Close(ctx context.Context) {
 		runs = append(runs, r)
 	}
 	a.mu.Unlock()
+	// Stop every run's pending steps first: finalising one run must not
+	// leave the others time to fire theirs.
+	for _, r := range runs {
+		r.cap.SkipSteps()
+	}
 	for _, r := range runs {
 		_, _ = r.Finalize(ctx)
 	}

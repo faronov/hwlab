@@ -327,3 +327,33 @@ func TestExperimentRunCancelAbortsTheRun(t *testing.T) {
 		t.Fatalf("a step ran after the cancel: %v", evs)
 	}
 }
+
+// capture_stop ends a background experiment at once: a step due later never
+// runs (the stop does not wait for it in the stream drain).
+func TestCaptureStopSkipsPendingSteps(t *testing.T) {
+	cs := connect(t)
+	yaml := "name: stopped\nduration: 20s\ndevices:\n  power:\n    plugin: fake\n    device: power0\n  ctl:\n    plugin: fake\n    device: ctl0\n" +
+		"steps:\n  - {name: late, at: 3s, device: ctl, call: DebugProbe.echo}\n"
+	res, out := call(t, cs, "experiment_run", map[string]any{"yaml": yaml, "wait": "0s"})
+	if res.IsError || out["state"] != "running" {
+		t.Fatalf("experiment_run: %+v %v", res.Content, out)
+	}
+	sid := out["session_id"].(string)
+	time.Sleep(300 * time.Millisecond)
+	t0 := time.Now()
+	res, stop := call(t, cs, "capture_stop", map[string]any{"session": sid})
+	if res.IsError {
+		t.Fatalf("capture_stop: %+v", res.Content)
+	}
+	if d := time.Since(t0); d > 2500*time.Millisecond {
+		t.Errorf("capture_stop took %v: it waited for the pending step", d)
+	}
+	if b, _ := json.Marshal(stop); strings.Contains(string(b), "did not drain") {
+		t.Errorf("stop: %s", b)
+	}
+	time.Sleep(3 * time.Second) // past the step's time
+	_, q := call(t, cs, "timeline_query", map[string]any{"session": sid, "types": []string{"invoke"}})
+	if evs, _ := q["events"].([]any); len(evs) != 0 {
+		t.Fatalf("a step ran after capture_stop: %v", evs)
+	}
+}

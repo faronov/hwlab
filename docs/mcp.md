@@ -78,7 +78,9 @@ then is answered with its summary (`state: finished`, `result`). Otherwise the
 answer is `state: running` with the `session_id`, and the run continues in the
 background: poll `capture_status` with `{"session": "<id>"}`; once `state` is
 `finished` the same `result` is included (and `error`/`error_info` for a failed
-run). `capture_stop` ends a run early. Only an expired `wait` detaches the run:
+run). `capture_stop` ends a run early; like every early end (a cancelled request,
+server shutdown) it skips the steps that have not started. Only an expired
+`wait` detaches the run:
 cancelling the `experiment_run` request while it waits aborts the run (steps
 that have not started are skipped, a step in progress completes) and
 finalizes the partial session. When the client sends a

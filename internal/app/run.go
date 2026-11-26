@@ -169,8 +169,12 @@ func (r *Run) watch() {
 func (r *Run) AddMarker(name, description string) { r.cap.AddMarker(name, description) }
 
 // Finalize stops the capture, runs analysis, renders plots and closes the
-// session. It is idempotent and safe to call from several goroutines.
+// session. Steps that have not started by then are skipped (capture_stop,
+// shutdown or an aborted request must not go on to reset, flash or power
+// anything; a run that ended by itself has none left), a step in progress
+// completes. It is idempotent and safe to call from several goroutines.
 func (r *Run) Finalize(ctx context.Context) (*RunResult, error) {
+	r.cap.SkipSteps()
 	r.once.Do(func() {
 		defer close(r.done)
 		r.result, r.err = r.finalize(ctx)
@@ -413,13 +417,9 @@ func (a *App) RunExperiment(ctx context.Context, e *experiment.Experiment, confi
 	}
 }
 
-// Abort ends a run early because its requester gave up: steps that have not
-// started are skipped, the capture is stopped and the session finalised
-// with what was recorded.
-func (r *Run) Abort(ctx context.Context) (*RunResult, error) {
-	r.cap.SkipSteps()
-	return r.Finalize(ctx)
-}
+// Abort ends a run early because its requester gave up: Finalize, which
+// skips the steps that have not started.
+func (r *Run) Abort(ctx context.Context) (*RunResult, error) { return r.Finalize(ctx) }
 
 // StopCapture finalises a running capture by session id.
 func (a *App) StopCapture(ctx context.Context, sessionID string) (*RunResult, error) {
