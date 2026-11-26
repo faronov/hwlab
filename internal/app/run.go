@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/faronov/hwlab/internal/analysis"
+	"github.com/faronov/hwlab/internal/apperr"
 	"github.com/faronov/hwlab/internal/capture"
 	"github.com/faronov/hwlab/internal/config"
 	"github.com/faronov/hwlab/internal/device"
@@ -39,6 +40,14 @@ type RunSpec struct {
 	Analysis experiment.Analysis
 	// Steps override the Experiment's steps (ad-hoc and MCP runs).
 	Steps []experiment.Step
+	// ConfineFiles confines the file arguments of steps to the artifacts
+	// directory, as for invoke and target_op (set by the MCP frontend).
+	ConfineFiles bool
+}
+
+// ExperimentSpec is the RunSpec of an experiment.
+func ExperimentSpec(e *experiment.Experiment, confirm bool) RunSpec {
+	return RunSpec{Name: e.Name, Duration: e.Duration.D(), Devices: e.Devices, Confirm: confirm, Experiment: e}
 }
 
 // Run is a capture bound to a session, finalised exactly once.
@@ -78,8 +87,13 @@ type RunStatus struct {
 	Name      string        `json:"name"`
 	State     string        `json:"state"` // "running" | "finished"
 	Elapsed   time.Duration `json:"elapsed_ns"`
+	Duration  time.Duration `json:"duration_ns,omitempty"` // requested; 0: until stopped
 	Events    uint64        `json:"events"`
 	Samples   uint64        `json:"samples"`
+	// Result and Error are filled by RunStatusOf once the run finished.
+	Result    *RunResult `json:"result,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	ErrorInfo *ErrorInfo `json:"error_info,omitempty"`
 }
 
 // Finished is closed once the run has been finalised.
@@ -90,7 +104,7 @@ func (r *Run) Result() (*RunResult, error) { <-r.done; return r.result, r.err }
 
 // Status reports progress.
 func (r *Run) Status() RunStatus {
-	st := RunStatus{SessionID: r.Session.ID(), Name: r.spec.Name, State: "running", Elapsed: time.Since(r.started)}
+	st := RunStatus{SessionID: r.Session.ID(), Name: r.spec.Name, State: "running", Elapsed: time.Since(r.started), Duration: r.spec.Duration}
 	st.Events, st.Samples = r.cap.Counters()
 	select {
 	case <-r.done:
@@ -372,7 +386,11 @@ func (a *App) buildSteps(spec RunSpec, targets []capture.Target) ([]capture.Step
 				return nil, fmt.Errorf("step %d (%s): %w", i+1, s.Call, err)
 			}
 		}
-		out = append(out, capture.Step{Name: s.Name, At: s.At.D(), Alias: s.Device, Capability: s.Capability(), Method: s.Method(), Args: s.Args})
+		args, err := a.stepFiles(s.Args, spec.ConfineFiles)
+		if err != nil {
+			return nil, fmt.Errorf("step %d (%s): %w", i+1, s.Call, err)
+		}
+		out = append(out, capture.Step{Name: s.Name, At: s.At.D(), Alias: s.Device, Capability: s.Capability(), Method: s.Method(), Args: args})
 	}
 	if !streaming && len(out) == 0 {
 		return nil, errors.New("nothing to run: every device is control-only (no capture capability) and the experiment has no steps")
@@ -383,7 +401,7 @@ func (a *App) buildSteps(spec RunSpec, targets []capture.Target) ([]capture.Step
 // RunExperiment runs an experiment to completion. Cancelling ctx stops the
 // capture early; the partial session is still finalised and returned.
 func (a *App) RunExperiment(ctx context.Context, e *experiment.Experiment, confirm bool) (*RunResult, error) {
-	r, err := a.StartCapture(ctx, RunSpec{Name: e.Name, Duration: e.Duration.D(), Devices: e.Devices, Confirm: confirm, Experiment: e})
+	r, err := a.StartCapture(ctx, ExperimentSpec(e, confirm))
 	if err != nil {
 		return nil, err
 	}
@@ -425,6 +443,26 @@ func (a *App) AddMarker(sessionID, name, description string) error {
 	}
 	r.AddMarker(name, description)
 	return nil
+}
+
+// RunStatusOf reports one run of this process by session id; a finished
+// run includes its result, so a caller that did not wait for it (MCP
+// experiment_run with a short wait) can collect it without stopping anything.
+func (a *App) RunStatusOf(sessionID string) (RunStatus, error) {
+	r, err := a.findRun(sessionID)
+	if err != nil {
+		return RunStatus{}, apperr.Wrap(apperr.NotFound, err)
+	}
+	st := r.Status()
+	if st.State == "finished" {
+		res, err := r.Result()
+		st.Result = res
+		if err != nil {
+			info := Classify(err)
+			st.Error, st.ErrorInfo = err.Error(), &info
+		}
+	}
+	return st, nil
 }
 
 // Status lists captures in progress.

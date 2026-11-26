@@ -243,6 +243,62 @@ func (a *App) confineFiles(args map[string]any) (map[string]any, error) {
 	return out, nil
 }
 
+// stepFiles prepares the file arguments of an experiment step before the
+// run starts. Confined (MCP), they are resolved inside the artifacts
+// directory exactly like invoke and target_op arguments (missing parent
+// directories are created there). Otherwise (CLI) a path keeps its meaning
+// (relative to the working directory) and a missing parent directory is
+// created when it lies inside the working directory or the artifacts
+// directory, with mode 0700; anything else, including a path that leaves
+// those through ".." or a symlink, is refused when its parent is missing,
+// before any device is touched.
+func (a *App) stepFiles(args map[string]any, confine bool) (map[string]any, error) {
+	if confine {
+		return a.confineFiles(args)
+	}
+	var roots []string
+	if r, err := filepath.Abs(a.ArtifactsRoot()); err == nil {
+		roots = append(roots, r)
+	}
+	if wd, err := os.Getwd(); err == nil {
+		roots = append(roots, wd)
+	}
+	for k, v := range args {
+		s, ok := v.(string)
+		if !ok || !fileKeys[k] || k == "dir" || s == "" {
+			continue
+		}
+		abs, err := filepath.Abs(s)
+		if err != nil {
+			return nil, apperr.Newf(apperr.InvalidArgument, "args.%s: %v", k, err)
+		}
+		parent := filepath.Dir(abs)
+		if st, err := os.Stat(parent); err == nil && st.IsDir() {
+			continue
+		}
+		real, err := evalExisting(parent)
+		if err != nil {
+			return nil, apperr.Newf(apperr.PathDenied, "args.%s: %q: no existing ancestor directory", k, s)
+		}
+		inside := false
+		for _, r := range roots {
+			rr, err := evalExisting(r)
+			if err != nil {
+				rr = r
+			}
+			inside = inside || (within(r, parent) && within(rr, real))
+		}
+		if !inside {
+			return nil, apperr.Newf(apperr.PathDenied, "args.%s: the directory %s does not exist and is outside the directories hwlab creates "+
+				"(the working directory and %s); create it first", k, parent, a.ArtifactsRoot())
+		}
+		if err := os.MkdirAll(parent, 0o700); err != nil {
+			return nil, fmt.Errorf("args.%s: create %s: %w", k, parent, err)
+		}
+	}
+	return args, nil
+}
+
 func within(root, p string) bool {
 	rel, err := filepath.Rel(root, p)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))

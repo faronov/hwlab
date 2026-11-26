@@ -65,9 +65,9 @@ func (t *tools) register(s *sdk.Server) {
 	add(s, &sdk.Tool{Name: "target_op", Description: "Generic debug-probe/target operation in an ephemeral device session (info, identify, halt, resume, step, harts, reset, registers, memory-read/write, breakpoint-set/clear/list, watchpoint-set/clear/list, set-speed, flash-info/read/backup/erase/program/verify/restore, TI CC23xx cc23xx-info/saci-status/saci-enter/saci-exit/ccfg-info/ccfg-program, STM32WB fus-info/fus-start/fus-park-cpu1/fus-upgrade/fus-delete-stack/fus-install-stack/fus-start-stack, STM32 ROM DFU dfu-leave (args.address: vector table in user flash or SRAM1; vectors are read back and checked) and SRAM1-only memory-write, TI ROM serial bootloader (plugin tibsl) bsl-identify/bsl-reset/ccfg-info with flash-*, Espressif serial bootloader (plugin esprom: ESP32 on USB-UART bridges, the ESP32-H2 behind the S3 bridge, USB-Serial/JTAG ports) bsl-identify, bsl-reset (args.mode run|bootloader; line-only, also a USB-Serial/JTAG chip reset without ROM) with flash-*, ...). The same service and safety policy as `hwlab target`. Destructive operations need confirm=true after user approval, the plugin's own confirmation token in args.confirm and the plugin's allow_* settings in config (and for flash: a verified backup in args.backup). Flash contents are never returned inline beyond 4 KiB: pass args.path to write an artifact."}, t.targetOp)
 	add(s, &sdk.Tool{Name: "capture_start", Description: "Start a synchronized capture on one or more devices. Returns immediately with a session id; the capture ends by itself after duration or on capture_stop."}, t.captureStart)
 	add(s, &sdk.Tool{Name: "capture_stop", Description: "Stop a capture, run analysis, render overview plots and finalize the session."}, t.captureStop)
-	add(s, &sdk.Tool{Name: "capture_status", Description: "Progress of captures in progress (and recently finished ones in this server process).", Annotations: ro("Capture status")}, t.captureStatus)
+	add(s, &sdk.Tool{Name: "capture_status", Description: "Progress of captures and experiment runs of this server process. With session: that run only, and once it has finished its result (the same summary experiment_run returns), so a run started by experiment_run with a short wait is collected here without stopping it.", Annotations: ro("Capture status")}, t.captureStatus)
 	add(s, &sdk.Tool{Name: "capture_marker", Description: "Insert a named marker on the live timeline of a running capture."}, t.captureMarker)
-	add(s, &sdk.Tool{Name: "experiment_run", Description: "Run an experiment from YAML text or a file path; blocks until it finishes and returns the session summary."}, t.experimentRun)
+	add(s, &sdk.Tool{Name: "experiment_run", Description: "Run an experiment from YAML text or a file path. Waits up to `wait` (default 45s, so a client's request timeout is not hit; 0s returns at once) and returns the session summary when it finished by then; otherwise it returns state=running with the session id and the run continues in the background: poll capture_status with that session until state is finished (the result is included), or end it early with capture_stop. Progress notifications are sent while waiting when the client asks for them. File arguments of steps (path, backup, ...) are confined to the hwlab artifacts directory like device_invoke's; missing parent directories are created there."}, t.experimentRun)
 	add(s, &sdk.Tool{Name: "session_list", Description: "List recorded sessions, newest first.", Annotations: ro("List sessions")}, t.sessionList)
 	add(s, &sdk.Tool{Name: "session_info", Description: "Describe a session: devices, streams, event counts, artifacts, plots. session accepts id, prefix, path or 'latest'.", Annotations: ro("Session info")}, t.sessionInfo)
 	add(s, &sdk.Tool{Name: "timeline_query", Description: "Events of the unified timeline in a time range, optionally filtered by type/source/text.", Annotations: ro("Query timeline")}, t.timelineQuery)
@@ -248,8 +248,19 @@ func (t *tools) captureStop(ctx context.Context, _ *sdk.CallToolRequest, in sess
 	return nil, obj{"result": res}, nil
 }
 
-func (t *tools) captureStatus(context.Context, *sdk.CallToolRequest, noInput) (*sdk.CallToolResult, obj, error) {
-	return nil, obj{"captures": t.app.Status()}, nil
+type captureStatusIn struct {
+	Session string `json:"session,omitempty" jsonschema:"session id of a run of this server; empty: all runs, without results"`
+}
+
+func (t *tools) captureStatus(_ context.Context, _ *sdk.CallToolRequest, in captureStatusIn) (*sdk.CallToolResult, obj, error) {
+	if in.Session == "" {
+		return nil, obj{"captures": t.app.Status()}, nil
+	}
+	st, err := t.app.RunStatusOf(in.Session)
+	if err != nil {
+		return nil, nil, err
+	}
+	return nil, obj{"capture": st, "captures": []app.RunStatus{st}}, nil
 }
 
 type markerIn struct {
@@ -272,9 +283,16 @@ type experimentIn struct {
 	YAML    string `json:"yaml,omitempty" jsonschema:"experiment document (alternative to path)"`
 	Path    string `json:"path,omitempty" jsonschema:"experiment file path on the hwlab host"`
 	Confirm bool   `json:"confirm,omitempty" jsonschema:"set true only after the user approved dangerous configuration; allow_dangerous in the file is ignored over MCP"`
+	Wait    string `json:"wait,omitempty" jsonschema:"how long to wait for the result, e.g. 30s or 10m (default 45s, max 1h; 0s returns at once). A run still going then continues in the background: poll capture_status with its session"`
 }
 
-func (t *tools) experimentRun(ctx context.Context, _ *sdk.CallToolRequest, in experimentIn) (*sdk.CallToolResult, obj, error) {
+const (
+	defaultExperimentWait = 45 * time.Second
+	maxExperimentWait     = time.Hour
+	progressEvery         = 5 * time.Second
+)
+
+func (t *tools) experimentRun(ctx context.Context, req *sdk.CallToolRequest, in experimentIn) (*sdk.CallToolResult, obj, error) {
 	var (
 		e   *experiment.Experiment
 		err error
@@ -294,16 +312,61 @@ func (t *tools) experimentRun(ctx context.Context, _ *sdk.CallToolRequest, in ex
 	if err != nil {
 		return nil, nil, apperr.Wrap(apperr.InvalidArgument, err)
 	}
-	res, err := t.app.RunExperiment(ctx, e, in.Confirm)
-	if err != nil && res == nil {
+	wait := defaultExperimentWait
+	if in.Wait != "" {
+		d, err := app.ParseTime(in.Wait)
+		if err != nil || d < 0 || time.Duration(d) > maxExperimentWait {
+			return nil, nil, apperr.Newf(apperr.InvalidArgument, "wait %q: want a duration from 0s to %v, e.g. 30s", in.Wait, maxExperimentWait)
+		}
+		wait = time.Duration(d)
+	}
+	spec := app.ExperimentSpec(e, in.Confirm)
+	spec.ConfineFiles = true
+	// The run is detached from this request: a client that stops waiting
+	// (or cancels) does not stop the experiment; capture_stop does.
+	r, err := t.app.StartCapture(ctx, spec)
+	if err != nil {
 		return nil, nil, err
 	}
-	out := obj{"result": res}
-	if err != nil {
-		out["error"] = err.Error()
-		out["error_info"] = app.Classify(err)
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	var tick <-chan time.Time
+	token := req.Params.GetProgressToken()
+	if token != nil {
+		tk := time.NewTicker(progressEvery)
+		defer tk.Stop()
+		tick = tk.C
 	}
-	return nil, out, nil
+	for {
+		select {
+		case <-r.Finished():
+			res, err := r.Result()
+			if err != nil && res == nil {
+				return nil, nil, err
+			}
+			out := obj{"result": res, "session_id": r.Session.ID(), "state": "finished"}
+			if err != nil {
+				out["error"] = err.Error()
+				out["error_info"] = app.Classify(err)
+			}
+			return nil, out, nil
+		case <-timer.C:
+			st := r.Status()
+			return nil, obj{"session_id": st.SessionID, "dir": r.Session.Dir, "state": st.State, "elapsed_ns": st.Elapsed,
+				"duration_ns": st.Duration, "events": st.Events, "samples": st.Samples,
+				"next": "the run continues in the background: poll capture_status {\"session\": \"" + st.SessionID + "\"} until state is finished (its result is included); capture_stop ends it early"}, nil
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-tick:
+			st := r.Status()
+			p := &sdk.ProgressNotificationParams{ProgressToken: token, Progress: st.Elapsed.Seconds(),
+				Message: fmt.Sprintf("experiment %s running: %.1f s, %d samples, %d events", st.SessionID, st.Elapsed.Seconds(), st.Samples, st.Events)}
+			if st.Duration > 0 {
+				p.Total = st.Duration.Seconds()
+			}
+			_ = req.Session.NotifyProgress(ctx, p)
+		}
+	}
 }
 
 // ---- sessions & timeline ----
