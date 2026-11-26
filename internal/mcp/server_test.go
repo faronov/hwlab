@@ -290,3 +290,40 @@ func TestExperimentRunConfinesStepPaths(t *testing.T) {
 		t.Error("a step path escaping the artifacts directory must be refused")
 	}
 }
+
+// Cancelling experiment_run while it waits aborts the run: it finishes at
+// once and a step that had not started never runs. (An expired wait instead
+// leaves it running: TestExperimentRunReturnsEarlyAndStatusCollectsTheResult.)
+func TestExperimentRunCancelAbortsTheRun(t *testing.T) {
+	cs := connect(t)
+	yaml := "name: aborted\nduration: 5s\ndevices:\n  power:\n    plugin: fake\n    device: power0\n  ctl:\n    plugin: fake\n    device: ctl0\n" +
+		"steps:\n  - {name: late, at: 2s, device: ctl, call: DebugProbe.echo}\n"
+	call(t, cs, "device_list", nil) // launch the plugin before the timed call
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if _, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: "experiment_run", Arguments: map[string]any{"yaml": yaml, "wait": "30s"}}); err == nil {
+		t.Fatal("a cancelled call returned a result")
+	}
+	var run map[string]any
+	deadline := time.Now().Add(5 * time.Second)
+	for run == nil || run["state"] != "finished" {
+		if time.Now().After(deadline) {
+			t.Fatalf("the cancelled run did not end: %v", run)
+		}
+		time.Sleep(50 * time.Millisecond)
+		_, st := call(t, cs, "capture_status", nil)
+		for _, c := range st["captures"].([]any) {
+			if c := c.(map[string]any); c["name"] == "aborted" {
+				run = c
+			}
+		}
+	}
+	if el := run["elapsed_ns"].(float64); el > 2e9 {
+		t.Fatalf("the run went on after the cancel: elapsed %v", el)
+	}
+	time.Sleep(2 * time.Second) // past the step's time
+	_, q := call(t, cs, "timeline_query", map[string]any{"session": run["session_id"], "types": []string{"invoke"}})
+	if evs, _ := q["events"].([]any); len(evs) != 0 {
+		t.Fatalf("a step ran after the cancel: %v", evs)
+	}
+}

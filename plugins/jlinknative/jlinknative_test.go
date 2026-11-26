@@ -143,7 +143,7 @@ func TestWriteDataIsAlwaysHexBytes(t *testing.T) {
 			t.Fatalf("data %q wrote %v, want bytes 12 34 56 78", data, r["hex"])
 		}
 	}
-	for _, data := range []any{"123", "", float64(12345678)} {
+	for _, data := range []any{"123", "", "1:2:3:4", "-12", float64(12345678)} {
 		if _, err := invoke(t, p, SimID, "MemoryAccess", "write", map[string]any{"address": 0x20000200, "data": data}); status.Code(err) != codes.InvalidArgument {
 			t.Errorf("data %v: %v, want InvalidArgument", data, err)
 		}

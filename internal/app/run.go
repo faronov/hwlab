@@ -398,8 +398,8 @@ func (a *App) buildSteps(spec RunSpec, targets []capture.Target) ([]capture.Step
 	return out, nil
 }
 
-// RunExperiment runs an experiment to completion. Cancelling ctx stops the
-// capture early; the partial session is still finalised and returned.
+// RunExperiment runs an experiment to completion. Cancelling ctx aborts the
+// run (Abort); the partial session is still finalised and returned.
 func (a *App) RunExperiment(ctx context.Context, e *experiment.Experiment, confirm bool) (*RunResult, error) {
 	r, err := a.StartCapture(ctx, ExperimentSpec(e, confirm))
 	if err != nil {
@@ -407,9 +407,18 @@ func (a *App) RunExperiment(ctx context.Context, e *experiment.Experiment, confi
 	}
 	select {
 	case <-r.Finished():
+		return r.Finalize(context.WithoutCancel(ctx))
 	case <-ctx.Done():
+		return r.Abort(context.WithoutCancel(ctx))
 	}
-	return r.Finalize(context.WithoutCancel(ctx))
+}
+
+// Abort ends a run early because its requester gave up: steps that have not
+// started are skipped, the capture is stopped and the session finalised
+// with what was recorded.
+func (r *Run) Abort(ctx context.Context) (*RunResult, error) {
+	r.cap.SkipSteps()
+	return r.Finalize(ctx)
 }
 
 // StopCapture finalises a running capture by session id.

@@ -67,7 +67,7 @@ func (t *tools) register(s *sdk.Server) {
 	add(s, &sdk.Tool{Name: "capture_stop", Description: "Stop a capture, run analysis, render overview plots and finalize the session."}, t.captureStop)
 	add(s, &sdk.Tool{Name: "capture_status", Description: "Progress of captures and experiment runs of this server process. With session: that run only, and once it has finished its result (the same summary experiment_run returns), so a run started by experiment_run with a short wait is collected here without stopping it.", Annotations: ro("Capture status")}, t.captureStatus)
 	add(s, &sdk.Tool{Name: "capture_marker", Description: "Insert a named marker on the live timeline of a running capture."}, t.captureMarker)
-	add(s, &sdk.Tool{Name: "experiment_run", Description: "Run an experiment from YAML text or a file path. Waits up to `wait` (default 45s, so a client's request timeout is not hit; 0s returns at once) and returns the session summary when it finished by then; otherwise it returns state=running with the session id and the run continues in the background: poll capture_status with that session until state is finished (the result is included), or end it early with capture_stop. Progress notifications are sent while waiting when the client asks for them. File arguments of steps (path, backup, ...) are confined to the hwlab artifacts directory like device_invoke's; missing parent directories are created there."}, t.experimentRun)
+	add(s, &sdk.Tool{Name: "experiment_run", Description: "Run an experiment from YAML text or a file path. Waits up to `wait` (default 45s, so a client's request timeout is not hit; 0s returns at once) and returns the session summary when it finished by then. When `wait` expires first, it returns state=running with the session id and the run keeps going in the background: poll capture_status with that session until state is finished (the result is included), or end it early with capture_stop. Cancelling the request while it waits aborts the run instead: steps not yet started are skipped and the partial session is finalized. Progress notifications are sent while waiting when the client asks for them. File arguments of steps (path, backup, ...) are confined to the hwlab artifacts directory like device_invoke's; missing parent directories are created there."}, t.experimentRun)
 	add(s, &sdk.Tool{Name: "session_list", Description: "List recorded sessions, newest first.", Annotations: ro("List sessions")}, t.sessionList)
 	add(s, &sdk.Tool{Name: "session_info", Description: "Describe a session: devices, streams, event counts, artifacts, plots. session accepts id, prefix, path or 'latest'.", Annotations: ro("Session info")}, t.sessionInfo)
 	add(s, &sdk.Tool{Name: "timeline_query", Description: "Events of the unified timeline in a time range, optionally filtered by type/source/text.", Annotations: ro("Query timeline")}, t.timelineQuery)
@@ -283,7 +283,7 @@ type experimentIn struct {
 	YAML    string `json:"yaml,omitempty" jsonschema:"experiment document (alternative to path)"`
 	Path    string `json:"path,omitempty" jsonschema:"experiment file path on the hwlab host"`
 	Confirm bool   `json:"confirm,omitempty" jsonschema:"set true only after the user approved dangerous configuration; allow_dangerous in the file is ignored over MCP"`
-	Wait    string `json:"wait,omitempty" jsonschema:"how long to wait for the result, e.g. 30s or 10m (default 45s, max 1h; 0s returns at once). A run still going then continues in the background: poll capture_status with its session"`
+	Wait    string `json:"wait,omitempty" jsonschema:"how long to wait for the result, e.g. 30s or 10m (default 45s, max 1h; 0s returns at once). A run still going then keeps running in the background (poll capture_status with the returned session id); cancelling the request instead aborts the run"`
 }
 
 const (
@@ -322,8 +322,8 @@ func (t *tools) experimentRun(ctx context.Context, req *sdk.CallToolRequest, in 
 	}
 	spec := app.ExperimentSpec(e, in.Confirm)
 	spec.ConfineFiles = true
-	// The run is detached from this request: a client that stops waiting
-	// (or cancels) does not stop the experiment; capture_stop does.
+	// The run is detached from the request only when `wait` expires; a
+	// cancelled request aborts it, as Ctrl-C aborts `hwlab run`.
 	r, err := t.app.StartCapture(ctx, spec)
 	if err != nil {
 		return nil, nil, err
@@ -356,7 +356,15 @@ func (t *tools) experimentRun(ctx context.Context, req *sdk.CallToolRequest, in 
 				"duration_ns": st.Duration, "events": st.Events, "samples": st.Samples,
 				"next": "the run continues in the background: poll capture_status {\"session\": \"" + st.SessionID + "\"} until state is finished (its result is included); capture_stop ends it early"}, nil
 		case <-ctx.Done():
-			return nil, nil, ctx.Err()
+			// Steps that have not started are skipped: a cancelled request
+			// must not go on to reset, flash or power anything.
+			res, err := r.Abort(context.WithoutCancel(ctx))
+			out := obj{"result": res, "session_id": r.Session.ID(), "state": "aborted"}
+			if err != nil {
+				out["error"] = err.Error()
+				out["error_info"] = app.Classify(err)
+			}
+			return nil, out, nil
 		case <-tick:
 			st := r.Status()
 			p := &sdk.ProgressNotificationParams{ProgressToken: token, Progress: st.Elapsed.Seconds(),

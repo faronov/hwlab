@@ -155,7 +155,9 @@ method's argument schema declares it: a string argument keeps the text exactly
 as typed, so `--arg data=12345678` is the hex bytes `12 34 56 78`, never a
 number; numeric and boolean arguments are parsed (`--arg length=64`). Byte
 strings (`data`) are hex, two digits per byte; the J-Link plugins also accept
-one leading `0x` and ignore spaces, `:`, `-`, `_` and `,` between bytes.
+one leading `0x` and single separators (space, tab, `:`, `-`, `_`, `,`)
+between groups of an even number of digits (`12:34:56:78`, `1234 5678`);
+`1:2:3:4`, `-12` or `12::34` are refused.
 
 ### 4. Inspect, analyze, plot
 

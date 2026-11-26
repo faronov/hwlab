@@ -72,7 +72,9 @@ capability, never a vendor (`requires: [PowerMeasurement]`).
    executables. Earlier paths win.
 2. **Launch** — plain `exec.Command`. The plugin starts a gRPC server on a
    unix socket and prints `HWLAB-PLUGIN|1|unix|<path>` to stdout; the core
-   dials it with a timeout. stderr is forwarded to the core log.
+   dials it with a timeout (15 s for start and handshake;
+   `HWLAB_PLUGIN_LAUNCH_TIMEOUT`, a Go duration, overrides it; the tests use
+   90 s). stderr is forwarded to the core log.
 3. **Handshake** — protocol version must match; `PluginInfo` is cached.
 4. **Use** — `ListDevices`, `OpenDevice`, `StartCapture` + `StreamEvents`,
    `StopCapture`, `CloseDevice`. Plugins are launched lazily and shared.

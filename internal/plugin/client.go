@@ -24,9 +24,21 @@ import (
 	pluginv1 "github.com/faronov/hwlab/pkg/api/pluginv1"
 )
 
+// LaunchTimeoutEnv overrides how long a plugin may take to start and answer
+// the handshake (a Go duration such as 60s; default 15s). A busy host, or one
+// that scans every new executable on its first start, can need more.
+const LaunchTimeoutEnv = "HWLAB_PLUGIN_LAUNCH_TIMEOUT"
+
+func launchTimeout() time.Duration {
+	if d, err := time.ParseDuration(os.Getenv(LaunchTimeoutEnv)); err == nil && d > 0 {
+		return d
+	}
+	return defaultLaunchTimeout
+}
+
 const (
-	launchTimeout   = 15 * time.Second
-	shutdownTimeout = 3 * time.Second
+	defaultLaunchTimeout = 15 * time.Second
+	shutdownTimeout      = 3 * time.Second
 	// crashGrace is how long an Unavailable answer waits for the process to
 	// be seen exiting before it is reported as the plugin's own error.
 	crashGrace = 250 * time.Millisecond
@@ -124,7 +136,7 @@ func launch(ctx context.Context, path, coreVersion string, log *slog.Logger) (*p
 			return fail(fmt.Errorf("%s exited during startup: %w", filepath.Base(path), p.exitErr))
 		}
 		return fail(fmt.Errorf("%s exited during startup without a handshake", filepath.Base(path)))
-	case <-time.After(launchTimeout):
+	case <-time.After(launchTimeout()):
 		return fail(fmt.Errorf("%s: timeout waiting for handshake line", filepath.Base(path)))
 	case <-ctx.Done():
 		return fail(ctx.Err())
@@ -137,7 +149,7 @@ func launch(ctx context.Context, path, coreVersion string, log *slog.Logger) (*p
 	}
 	p.conn, p.cli = conn, pluginv1.NewPluginClient(conn)
 
-	hctx, cancel := context.WithTimeout(ctx, launchTimeout)
+	hctx, cancel := context.WithTimeout(ctx, launchTimeout())
 	defer cancel()
 	resp, err := p.cli.Handshake(hctx, &pluginv1.HandshakeRequest{CoreProtocolVersion: pluginv1.ProtocolVersion, CoreVersion: coreVersion})
 	if err != nil {

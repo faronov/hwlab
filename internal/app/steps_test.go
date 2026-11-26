@@ -188,3 +188,36 @@ func TestStepFileDirectoriesAreCreatedOnlyInsideAllowedRoots(t *testing.T) {
 		t.Error("a directory was created through a symlink out of the working directory")
 	}
 }
+
+// Cancelling an experiment aborts it: a step already done stays on the
+// timeline, a step that has not started never runs.
+func TestCancelledExperimentSkipsPendingSteps(t *testing.T) {
+	a := newApp(t)
+	e := stepExperiment(
+		experiment.Step{Name: "early", At: experiment.Duration(10 * time.Millisecond), Device: "ctl", Call: "DebugProbe.echo"},
+		experiment.Step{Name: "late", At: experiment.Duration(1500 * time.Millisecond), Device: "ctl", Call: "DebugProbe.echo"},
+	)
+	e.Duration = experiment.Duration(3 * time.Second)
+	if _, errs := a.ListDevices(context.Background()); len(errs) > 0 { // launch the plugin first
+		t.Fatal(errs)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	t0 := time.Now()
+	res, err := a.RunExperiment(ctx, e, false)
+	if err != nil || res == nil {
+		t.Fatalf("aborted run: %+v %v", res, err)
+	}
+	if d := time.Since(t0); d > 1200*time.Millisecond {
+		t.Errorf("the abort took %v", d)
+	}
+	time.Sleep(1500 * time.Millisecond) // past the late step's time
+	evs, err := a.QueryTimeline(app.TimelineQuery{Session: res.SessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv := invokes(evs)
+	if len(inv) != 1 || inv[0].Data["step"] != "early" {
+		t.Fatalf("want only the early step, got %+v", inv)
+	}
+}
