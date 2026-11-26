@@ -134,6 +134,22 @@ func TestConnectAndMemory(t *testing.T) {
 	}
 }
 
+func TestWriteDataIsAlwaysHexBytes(t *testing.T) {
+	p, _ := simPlugin(t)
+	for _, data := range []string{"12345678", "0x12345678", "12 34 56 78", "12:34:56:78"} {
+		mustInvoke(t, p, "MemoryAccess", "write", map[string]any{"address": 0x20000200, "data": data})
+		r := mustInvoke(t, p, "MemoryAccess", "read", map[string]any{"address": 0x20000200, "length": 4})
+		if r["hex"] != "12345678" {
+			t.Fatalf("data %q wrote %v, want bytes 12 34 56 78", data, r["hex"])
+		}
+	}
+	for _, data := range []any{"123", "", float64(12345678)} {
+		if _, err := invoke(t, p, SimID, "MemoryAccess", "write", map[string]any{"address": 0x20000200, "data": data}); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("data %v: %v, want InvalidArgument", data, err)
+		}
+	}
+}
+
 func TestStepRegistersBreakpoint(t *testing.T) {
 	p, _ := simPlugin(t)
 	openSim(t, p)

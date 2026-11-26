@@ -617,9 +617,9 @@ func (p *Plugin) writeMem(ctx context.Context, id string, args map[string]any) (
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	s, _ := args["data"].(string)
-	data, err := hex.DecodeString(strings.ReplaceAll(strings.TrimPrefix(strings.TrimSpace(s), "0x"), " ", ""))
-	if err != nil || len(data) == 0 || len(data) > maxWriteBytes {
-		return nil, status.Errorf(codes.InvalidArgument, "data: want 1..%d bytes as a hex string", maxWriteBytes)
+	data, err := pluginsdk.DecodeHexData(s)
+	if err != nil || len(data) > maxWriteBytes {
+		return nil, status.Errorf(codes.InvalidArgument, "data: want 1..%d bytes as a hex string (two digits per byte, e.g. \"12345678\")", maxWriteBytes)
 	}
 	if _, err := p.run(ctx, id, t, writeScript(addr, data)); err != nil {
 		return nil, err

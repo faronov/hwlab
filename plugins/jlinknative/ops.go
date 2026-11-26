@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/faronov/hwlab/internal/cortexm"
+	"github.com/faronov/hwlab/pkg/pluginsdk"
 )
 
 func stateMap(st cortexm.State) map[string]any {
@@ -290,11 +291,13 @@ func (d *device) writeMemory(a map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, argErr(err)
 	}
-	s, _ := a["data"].(string)
-	s = strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(s), " ", ""), "0x")
-	data, err := hex.DecodeString(s)
-	if err != nil || len(data) == 0 {
-		return nil, argErr(fmt.Errorf("data: want a non-empty hex string"))
+	s, ok := a["data"].(string)
+	if !ok {
+		return nil, argErr(fmt.Errorf("data: want a hex string such as \"12345678\" (bytes 12 34 56 78), got %v", a["data"]))
+	}
+	data, err := pluginsdk.DecodeHexData(s)
+	if err != nil {
+		return nil, argErr(fmt.Errorf("data: want a non-empty hex string: %w", err))
 	}
 	if len(data) > maxWriteBytes {
 		return nil, argErr(fmt.Errorf("data is %d bytes; at most %d per write", len(data), maxWriteBytes))

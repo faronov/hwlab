@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/faronov/hwlab/internal/app"
 	"github.com/faronov/hwlab/internal/experiment"
 	"github.com/faronov/hwlab/internal/policy"
 )
@@ -222,7 +223,7 @@ func invokeCmd(g *globals) *cobra.Command {
 				if !ok {
 					return fmt.Errorf("--arg %q: expected key=value", a)
 				}
-				m[k] = parseScalar(v)
+				m[k] = cliArg(v)
 			}
 			res, err := g.app.Invoke(cmd.Context(), appInvoke(plug, dev, capName, method, m, yes))
 			if err != nil {
@@ -235,6 +236,10 @@ func invokeCmd(g *globals) *cobra.Command {
 	c.Flags().BoolVar(&yes, "yes", false, "confirm a dangerous operation")
 	return c
 }
+
+// cliArg keeps a method argument's text next to its scalar reading; the
+// method's schema decides which one the plugin gets (app.CLIText).
+func cliArg(s string) any { return app.CLIText{Text: s, Value: parseScalar(s)} }
 
 // parseScalar decodes a command-line value as a YAML scalar (number, bool, string).
 func parseScalar(s string) any {

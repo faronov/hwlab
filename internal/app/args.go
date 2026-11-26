@@ -263,9 +263,46 @@ func evalExisting(p string) (string, error) {
 	}
 }
 
+// CLIText is a command-line argument value: the text as typed and its
+// scalar reading (a number, boolean or string, as YAML reads it). A front end
+// that only has text puts CLIText in the arguments; prepareArgs passes the
+// text when the method's schema declares the argument a string and the
+// scalar otherwise. So "data=12345678" or "data=0x00ff" stays the hex string
+// it was typed as, while "length=64" is a number.
+type CLIText struct {
+	Text  string
+	Value any
+}
+
+// ResolveCLIText replaces every CLIText in args by its text when the
+// top-level property of the JSON schema has type "string" (only string), and
+// by its scalar reading otherwise (no schema, no such property, an untyped
+// property or a non-string type).
+func ResolveCLIText(schema string, args map[string]any) {
+	var props struct {
+		Properties map[string]struct {
+			Type any `json:"type"`
+		} `json:"properties"`
+	}
+	if strings.TrimSpace(schema) != "" {
+		_ = json.Unmarshal([]byte(schema), &props)
+	}
+	for k, v := range args {
+		t, ok := v.(CLIText)
+		if !ok {
+			continue
+		}
+		args[k] = t.Value
+		if p, ok := props.Properties[k]; ok && p.Type == "string" {
+			args[k] = t.Text
+		}
+	}
+}
+
 // prepareArgs confines file arguments (when asked), validates numbers and
 // addresses and checks the method's declared schema.
 func (a *App) prepareArgs(spec interface{ GetArgsSchemaJson() string }, args *map[string]any, confine bool) error {
+	ResolveCLIText(spec.GetArgsSchemaJson(), *args)
 	if confine {
 		c, err := a.confineFiles(*args)
 		if err != nil {
