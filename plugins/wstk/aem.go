@@ -185,18 +185,26 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 }
 
 func (p *Plugin) startUSBAEM(ctx context.Context, t target, req pluginsdk.CaptureRequest, sink *pluginsdk.Sink) (pluginsdk.Capture, *pluginsdk.CaptureStart, error) {
+	if aem, m := p.aemOf(t.id); aem == aemNo {
+		return nil, nil, errNoAEM(t.id, m)
+	}
 	e, release, err := p.openKit(t)
 	if err != nil {
 		return nil, nil, err
 	}
 	// Identification is a few small transfers; it also proves the EMUCOM
-	// path works before the capture is reported as started.
+	// path works before the capture is reported as started, and tells
+	// whether the kit has an AEM before the stream is requested.
 	m, err := identify(ctx, e)
 	if err != nil {
 		release()
 		return nil, nil, fmt.Errorf("wstk %s: %w", t.id, err)
 	}
 	p.setMeta(t.id, m)
+	if m.aem() == aemNo {
+		release()
+		return nil, nil, errNoAEM(t.id, m)
+	}
 	c := &aemCapture{p: p, id: t.id, e: e, release: release, sink: sink, clock: req.Clock, cm: clockmap.NewClockMap(),
 		duration: req.Duration, done: make(chan struct{}), meta: m}
 	if c.cfg, err = aemStream(ctx, e, &c.sp); err != nil {

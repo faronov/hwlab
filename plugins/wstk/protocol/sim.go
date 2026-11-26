@@ -32,6 +32,11 @@ type SimKit struct {
 	ResetCmds []byte
 	ResetmA   float32
 	inReset   bool
+	// ExplorerKit makes the kit an xG24 Explorer Kit (BRD2703A): its kit
+	// control reports that board alone and it has no AEM.
+	ExplorerKit bool
+	// AEMStarts counts AEM start requests received.
+	AEMStarts int
 
 	pendingCh  uint32
 	pendingLen int
@@ -123,17 +128,21 @@ func (s *SimKit) handle(ch uint32, data []byte) {
 	switch ch {
 	case ChanKit:
 		if len(data) >= kitHeaderLen {
-			s.queues[ch] = append(s.queues[ch], simKitReply(data[5], data[6])...)
+			s.queues[ch] = append(s.queues[ch], simKitReply(data[5], data[6], s.ExplorerKit)...)
 		}
 	case ChanAEM:
 		if len(data) >= 12 && binary.LittleEndian.Uint16(data[8:]) == AEMTypeStart {
+			s.AEMStarts++
+			if s.ExplorerKit {
+				return
+			}
 			s.aemOn, s.nextUs = true, s.StartUs
 			s.queues[ch] = append(s.queues[ch], simAEMConfig(s.StartUs/1000)...)
 		}
 	}
 }
 
-func simKitReply(cmd, arg byte) []byte {
+func simKitReply(cmd, arg byte, explorer bool) []byte {
 	body := []byte{cmd, arg}
 	field := func(tag byte, v ...byte) {
 		body = append(body, tag, byte(len(v)), byte(len(v)>>8))
@@ -145,7 +154,11 @@ func simKitReply(cmd, arg byte) []byte {
 		field(0x00, 0, 0)
 		field(0x01, 0x06, 0x14)
 		field(0x02, 0x93, 0x04)
-		field(0x07, 0x01, 0x40)
+		if explorer {
+			field(0x07, 0x03, 0x27)
+		} else {
+			field(0x07, 0x01, 0x40)
+		}
 		field(0x0b, 0x01, 0xc2, 0xeb, 0x0b)
 	case cmd == KitCmdBoards && arg == 1:
 		recs := make([]byte, 160)
@@ -154,7 +167,15 @@ func simKitReply(cmd, arg byte) []byte {
 		}
 		copy(recs, []byte{0x01, 0x40, 0, 0, 0, 0, 0x02, 0xff, 0x01, 0xc2, 0xeb, 0x0b, 0xe4, 0x07, 0x0b, 0x1e})
 		copy(recs[20:], []byte{0x83, 0x41, 0, 0, 0, 0, 0x00, 0xff, 0x02, 0xc2, 0xeb, 0x0b, 0xe4, 0x07, 0x0b, 0x14})
-		field(0x00, 2)
+		n := byte(2)
+		if explorer {
+			for i := range recs {
+				recs[i] = 0xff
+			}
+			copy(recs, []byte{0x03, 0x27, 0, 0, 0, 0, 0x02, 0xff, 0x01, 0xc2, 0xeb, 0x0b, 0xea, 0x07, 0x05, 0x15})
+			n = 1
+		}
+		field(0x00, n)
 		field(0x01, recs...)
 	default:
 		status = 2

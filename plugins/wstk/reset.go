@@ -49,7 +49,8 @@ func resetSpec() *pluginv1.MethodSpec {
 		Description: "USB kits: reset the radio board by pulsing the kit J-Link's nRESET line (hold_ms, default 20). Works while an AEM " +
 			"capture of this kit runs, through the capture's own J-Link connection (the probe is exclusive to one process): the AEM " +
 			"stream continues, the reset is marked on the timeline and checked against the current (reset_observed). " +
-			"Without a capture the kit's J-Link is opened briefly and the reset cannot be observed. No SWD attach is made."}
+			"Without a capture (and on kits without an AEM, such as Explorer Kits) the kit's J-Link is opened briefly and the reset " +
+			"cannot be observed. No SWD attach is made."}
 }
 
 func parseReset(args map[string]any) (int, error) {
@@ -127,9 +128,13 @@ func (p *Plugin) resetUSB(ctx context.Context, t target, args map[string]any) (m
 	if err != nil {
 		return nil, err
 	}
+	note := "nRESET was pulsed but not observed: no AEM capture of this kit was running. During a capture the reset is " +
+		"checked against the measured current."
+	if aem, _ := p.aemOf(t.id); aem == aemNo {
+		note = "nRESET was pulsed but not observed: this kit has no AEM to see it."
+	}
 	return map[string]any{"kind": resetKindHardware, "hold_ms": float64(holdMs), "during_capture": false, "reset_observed": false,
-		"note": "nRESET was pulsed but not observed: no AEM capture of this kit was running. During a capture the reset is " +
-			"checked against the measured current."}, nil
+		"note": note}, nil
 }
 
 // sampleSpan is one emitted AEM batch kept for reset evidence.

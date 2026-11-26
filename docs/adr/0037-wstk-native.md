@@ -51,6 +51,12 @@ The vendor tools are proprietary and should not be needed at runtime.
   control command `11 03`. During development an admin `target status`
   (issued through the vendor tunnel) made the board controller re-enumerate,
   which is why the target command family is excluded wholesale.
+* Only kits with an AEM mainboard (BRD4001 Wireless Starter Kit, BRD4002
+  Wireless Pro Kit) advertise PowerMeasurement and capture. Explorer and Dev
+  Kits (seen: BRD2703A, kit firmware 2.0.0) answer kit control through their
+  J-Link OB but refuse the AEM stream; once identified they are listed without
+  capabilities and AEM requests fail with UNSUPPORTED_BY_ATTACHED_HW before
+  anything is sent to the AEM channel.
 * Device listing identifies the boards once (J-Link held ~80 ms, 1 s timeout,
   retried at most once a minute, skipped while busy, `HWLAB_WSTK_LIST_IDENTIFY=0`
   disables it). A USB capture holds the J-Link for its whole duration.

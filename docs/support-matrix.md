@@ -848,6 +848,7 @@ Code, fixtures and passing tests are not hardware validation.
   | Capability | Status | Evidence |
   |---|---|---|
   | USB discovery | REAL_HW_VERIFIED | SEGGER VID with manufacturer "Silicon Labs" (product "J-Link Pro OB"); listing reads the board list once (~80 ms J-Link hold), then answers from a cache |
+  | kits without AEM | REAL_HW_VERIFIED | only kits with a BRD4001/BRD4002 mainboard advertise PowerMeasurement and capture; an xG24 Explorer Kit (BRD2703A, kit fw 2.0.0) is identified read-only and listed without capabilities (aem: no); AEM requests on it are UNSUPPORTED_BY_ATTACHED_HW before the AEM channel is touched. BRD4002 (Wireless Pro Kit) is listed as an AEM mainboard from Silicon Labs' kit documentation, not from a run |
   | kit info and board list | REAL_HW_VERIFIED | firmware 1.4.6 build 1171, BRD4001A Rev A02 + BRD4183A Rev A00 with serials and dates, identical to Simplicity Commander's answer |
   | AEM capture (current + voltage) | REAL_HW_VERIFIED | 10 kHz, 256-sample buffers; 5 s captures delivered 50,000 contiguous samples (2.18 mA mean, 2.09-2.48 mA, 3.336 V) into the session; the parser matches Commander's CSV sample for sample on a recorded stream |
   | AEM accuracy | HYPOTHESIS_ONLY | values are the kit's own calibrated floats, passed through; not checked against a reference load |

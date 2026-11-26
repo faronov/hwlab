@@ -73,3 +73,14 @@ pid ..., hwlab-plugin-wstk`) and the capture had no gap.
   is open. A raw dump of the AEM messages showed each buffer first returned
   about 123-125 ms after its microsecond start stamp (by the millisecond
   message time) and then repeated until the next one, 25.6 ms later.
+
+## Kit without AEM (xG24 Explorer Kit)
+
+An EK2703A (J-Link OB, kit firmware 2.0.0 build 402) is found by the same USB
+discovery and identified read-only (board list "BRD2703A Rev. A02", mainboard
+field BRD2703). It has no AEM; an AEM capture attempt failed with a protocol
+error. The plugin now lists it as "Silicon Labs kit without AEM (BRD2703A)"
+with no capabilities and `aem: no`; `read_current` and `hwlab run` are refused
+(`UNSUPPORTED_BY_ATTACHED_HW`, and "cannot capture" from the core) without an
+AEM request. The kit runs another user's firmware: it was not reset, flashed
+or captured from.

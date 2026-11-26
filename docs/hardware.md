@@ -1127,7 +1127,13 @@ Commander and `silink` are not used. See [ADR 0037](adr/0037-wstk-native.md).
   listing reads the board list (J-Link held ~80 ms, retried at most once a
   minute, skipped while a capture runs); `HWLAB_WSTK_LIST_IDENTIFY=0` turns
   that off. Properties link the same probe's `jlink`/`jlinknative` devices and
-  the kit's VCOM `uart` device.
+  the kit's VCOM `uart` device. Only kits whose mainboard carries the AEM
+  (Wireless Starter/Pro Kit mainboards BRD4001, BRD4002) advertise
+  `PowerMeasurement` and the capture capabilities (property `aem: yes`); an
+  identified kit without one, such as the xG24 Explorer Kit BRD2703A, is
+  listed with no capabilities (`aem: no`), and captures and `read_current` on
+  it fail with `UNSUPPORTED_BY_ATTACHED_HW` before the AEM stream is
+  requested. `PowerMeasurement.info` and `DebugProbe.reset` still work there.
 * **Ethernet** (`wstk-net:<name>`): set `HWLAB_WSTK_HOSTS=lab=192.0.2.10,...`
   (or bare hosts). hwlab uses the admin console (TCP 4902, read-only command
   allowlist) and the Debug Channel (TCP 4905) for PTI. Not run on hardware.

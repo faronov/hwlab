@@ -308,7 +308,7 @@ func (a *App) resolveTargets(ctx context.Context, spec RunSpec) ([]capture.Targe
 		control := ds.Control
 		if !control && !d.Has(pluginv1.CapTimedCapture) && !d.Has(pluginv1.CapLiveRawStream) && !d.Has(pluginv1.CapOfflineCapture) {
 			if !invocable(b.Info(), d) {
-				return nil, fmt.Errorf("device %q (%s) cannot capture and offers no methods: it has none of %s, %s, %s", ds.Alias, d.ID,
+				return nil, fmt.Errorf("device %q (%s, %q) cannot capture and offers no methods: it has none of %s, %s, %s", ds.Alias, d.ID, d.Name,
 					pluginv1.CapTimedCapture, pluginv1.CapLiveRawStream, pluginv1.CapOfflineCapture)
 			}
 			// A command/response device: opened for the run and driven by steps.
@@ -316,7 +316,7 @@ func (a *App) resolveTargets(ctx context.Context, spec RunSpec) ([]capture.Targe
 		}
 		for _, req := range ds.Requires {
 			if !d.Has(req) {
-				return nil, fmt.Errorf("device %q (%s) lacks required capability %s (has: %v)", ds.Alias, d.ID, req, d.Capabilities)
+				return nil, fmt.Errorf("device %q (%s, %q) lacks required capability %s (has: %v)", ds.Alias, d.ID, d.Name, req, d.Capabilities)
 			}
 		}
 		var danger []string

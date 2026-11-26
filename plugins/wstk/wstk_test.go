@@ -508,3 +508,59 @@ func TestFindResetLocatesTheDropAfterTheAssert(t *testing.T) {
 		t.Errorf("a sleeping target cannot show a reset: %+v", ev)
 	}
 }
+
+// An Explorer Kit (BRD2703A) answers the kit commands through its J-Link OB
+// but has no AEM: once identified it advertises no power capability, and AEM
+// work is refused as unsupported by the attached hardware without the AEM
+// stream ever being requested.
+func TestKitWithoutAEMIsNotAPowerMeter(t *testing.T) {
+	p, te := newTestPlugin(t)
+	te.sim.ExplorerKit = true
+	const id = "wstk:440123456"
+	ctx := context.Background()
+	// Not identified yet: listed as before, AEM unknown.
+	devs, err := p.ListDevices(ctx)
+	if err != nil || len(devs[0].GetCapabilities()) == 0 || devs[0].GetProperties()["aem"] != aemUnknown {
+		t.Fatalf("unidentified kit: %v %v", devs[0], err)
+	}
+	// A capture identifies the kit first and refuses before starting AEM.
+	_, _, err = p.StartCapture(ctx, pluginsdk.CaptureRequest{DeviceID: id, Duration: 100 * time.Millisecond, Clock: pluginsdk.NewClock(0)},
+		pluginsdk.NewTestSink(16))
+	if status.Code(err) != codes.FailedPrecondition || !strings.HasPrefix(status.Convert(err).Message(), "UNSUPPORTED_BY_ATTACHED_HW: ") ||
+		!strings.Contains(err.Error(), "BRD2703A") {
+		t.Fatalf("capture on a kit without AEM: %v", err)
+	}
+	if te.sim.AEMStarts != 0 {
+		t.Fatalf("the AEM stream was requested %d times", te.sim.AEMStarts)
+	}
+	devs, _ = p.ListDevices(ctx)
+	d := devs[0]
+	if len(d.GetCapabilities()) != 0 || d.GetProperties()["aem"] != aemNo || !strings.Contains(d.GetName(), "without AEM") {
+		t.Fatalf("identified Explorer Kit: caps %v props %v name %q", d.GetCapabilities(), d.GetProperties(), d.GetName())
+	}
+	opens := te.opens
+	st, _ := structpb.NewStruct(nil)
+	if _, err := p.Invoke(ctx, &pluginv1.InvokeRequest{DeviceId: id, Capability: pluginv1.CapPowerMeasurement, Method: "read_current", Args: st}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("read_current: %v", err)
+	}
+	if te.opens != opens {
+		t.Error("a known kit without AEM must be refused without opening its J-Link")
+	}
+	if res := invoke(t, p, id, pluginv1.CapPowerMeasurement, "info", nil); res["aem"] != aemNo || res["boards"] != "BRD2703A Rev. A02" {
+		t.Errorf("info %v", res)
+	}
+	if te.sim.AEMStarts != 0 {
+		t.Errorf("AEM started %d times", te.sim.AEMStarts)
+	}
+}
+
+func TestWSTKMainboardHasAEM(t *testing.T) {
+	p, _ := newTestPlugin(t)
+	if res := invoke(t, p, "wstk:440123456", pluginv1.CapPowerMeasurement, "info", nil); res["aem"] != aemYes {
+		t.Fatalf("info %v", res)
+	}
+	devs, _ := p.ListDevices(context.Background())
+	if d := devs[0]; d.GetProperties()["aem"] != aemYes || len(d.GetCapabilities()) != 4 {
+		t.Fatalf("BRD4001A kit: %v", d)
+	}
+}
