@@ -70,6 +70,10 @@ The vendor tools are proprietary and should not be needed at runtime.
 
 * hwlab measures WSTK energy with a USB cable only, in the same artifacts as
   the PPK2; the kit's J-Link is unavailable to other tools during a capture.
+  The target can still be reset through the capture's own connection
+  (`DebugProbe.reset`, nRESET only): [ADR 0042](0042-wstk-reset-during-aem-capture.md).
+  The nRESET edges showed the AEM samples stamped 19-33 ms late on the
+  session timeline, so the clock bullet above is not borne out; open.
 * PTI capture is implemented and tested against synthetic DCH streams only.
 * Protocol provenance: [licenses](../licenses.md); results:
   [wstk-native-results](../notes/wstk-native-results.md).

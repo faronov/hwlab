@@ -214,6 +214,31 @@ Other adapters were regression-tested in simulators, not rechecked on real
 hardware during this pass. Unrelated historical `/tmp` deletions were not
 recovered.
 
+## EFR32MG24 (Cortex-M33, TrustZone) through a WSTK J-Link OB, read-only
+
+Kit BRD4001A with a BRD4187A radio board (EFR32MG24B220F1536IM48), the kit's
+J-Link Pro OB (firmware "Silicon Labs J-Link Pro OB compiled Sep 16 2020"),
+macOS, SWD 1 MHz. The target ran a Zigbee router owned by another user;
+nothing was halted, written or reset through jlinknative.
+
+Reported problems: memory reads failed and `ap_scan` ended the call ("plugin
+process crashed") at AP 3.
+
+| Check | Before | After |
+|---|---|---|
+| `connect` | Cortex-M33 r0p4, DPIDR 0x6BA02477, AP0 IDR 0x84770001 | same, plus `ap_csw` 0x03800052 (SPIDEN set), `ap_access` secure |
+| `ap_scan` | AP0..AP2 read, AP3's IDR read gets no ACK; the error was Unavailable, which the core reported as a crashed plugin, and the DP then answered WAIT to every later session (`attach to the target: SWD_WAIT`) | AP0 AHB (ROM 0xE00FE000), AP1 APB (BASE 0x00000003), AP2 AHB (BASE 0xF0000003), AP3 listed with its error; DAPABORT and DP re-init in the same call (`dap_aborts` 2); status and reads work right after |
+| attach with the DP stuck in WAIT | every call failed | recovered on attach with DAPABORT (`dap_aborts` 2, about 2 s of WAIT retries first) |
+| `MemoryAccess.read` DEVINFO 0x0FE08000, RAM 0x20000000, flash 0x08000000, SCS 0xE000ED00 | (failed while the DP was stuck) | read |
+| 64 KiB at 0x08000000 and 32 KiB at 0x08010000 | | SHA-256 equal to a 96 KiB `jlink` (SEGGER) read of the same range |
+
+J-Link Commander connects to this device with a "manually configured AP map"
+(AP0 AHB-AP, AP1 MEM-AP) and skips AP map detection, which agrees with AP3
+not being safe to probe. Whether the original read failures had another
+cause than the stuck DP (for example CSW.HNONSEC left set by another tool) was
+not reproduced; the attach now forces Secure accesses whenever SPIDEN allows
+them.
+
 ## Fixtures
 
 * `testdata/real-jlink-native/wire.json`: 318 real exchanges (info, connect,

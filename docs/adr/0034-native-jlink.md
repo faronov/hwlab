@@ -98,6 +98,16 @@ implementations of it (libjaylink, OpenOCD's J-Link driver) are GPL.
   `SWD_NO_ACK`, `SWD_WAIT`, `SWD_FAULT`, `TARGET_UNAVAILABLE`,
   `UNSUPPORTED_PROBE_COMMAND`. A short reply, bad status, missing ACK, wrong
   serial, failed halt or failed write verification is never success.
+* **ARMv8-M / TrustZone and stuck APs** (shared `internal/adiv5`, so every
+  SWD backend): when CSW.SPIDEN allows Secure debug the MEM-AP issues Secure
+  accesses (CSW.HNONSEC cleared, whatever an earlier debugger left there),
+  otherwise the AP's own bits are kept. An AP transaction that never completes
+  (an AP behind a powered-down or locked domain) keeps the DP answering WAIT
+  across sessions; after the WAIT retries the stuck transaction is aborted
+  with DAPABORT, also on attach. The AP scan lists an AP that does not answer
+  with its error, recovers the DP and stops there, and reads BASE/CFG only
+  from MEM-APs. Seen on an EFR32MG24 (AP3), see
+  `docs/notes/phase-native-jlink-results.md`.
 * **Debug-state ownership** is shared `internal/cortexm` policy, not transport
   logic. DWT installation is verified and rolled back on failure; unresolved
   rollback stays in a pending cleanup ledger, never the successful-watchpoint

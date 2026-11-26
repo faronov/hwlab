@@ -20,7 +20,7 @@
 | Telink SWire programmer + TLSR8258 | `telink` | **unvalidated on real hardware** (simulator, replay); no chip erase | see below, [ADR 0023](adr/0023-telink-swire.md), [results](notes/phase13-telink-results.md) |
 | Bouffalo BL702 boot-ROM ISP (USB or UART) | `bflb` | **real-hardware verified over USB** on one XT-ZB1 DevKit: identify, helper load, full backup, erase/program/SHA verify, reset; restore and UART not run; needs `HWLAB_BFLB_EFLASH_LOADER` | see below, [ADR 0036](adr/0036-bflb-native-isp.md), [results](notes/bflb-bl702-usb-isp-results.md) |
 | TI CC13xx/CC26xx/CC2538 ROM serial bootloader (UART; CC2652P/R/P7/R7, CC1352P/R, CC26x0/CC13x0, CC2538) | `tibsl` | **real-hardware verified read-only** on one CC2652P1F ZBDongle-P (CP2102N, DTR/RTS entry): passive USB discovery, entry, identify, flash read + ROM CRC32, full backup equal to an independent cc2538-bsl backup, reset to the application, program of a whole application image (CRC32-verified, booted); explicit erase/restore and the CCFG gate on a real write **simulator-only**; CC2538 dialect simulator-only | [below](#ti-cc13xxcc26xxcc2538-rom-serial-bootloader-tibsl), [results](notes/tibsl-cc2652p-results.md) |
-| Silicon Labs Wireless Starter Kit (BRD4001A mainboard + radio board) | `wstk` | USB (J-Link EMUCOM) **real-hardware verified** on one BRD4001A + BRD4183A: discovery with board list, 10 kHz AEM current/voltage capture; Ethernet (admin console, AEM polling, PTI → pcapng) **synthetic only**; no PTI over USB | see below, [ADR 0037](adr/0037-wstk-native.md), [results](notes/wstk-native-results.md) |
+| Silicon Labs Wireless Starter Kit (BRD4001A mainboard + radio board) | `wstk` | USB (J-Link EMUCOM) **real-hardware verified** on one BRD4001A + BRD4183A/BRD4187A: discovery with board list, 10 kHz AEM current/voltage capture, nRESET during a capture; Ethernet (admin console, AEM polling, PTI → pcapng) **synthetic only**; no PTI over USB | see below, [ADR 0037](adr/0037-wstk-native.md), [results](notes/wstk-native-results.md) |
 | PicoScope oscilloscopes | `picoscope` | **no real driver, never connected** (synthetic scope, replay); contract only | see below, [ADR 0024](adr/0024-picoscope.md), [results](notes/phase10-picoscope-results.md) |
 | USB packet capture (Linux usbmon) | `usbcap` | **live backend never run** (no root/debugfs); synthetic + text-file + replay only | see below, [ADR 0025](adr/0025-usb-packet-capture.md), [results](notes/phase11-usb-results.md) |
 
@@ -1146,6 +1146,16 @@ Capture config (`TimedCapture`): `mode: aem` (default) or `mode: pti`
 * **A USB capture holds the J-Link exclusively.** Do not run it while another
   tool is flashing or debugging through the same kit; `jlink`/`jlinknative`
   operations on that probe wait or fail until the capture ends.
+* **Reset during a capture**: `DebugProbe.reset` (confirm; `hold_ms` 1–1000,
+  default 20) pulses the kit J-Link's nRESET line. During a USB AEM capture it
+  goes through the capture's own connection, so the stream continues; markers
+  `target_reset`/`target_reset_release` go on the timeline and the result says
+  whether the AEM current shows the reset (`reset_observed`, currents before
+  and during, `aem_lag_ms`, `recovery_ms`). Use it as an experiment step (or
+  `device_invoke` on the MCP server running the capture); another process is
+  refused while the capture holds the probe. No SWD attach is made. On a
+  BRD4001A + BRD4187A the AEM samples were stamped 19–33 ms late relative to
+  the reset markers ([ADR 0042](adr/0042-wstk-reset-during-aem-capture.md)).
 * **AEM over Ethernet** polls `aem current`/`aem voltage` on the admin console:
   low rate (≤ 50 Sa/s), for trends only.
 * **PTI** needs target firmware that enables Packet Trace (RAIL apps and
@@ -1153,9 +1163,10 @@ Capture config (`TimedCapture`): `mode: aem` (default) or `mode: pti`
   custom firmware must configure the PTI pins). PTI shows only what the
   target's own radio sends and receives. Frames are written to pcapng with
   the 802.15.4 TAP link type used by `nrf802154`.
-* All methods are `DANGER_SAFE` and read-only: `PowerMeasurement.info`,
-  `read_current` (one AEM buffer over USB, one admin read over Ethernet),
-  `admin_read` (Ethernet, allowlisted commands only), `PacketCapture.pti_status`.
+* All methods but `DebugProbe.reset` are `DANGER_SAFE` and read-only:
+  `PowerMeasurement.info`, `read_current` (one AEM buffer over USB, one admin
+  read over Ethernet), `admin_read` (Ethernet, allowlisted commands only),
+  `PacketCapture.pti_status`.
   hwlab never sends admin `target …`, `sys reset`, `dbg mode` or `aem calibrate`:
   on the test kit an admin `target status` made the board controller
   re-enumerate.
@@ -1164,4 +1175,5 @@ Capture config (`TimedCapture`): `mode: aem` (default) or `mode: pti`
 hwlab devices                                   # wstk/wstk:<serial> with board properties
 hwlab invoke wstk/wstk:<serial> PowerMeasurement.read_current
 hwlab run wstk-aem.yaml                         # devices: {aem: {plugin: wstk, device: "wstk:<serial>"}}, duration 5s
+hwlab run --yes wstk-boot.yaml                  # + steps: [{at: 500ms, device: aem, call: DebugProbe.reset}]: boot current
 ```
