@@ -35,8 +35,24 @@ import (
 	"github.com/faronov/hwlab/pkg/pluginsdk"
 )
 
-// maxMemBytes bounds one read; Commander allows at most 0x100000 items.
+// maxMemBytes bounds one read.
 const maxMemBytes = 1 << 20
+
+// memChunk is the most one Commander mem8 command reads: a larger count is
+// refused with "NumBytes should be <= 0x10000" and no dump (J-Link Commander
+// V9.24a). Larger reads are split into several mem8 commands in one session.
+const memChunk = 0x10000
+
+// memReadScript reads n bytes at addr with mem8 commands of at most memChunk
+// bytes.
+func memReadScript(addr uint64, n int) []string {
+	var script []string
+	for off := 0; off < n; off += memChunk {
+		c := min(memChunk, n-off)
+		script = append(script, fmt.Sprintf("mem8 0x%X 0x%X", addr+uint64(off), c))
+	}
+	return script
+}
 
 // maxWriteBytes bounds one write script.
 const maxWriteBytes = 4096
@@ -583,11 +599,11 @@ func (p *Plugin) readMem(ctx context.Context, id string, args map[string]any) (m
 	if _, err := os.Lstat(path); path != "" && !overwrite && err == nil {
 		return nil, argErr("path %s already exists; pass overwrite=true to replace it", path)
 	}
-	out, err := p.run(ctx, id, t, []string{fmt.Sprintf("mem8 0x%X 0x%X", addr, n)})
+	out, err := p.run(ctx, id, t, memReadScript(addr, n))
 	if err != nil {
 		return nil, err
 	}
-	data, err := parseMem(out, 1, n)
+	data, err := parseMemAt(out, addr, n)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
