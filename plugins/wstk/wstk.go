@@ -101,6 +101,7 @@ type Plugin struct {
 	mu   sync.Mutex
 	open map[string]map[string]any // opened device id -> config
 	busy map[string]bool           // device ids with a running capture
+	aem  map[string]*aemCapture    // running USB AEM captures (shared for reset)
 	meta map[string]*kitMeta       // identification cache by device id
 	// tried is when listing last tried to identify a kit.
 	tried map[string]time.Time
@@ -154,8 +155,8 @@ func (nopCloser) Close() error { return nil }
 
 // NewWith returns a plugin using env.
 func NewWith(env Env) *Plugin {
-	return &Plugin{env: env, open: map[string]map[string]any{}, busy: map[string]bool{}, meta: map[string]*kitMeta{},
-		tried: map[string]time.Time{}}
+	return &Plugin{env: env, open: map[string]map[string]any{}, busy: map[string]bool{}, aem: map[string]*aemCapture{},
+		meta: map[string]*kitMeta{}, tried: map[string]time.Time{}}
 }
 
 // ScanUSB keeps the J-Link probes that are Silicon Labs kits: SEGGER's VID
@@ -234,6 +235,7 @@ func (p *Plugin) Info() *pluginv1.PluginInfo {
 				Description: "Ethernet only: run one read-only admin console command (args: command, one of " + strings.Join(protocol.AdminCommands(), ", ") + ")"},
 			{Capability: pluginv1.CapPacketCapture, Name: "pti_status", Danger: pluginv1.Danger_DANGER_SAFE,
 				Description: "Ethernet only: admin 'pti info' (PTI mode and packet counters)"},
+			resetSpec(),
 		},
 	}
 }
@@ -477,6 +479,10 @@ func (p *Plugin) Invoke(ctx context.Context, req *pluginv1.InvokeRequest) (*plug
 	args := req.GetArgs().AsMap()
 	var res map[string]any
 	switch m := req.GetCapability() + "." + req.GetMethod(); {
+	case m == pluginv1.CapDebugProbe+".reset" && t.usb == nil:
+		return nil, status.Errorf(codes.Unimplemented, "reset needs the kit on USB: over Ethernet it would be the admin console's target command family, which hwlab never sends")
+	case m == pluginv1.CapDebugProbe+".reset":
+		res, err = p.resetUSB(ctx, t, args)
 	case t.usb != nil:
 		if err := p.markBusy(t.id); err != nil {
 			return nil, err

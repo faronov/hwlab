@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/faronov/hwlab/internal/pcap"
@@ -382,5 +384,127 @@ func TestNetPTICapture(t *testing.T) {
 	ng, err := pcap.ReadNG(f)
 	if err != nil || ng.LinkType != pcap.LinkIEEE802154TAP || len(ng.Packets) != 1 {
 		t.Fatalf("pcapng %+v %v", ng, err)
+	}
+}
+
+func TestResetDuringAEMCaptureSharesTheConnection(t *testing.T) {
+	p, te := newTestPlugin(t)
+	sink := pluginsdk.NewTestSink(4096)
+	c, _, err := p.StartCapture(context.Background(), pluginsdk.CaptureRequest{DeviceID: "wstk:440123456", Duration: 600 * time.Millisecond,
+		Clock: pluginsdk.NewClock(0)}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	res := invoke(t, p, "wstk:440123456", pluginv1.CapDebugProbe, "reset", map[string]any{"hold_ms": 20})
+	if res["during_capture"] != true || res["kind"] != "hardware" || res["hold_ms"] != float64(20) {
+		t.Fatalf("reset %v", res)
+	}
+	if err := c.Wait(); err != nil {
+		t.Fatalf("the capture must survive the reset: %v", err)
+	}
+	if te.opens != 1 {
+		t.Errorf("the kit was opened %d times; a reset during a capture must use the capture's connection", te.opens)
+	}
+	if got := te.sim.Resets(); string(got) != "\xdc\xdd" {
+		t.Errorf("nRESET commands % x, want dc dd", got)
+	}
+	var markers []string
+	for _, ev := range sink.Drain() {
+		if m := ev.GetMarker(); m != nil {
+			markers = append(markers, m.GetName())
+		}
+	}
+	if strings.Join(markers, ",") != "target_reset,target_reset_release" {
+		t.Errorf("markers %v", markers)
+	}
+	if st := c.Result().GetStats(); st.GetEvents() == 0 || st.GetSamples() != 6000 {
+		t.Errorf("stats %v", st)
+	}
+}
+
+func TestResetWithoutCaptureAndBadKind(t *testing.T) {
+	p, te := newTestPlugin(t)
+	res := invoke(t, p, "wstk:440123456", pluginv1.CapDebugProbe, "reset", nil)
+	if res["during_capture"] != false || res["reset_observed"] != false || res["hold_ms"] != float64(defaultHoldMs) {
+		t.Fatalf("reset %v", res)
+	}
+	if got := te.sim.Resets(); string(got) != "\xdc\xdd" {
+		t.Errorf("nRESET commands % x", got)
+	}
+	for _, args := range []map[string]any{{"kind": "sysreset"}, {"hold_ms": 0}, {"hold_ms": 5000}} {
+		st, _ := structpb.NewStruct(args)
+		_, err := p.Invoke(context.Background(), &pluginv1.InvokeRequest{DeviceId: "wstk:440123456", Capability: pluginv1.CapDebugProbe, Method: "reset", Args: st})
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("%v: %v, want InvalidArgument", args, err)
+		}
+	}
+	if _, err := p.Invoke(context.Background(), &pluginv1.InvokeRequest{DeviceId: "wstk-net:lab", Capability: pluginv1.CapDebugProbe, Method: "reset"}); status.Code(err) != codes.Unimplemented {
+		t.Errorf("an Ethernet kit must not reset through the admin console: %v", err)
+	}
+}
+
+// failLink fails every command, as a kit that went away would.
+type failLink struct{ cmds []byte }
+
+func (f *failLink) Exchange(ctx context.Context, cmd []byte, _ int) ([]byte, error) {
+	f.cmds = append(f.cmds, cmd...)
+	return nil, errors.New("gone")
+}
+
+func (f *failLink) ExchangeUpTo(context.Context, []byte, int) ([]byte, error) {
+	return nil, errors.New("gone")
+}
+
+func TestPulseAlwaysTriesToRelease(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	sim := protocol.NewSimKit()
+	if _, _, err := pulse(ctx, sim, func() func() { return func() {} }, time.Second); err == nil {
+		t.Log("a cancelled pulse may still succeed")
+	}
+	if got := sim.Resets(); len(got) == 0 || got[len(got)-1] != 0xDD {
+		t.Fatalf("nRESET left low after a cancelled pulse: % x", got)
+	}
+	f := &failLink{}
+	if _, _, err := pulse(context.Background(), f, func() func() { return func() {} }, time.Millisecond); err == nil {
+		t.Fatal("a failing link reported success")
+	}
+	if string(f.cmds) != "\xdc\xdd\xdd\xdd" {
+		t.Errorf("commands % x: the release must be retried", f.cmds)
+	}
+}
+
+func TestFindResetLocatesTheDropAfterTheAssert(t *testing.T) {
+	const ms = int64(time.Millisecond)
+	cur := func(ts int64) float32 {
+		switch {
+		case ts < 1030*ms: // running firmware; the trace is 30 ms late
+			return 10
+		case ts < 1054*ms: // held in reset
+			return 0.45
+		case ts < 1100*ms: // booting
+			return 3
+		}
+		return 10
+	}
+	var spans []sampleSpan
+	for start := 700 * ms; start < 1400*ms; start += 256 * samplePeriodNs {
+		s := sampleSpan{startNs: start}
+		for i := 0; i < 256; i++ {
+			s.mA = append(s.mA, cur(start+int64(i)*samplePeriodNs))
+		}
+		spans = append(spans, s)
+	}
+	ev := findReset(spans, 1000*ms, 1020*ms, 20*time.Millisecond, 250*ms)
+	if !ev.Observed || ev.DropNs != 1030*ms || ev.DuringmA < 0.44 || ev.DuringmA > 0.46 || ev.RecoveryNs != 70*ms || ev.BeforemA != 10 {
+		t.Fatalf("evidence %+v", ev)
+	}
+	asleep := []sampleSpan{{startNs: 700 * ms, mA: make([]float32, 7000)}}
+	for i := range asleep[0].mA {
+		asleep[0].mA[i] = 0.002
+	}
+	if ev := findReset(asleep, 1000*ms, 1020*ms, 20*time.Millisecond, 250*ms); ev.Observed {
+		t.Errorf("a sleeping target cannot show a reset: %+v", ev)
 	}
 }

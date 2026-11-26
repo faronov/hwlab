@@ -8,6 +8,12 @@ import (
 	"sync"
 )
 
+// J-Link probe commands that drive the nRESET output (no reply).
+const (
+	jlinkResetLow  = 0xDC
+	jlinkResetHigh = 0xDD
+)
+
 // SimKit is a simulated kit behind a Link, answering kit control and
 // streaming synthetic AEM buffers. It is used by tests and by the plugin's
 // simulated device.
@@ -21,6 +27,11 @@ type SimKit struct {
 	CurrentmA, VoltageV float32
 	// StartUs is the kit time of the first AEM buffer.
 	StartUs uint32
+	// ResetCmds records the J-Link nRESET commands received (0xDC low,
+	// 0xDD high); while nRESET is low the AEM buffers show ResetmA.
+	ResetCmds []byte
+	ResetmA   float32
+	inReset   bool
 
 	pendingCh  uint32
 	pendingLen int
@@ -35,7 +46,7 @@ type SimKit struct {
 
 // NewSimKit returns a kit with plausible defaults.
 func NewSimKit() *SimKit {
-	return &SimKit{CurrentmA: 1.5, VoltageV: 3.3, StartUs: 1_000_000, queues: map[uint32][]byte{}}
+	return &SimKit{CurrentmA: 1.5, VoltageV: 3.3, StartUs: 1_000_000, ResetmA: 0.4, queues: map[uint32][]byte{}}
 }
 
 // Exchange implements Link.
@@ -50,6 +61,10 @@ func (s *SimKit) Exchange(_ context.Context, cmd []byte, n int) ([]byte, error) 
 		}
 		s.handle(s.pendingCh, cmd)
 		return binary.LittleEndian.AppendUint32(nil, uint32(len(cmd))), nil
+	case len(cmd) == 1 && (cmd[0] == jlinkResetLow || cmd[0] == jlinkResetHigh) && n == 0:
+		s.ResetCmds = append(s.ResetCmds, cmd[0])
+		s.inReset = cmd[0] == jlinkResetLow
+		return nil, nil
 	case len(cmd) == 10 && cmd[0] == cmdEmucom && cmd[1] == 1 && n == 0:
 		s.pendingCh = binary.LittleEndian.Uint32(cmd[2:])
 		s.pendingLen = int(binary.LittleEndian.Uint32(cmd[6:]))
@@ -57,6 +72,13 @@ func (s *SimKit) Exchange(_ context.Context, cmd []byte, n int) ([]byte, error) 
 		return nil, nil
 	}
 	return nil, fmt.Errorf("sim: unexpected exchange % x / %d", cmd, n)
+}
+
+// Resets returns the nRESET commands received so far.
+func (s *SimKit) Resets() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]byte(nil), s.ResetCmds...)
 }
 
 // ExchangeUpTo implements Link.
@@ -172,7 +194,11 @@ func (s *SimKit) aemBuffer() []byte {
 	binary.LittleEndian.PutUint32(p[36:], s.nextUs)
 	p[52] = 0x11
 	for i := 0; i < n; i++ {
-		binary.LittleEndian.PutUint32(p[aemDataHeaderLen+4*i:], math.Float32bits(s.CurrentmA+0.001*float32(i)))
+		v := s.CurrentmA + 0.001*float32(i)
+		if s.inReset {
+			v = s.ResetmA
+		}
+		binary.LittleEndian.PutUint32(p[aemDataHeaderLen+4*i:], math.Float32bits(v))
 	}
 	s.seq++
 	s.nextUs += n * 100
